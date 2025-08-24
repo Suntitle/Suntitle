@@ -14,7 +14,7 @@ def translate_text(text_to_translate):
     return translated_text
 
 async def websocket_client(host):
-    uri = f"ws://{host}"
+    uri = f"ws://{host}/translate"
     async with websockets.connect(uri) as websocket:
         print(f"Connected to {uri}")
         while True:
@@ -34,7 +34,7 @@ async def websocket_client(host):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Websocket client for subtitle translation.")
-    parser.add_argument("--host", default="localhost:8000", help="Websocket server host (e.g., localhost:8000)")
+    parser.add_argument("--host", default="localhost:3030", help="Websocket server host (e.g., localhost:3030)")
     args = parser.parse_args()
 
     asyncio.run(websocket_client(args.host))

@@ -1,0 +1,16 @@
+[project]
+name = "suntitle"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "faster-whisper>=1.2.0",
+    "librosa>=0.11.0",
+    "numpy>=2.2.6",
+    "sentencepiece>=0.2.1",
+    "sounddevice>=0.5.2",
+    "torch>=2.8.0",
+    "transformers>=4.55.4",
+    "websockets>=15.0.1",
+]

@@ -92,7 +92,7 @@ class mymainwindow(QMainWindow):
             super().keyPressEvent(event)
     
     def start_websocket(self):
-        ws_url = "ws://localhost:8765/"  # Replace with your own server if needed
+        ws_url = "ws://localhost:3030/display"  # Replace with your own server if needed
         self.ws_thread = WebSocketClientThread(ws_url)
         self.ws_thread.message_received.connect(self.display_message)
         self.ws_thread.start()
