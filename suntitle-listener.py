@@ -90,20 +90,6 @@ async def stream_audio(
     if frames_per_chunk <= 0:
         raise ValueError("chunk_ms too small for given samplerate.")
 
-    # A small asyncio-compatible queue for moving data from the audio callback to the websocket task
-    queue: "asyncio.Queue[bytes]" = asyncio.Queue(maxsize=20)
-
-    # sounddevice callback pushes PCM bytes
-    def audio_callback(indata, frames, time, status):
-        if status:
-            # Non-fatal XRuns etc.
-            print(f"[audio] {status}", file=sys.stderr)
-        # Ensure correct shape and dtype
-        pcm = (indata.astype(dtype, copy=False)).tobytes()
-        # Try to enqueue without blocking to avoid starving audio thread
-        with contextlib.suppress(asyncio.QueueFull):
-            queue.put_nowait(pcm)
-
     # Open audio input stream
     stream = sd.InputStream(
         samplerate=samplerate,
@@ -111,7 +97,6 @@ async def stream_audio(
         dtype=dtype,
         blocksize=frames_per_chunk,
         device=device,
-        callback=audio_callback,
     )
 
     print(f"Connecting to {server_url} …")
@@ -128,10 +113,11 @@ async def stream_audio(
                 f"Streaming: {samplerate} Hz | {channels} ch | {chunk_ms} ms chunks | "
                 f"device={device if device is not None else 'default'} | format={fmt}"
             )
+
             try:
                 while True:
-                    chunk = await queue.get()
-                    await ws.send(chunk)  # binary frame
+                    indata, _ = stream.read(frames_per_chunk)
+                    await ws.send((indata.astype(dtype, copy=False)).tobytes())  # binary frame
             except asyncio.CancelledError:
                 pass
 
@@ -144,7 +130,8 @@ def parse_args(argv: Optional[list[str]] = None):
     p.add_argument(
         "server_url",
         nargs="?",
-        help="WebSocket server URL, e.g. ws://localhost:8000/audio or wss://example.com/stream",
+        default="ws://localhost:3030/audio",
+        help="WebSocket server URL, e.g. ws://localhost:3030/audio or wss://example.com/stream",
     )
     p.add_argument("--chunk-ms", type=int, default=20, help="Chunk size in milliseconds (default: 20)")
     p.add_argument("--samplerate", type=int, default=16000, help="Sample rate in Hz (default: 16000)")
@@ -174,10 +161,6 @@ def main():
     if args.list_devices:
         list_devices()
         sys.exit(0)
-
-    if not args.server_url:
-        print("Error: server_url is required (e.g. ws://localhost:8000/audio). Use --help for details.", file=sys.stderr)
-        sys.exit(2)
 
     try:
         device_index = resolve_input_device(args.device)

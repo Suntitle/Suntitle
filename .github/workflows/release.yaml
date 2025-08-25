@@ -1,0 +1,74 @@
+name: Release ws-proxy
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release Tag"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  build-release-linux:
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: full
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - name: x86_64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN}}
+          targets: ${{ matrix.target.name }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          env-vars: "RUST_TOOLCHAIN=${{env.RUST_TOOLCHAIN}}"
+
+      - name: Install cross
+        run: |
+          cargo install --git https://github.com/cross-rs/cross --branch main cross
+
+      - name: Install bindgen-cli
+        run: |
+          cargo install --force --locked bindgen-cli
+
+      - name: Build release
+        timeout-minutes: 120
+        working-directory: ws-proxy
+        run: |
+          cross build --release --target ${{ matrix.target.name }}
+
+      - name: Package
+        working-directory: ws-proxy
+        run: |
+          cd target/${{ matrix.target.name }}/release && tar -cJf ws-proxy.${{ matrix.target.name }}.tar.xz ws-proxy
+
+      - name: Generate checksums
+        working-directory: ws-proxy
+        run: |
+          cd target/${{ matrix.target.name }}/release
+          sha256sum ws-proxy.${{ matrix.target.name }}.tar.xz > ws-proxy.${{ matrix.target.name }}.tar.xz.sha256
+
+      - name: Upload Github Assets
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            ws-proxy/target/${{ matrix.target.name }}/release/*.tar.xz
+            ws-proxy/target/${{ matrix.target.name }}/release/*.sha256
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          tag_name: ${{ inputs.tag || github.ref_name }}

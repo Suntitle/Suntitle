@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 parser = argparse.ArgumentParser()
 
 # client options
-parser.add_argument("--uri", type=str, default='ws://localhost:43007/ws', help="WebSocket URI to connect to")
+parser.add_argument("--uri", type=str, default='ws://localhost:3030/transcribe', help="WebSocket URI to connect to")
 parser.add_argument("--warmup-file", type=str, dest="warmup_file",
         help="The path to a speech audio wav file to warm up Whisper so that the very first chunk processing is fast. It can be e.g. https://github.com/ggerganov/whisper.cpp/raw/master/samples/jfk.wav .")
 
@@ -103,8 +103,11 @@ class WebSocketProcessor:
         self.is_first = False
         return chunk_to_process
 
-    def format_output_transcript(self, o):
+    def format_output_transcript(self, o, raw):
         if o[0] is not None:
+            if raw:
+                return f"{o[2]}".lstrip()
+
             beg, end = o[0]*1000,o[1]*1000
             if self.last_end is not None:
                 beg = max(beg, self.last_end)
@@ -116,8 +119,8 @@ class WebSocketProcessor:
             logger.debug("No text in this segment")
             return None
 
-    async def send_result(self, o):
-        msg = self.format_output_transcript(o)
+    async def send_result(self, o, raw = True):
+        msg = self.format_output_transcript(o, raw)
         if msg is not None:
             await self.websocket.send(msg)
 

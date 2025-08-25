@@ -5,6 +5,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import websocket
 import threading
 import time
+import argparse
 
 # Worker thread for WebSocket connection
 class WebSocketClientThread(QThread):
@@ -92,7 +93,7 @@ class mymainwindow(QMainWindow):
             super().keyPressEvent(event)
     
     def start_websocket(self):
-        ws_url = "ws://localhost:8765/"  # Replace with your own server if needed
+        ws_url = f"ws://{args.host}/display"  # Replace with your own server if needed
         self.ws_thread = WebSocketClientThread(ws_url)
         self.ws_thread.message_received.connect(self.display_message)
         self.ws_thread.start()
@@ -105,6 +106,10 @@ class mymainwindow(QMainWindow):
             self.ws_thread.stop()
             self.ws_thread.wait()
         event.accept()
+
+parser = argparse.ArgumentParser(description="Websocket client for subtitle translation.")
+parser.add_argument("--host", default="localhost:3030", help="Websocket server host (e.g., localhost:3030)")
+args = parser.parse_args()
 
 app = QApplication(sys.argv)
 mywindow = mymainwindow()
