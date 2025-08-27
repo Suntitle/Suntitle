@@ -17,19 +17,52 @@ async def websocket_client(host):
     uri = f"ws://{host}/translate"
     async with websockets.connect(uri) as websocket:
         print(f"Connected to {uri}")
+        sentence_buffer = ""
         while True:
             try:
                 message = await websocket.recv()
                 print(f"Received: {message}")
-                translated_message = translate_text(message)
-                print(f"Translated: {translated_message}")
-                await websocket.send(translated_message)
-                print(f"Sent: {translated_message}")
+                sentence_buffer += message + " " # Add space to separate words from different messages
+
+                # Check for sentence-ending punctuation
+                if any(p in sentence_buffer for p in ['.', '!', '?']):
+                    # Simple split by sentence-ending punctuation.
+                    # This might need more sophisticated NLP for complex cases,
+                    # but for subtitles, it should be sufficient.
+                    sentences = []
+                    last_idx = 0
+                    for i, char in enumerate(sentence_buffer):
+                        if char in ['.', '!', '?']:
+                            sentences.append(sentence_buffer[last_idx:i+1].strip())
+                            last_idx = i + 1
+                    
+                    # Keep any incomplete part in the buffer
+                    sentence_buffer = sentence_buffer[last_idx:].strip()
+
+                    for sentence in sentences:
+                        if sentence: # Ensure it's not an empty string
+                            translated_sentence = translate_text(sentence)
+                            print(f"Translated: {translated_sentence}")
+                            await websocket.send(translated_sentence)
+                            print(f"Sent: {translated_sentence}")
+
             except websockets.exceptions.ConnectionClosedOK:
                 print("Connection closed normally.")
+                # Translate any remaining text in the buffer before closing
+                if sentence_buffer:
+                    translated_remaining = translate_text(sentence_buffer)
+                    print(f"Translated remaining: {translated_remaining}")
+                    await websocket.send(translated_remaining)
+                    print(f"Sent remaining: {translated_remaining}")
                 break
             except Exception as e:
                 print(f"An error occurred: {e}")
+                # Translate any remaining text in the buffer before breaking on error
+                if sentence_buffer:
+                    translated_remaining = translate_text(sentence_buffer)
+                    print(f"Translated remaining: {translated_remaining}")
+                    await websocket.send(translated_remaining)
+                    print(f"Sent remaining: {translated_remaining}")
                 break
 
 if __name__ == "__main__":

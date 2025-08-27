@@ -133,7 +133,7 @@ def parse_args(argv: Optional[list[str]] = None):
         default="ws://localhost:3030/audio",
         help="WebSocket server URL, e.g. ws://localhost:3030/audio or wss://example.com/stream",
     )
-    p.add_argument("--chunk-ms", type=int, default=20, help="Chunk size in milliseconds (default: 20)")
+    p.add_argument("--chunk-ms", type=int, default=200, help="Chunk size in milliseconds (default: 200)")
     p.add_argument("--samplerate", type=int, default=16000, help="Sample rate in Hz (default: 16000)")
     p.add_argument("--channels", type=int, default=1, help="Number of input channels (default: 1)")
     p.add_argument(

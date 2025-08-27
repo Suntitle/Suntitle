@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import AudioProcessor
 from whisper_online import *
 
 import sys
@@ -124,25 +125,72 @@ class WebSocketProcessor:
         if msg is not None:
             await self.websocket.send(msg)
 
+    async def handle_websocket_results(self, results_generator):
+        """Consumes results from the audio processor and sends them via WebSocket."""
+        try:
+            async for response in results_generator:
+                await self.websocket.send(response)
+        except websockets.exceptions.ConnectionClosedOK:
+            logger.info("WebSocket disconnected while handling results (client likely closed connection).")
+        except Exception as e:
+            logger.exception(f"Error in WebSocket results handler: {e}")
+
+
     async def process(self):
-        self.online_asr_proc.init()
-        while True:
-            a = await self.receive_audio_chunk()
-            if a is None: # End of stream or connection closed
-                break
-            self.online_asr_proc.insert_audio_chunk(a)
-            o = online.process_iter()
+        # self.online_asr_proc.init()
+        # while True:
+        #     a = await self.receive_audio_chunk()
+        #     if a is None: # End of stream or connection closed
+        #         break
+        #     self.online_asr_proc.insert_audio_chunk(a)
+        #     o = online.process_iter()
+        #     try:
+        #         await self.send_result(o)
+        #     except websockets.exceptions.ConnectionClosedOK:
+        #         logger.info("WebSocket connection closed normally during send.")
+        #         break
+        #     except websockets.exceptions.ConnectionClosedError as e:
+        #         logger.error(f"WebSocket connection closed with error during send: {e}")
+        #         break
+        #     except Exception as e:
+        #         logger.error(f"Error sending result: {e}")
+        #         break
+        global transcription_engine
+        audio_processor = AudioProcessor(
+            transcription_engine=transcription_engine,
+        )
+        await self.websocket.accept()
+        logger.info("WebSocket connection opened.")
+                
+        results_generator = await audio_processor.create_tasks()
+        websocket_task = asyncio.create_task(self.handle_websocket_results(results_generator))
+
+        try:
+            while True:
+                message = await self.websocket.recv()
+                await audio_processor.process_audio(message)
+        except KeyError as e:
+            if 'bytes' in str(e):
+                logger.warning(f"Client has closed the connection.")
+            else:
+                logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)
+        except websockets.exceptions.ConnectionClosedError as e:
+            logger.info("WebSocket disconnected by client during message receiving loop.")
+        except Exception as e:
+            logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)
+        finally:
+            logger.info("Cleaning up WebSocket endpoint...")
+            if not websocket_task.done():
+                websocket_task.cancel()
             try:
-                await self.send_result(o)
-            except websockets.exceptions.ConnectionClosedOK:
-                logger.info("WebSocket connection closed normally during send.")
-                break
-            except websockets.exceptions.ConnectionClosedError as e:
-                logger.error(f"WebSocket connection closed with error during send: {e}")
-                break
+                await websocket_task
+            except asyncio.CancelledError:
+                logger.info("WebSocket results handler task was cancelled.")
             except Exception as e:
-                logger.error(f"Error sending result: {e}")
-                break
+                logger.warning(f"Exception while awaiting websocket_task completion: {e}")
+                
+            await audio_processor.cleanup()
+            logger.info("WebSocket endpoint cleaned up successfully.")
 
 async def main():
     try:
