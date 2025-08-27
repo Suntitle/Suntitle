@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import AudioProcessor
+#import TranscriptionEngine
 from whisper_online import *
 
 import sys
@@ -25,6 +26,9 @@ parser.add_argument("--warmup-file", type=str, dest="warmup_file",
 add_shared_args(parser)
 args = parser.parse_args()
 
+transcription_engine = AudioProcessor.TranscriptionEngine(
+    **vars(args),
+)
 set_logging(args,logger,other="")
 
 # setting whisper object by args
@@ -129,7 +133,9 @@ class WebSocketProcessor:
         """Consumes results from the audio processor and sends them via WebSocket."""
         try:
             async for response in results_generator:
-                await self.websocket.send(response)
+                print(response)
+                if response['status'] != 'no_audio_detected':
+                    await self.websocket.send(' '.join(response['lines']))
         except websockets.exceptions.ConnectionClosedOK:
             logger.info("WebSocket disconnected while handling results (client likely closed connection).")
         except Exception as e:
@@ -156,10 +162,10 @@ class WebSocketProcessor:
         #         logger.error(f"Error sending result: {e}")
         #         break
         global transcription_engine
-        audio_processor = AudioProcessor(
+        audio_processor = AudioProcessor.AudioProcessor(
             transcription_engine=transcription_engine,
         )
-        await self.websocket.accept()
+        #await self.websocket.accept()
         logger.info("WebSocket connection opened.")
                 
         results_generator = await audio_processor.create_tasks()

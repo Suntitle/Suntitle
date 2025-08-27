@@ -1,4 +1,4 @@
-from whisperlivekit.timed_objects import ASRToken
+from .timed_objects import ASRToken
 import re
 
 MIN_SILENCE_DURATION = 4 #in seconds
