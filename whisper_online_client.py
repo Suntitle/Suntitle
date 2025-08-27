@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import AudioProcessor
+# import AudioProcessor
 #import TranscriptionEngine
 from whisper_online import *
 
@@ -26,9 +26,9 @@ parser.add_argument("--warmup-file", type=str, dest="warmup_file",
 add_shared_args(parser)
 args = parser.parse_args()
 
-transcription_engine = AudioProcessor.TranscriptionEngine(
-    **vars(args),
-)
+# transcription_engine = AudioProcessor.TranscriptionEngine(
+#     **vars(args),
+# )
 set_logging(args,logger,other="")
 
 # setting whisper object by args
@@ -143,72 +143,80 @@ class WebSocketProcessor:
 
 
     async def process(self):
-        # self.online_asr_proc.init()
-        # while True:
-        #     a = await self.receive_audio_chunk()
-        #     if a is None: # End of stream or connection closed
-        #         break
-        #     self.online_asr_proc.insert_audio_chunk(a)
-        #     o = online.process_iter()
-        #     try:
-        #         await self.send_result(o)
-        #     except websockets.exceptions.ConnectionClosedOK:
-        #         logger.info("WebSocket connection closed normally during send.")
-        #         break
-        #     except websockets.exceptions.ConnectionClosedError as e:
-        #         logger.error(f"WebSocket connection closed with error during send: {e}")
-        #         break
-        #     except Exception as e:
-        #         logger.error(f"Error sending result: {e}")
-        #         break
-        global transcription_engine
-        audio_processor = AudioProcessor.AudioProcessor(
-            transcription_engine=transcription_engine,
-        )
-        #await self.websocket.accept()
-        logger.info("WebSocket connection opened.")
-                
-        results_generator = await audio_processor.create_tasks()
-        websocket_task = asyncio.create_task(self.handle_websocket_results(results_generator))
-
-        try:
-            while True:
-                message = await self.websocket.recv()
-                await audio_processor.process_audio(message)
-        except KeyError as e:
-            if 'bytes' in str(e):
-                logger.warning(f"Client has closed the connection.")
-            else:
-                logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)
-        except websockets.exceptions.ConnectionClosedError as e:
-            logger.info("WebSocket disconnected by client during message receiving loop.")
-        except Exception as e:
-            logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)
-        finally:
-            logger.info("Cleaning up WebSocket endpoint...")
-            if not websocket_task.done():
-                websocket_task.cancel()
+        self.online_asr_proc.init()
+        while True:
+            a = await self.receive_audio_chunk()
+            if a is None: # End of stream or connection closed
+                break
+            self.online_asr_proc.insert_audio_chunk(a)
+            o = online.process_iter()
             try:
-                await websocket_task
-            except asyncio.CancelledError:
-                logger.info("WebSocket results handler task was cancelled.")
+                await self.send_result(o)
+            except websockets.exceptions.ConnectionClosedOK:
+                logger.info("WebSocket connection closed normally during send.")
+                break
+            except websockets.exceptions.ConnectionClosedError as e:
+                logger.error(f"WebSocket connection closed with error during send: {e}")
+                break
             except Exception as e:
-                logger.warning(f"Exception while awaiting websocket_task completion: {e}")
+                logger.error(f"Error sending result: {e}")
+                break
+        # global transcription_engine
+        # audio_processor = AudioProcessor.AudioProcessor(
+        #     transcription_engine=transcription_engine,
+        # )
+        # #await self.websocket.accept()
+        # logger.info("WebSocket connection opened.")
                 
-            await audio_processor.cleanup()
-            logger.info("WebSocket endpoint cleaned up successfully.")
+        # results_generator = await audio_processor.create_tasks()
+        # websocket_task = asyncio.create_task(self.handle_websocket_results(results_generator))
+
+        # try:
+        #     while True:
+        #         message = await self.websocket.recv()
+        #         await audio_processor.process_audio(message)
+        # except KeyError as e:
+        #     if 'bytes' in str(e):
+        #         logger.warning(f"Client has closed the connection.")
+        #     else:
+        #         logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)
+        # except websockets.exceptions.ConnectionClosedError as e:
+        #     logger.info("WebSocket disconnected by client during message receiving loop.")
+        # except Exception as e:
+        #     logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)
+        # finally:
+        #     logger.info("Cleaning up WebSocket endpoint...")
+        #     if not websocket_task.done():
+        #         websocket_task.cancel()
+        #     try:
+        #         await websocket_task
+        #     except asyncio.CancelledError:
+        #         logger.info("WebSocket results handler task was cancelled.")
+        #     except Exception as e:
+        #         logger.warning(f"Exception while awaiting websocket_task completion: {e}")
+                
+        #     await audio_processor.cleanup()
+        #     logger.info("WebSocket endpoint cleaned up successfully.")
 
 async def main():
-    try:
-        async with websockets.connect(args.uri) as websocket:
-            logger.info(f"Connected to WebSocket server at {args.uri}")
-            processor = WebSocketProcessor(websocket, online, args.min_chunk_size)
-            await processor.process()
-            logger.info("WebSocket client processing finished.")
-    except ConnectionRefusedError:
-        logger.error(f"Connection refused. Is the WebSocket server running at {args.uri}?")
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
+    reconnect_delay = 1  # seconds
+    while True:
+        try:
+            async with websockets.connect(args.uri) as websocket:
+                logger.info(f"Connected to WebSocket server at {args.uri}")
+                processor = WebSocketProcessor(websocket, online, args.min_chunk_size)
+                await processor.process()
+                logger.info("WebSocket client processing finished. Attempting to reconnect...")
+                reconnect_delay = 1 # Reset delay on successful connection
+        except (websockets.exceptions.ConnectionClosedOK, websockets.exceptions.ConnectionClosedError) as e:
+            logger.warning(f"WebSocket connection closed: {e}. Attempting to reconnect in {reconnect_delay} seconds...")
+        except ConnectionRefusedError:
+            logger.error(f"Connection refused. Is the WebSocket server running at {args.uri}? Retrying in {reconnect_delay} seconds...")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}. Retrying in {reconnect_delay} seconds...")
+        
+        await asyncio.sleep(reconnect_delay)
+        reconnect_delay = min(reconnect_delay * 2, 60) # Exponential backoff, max 60 seconds
 
 if __name__ == "__main__":
     asyncio.run(main())
