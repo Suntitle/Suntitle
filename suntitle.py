@@ -65,11 +65,11 @@ class mymainwindow(QMainWindow):
         self.panel.setFixedWidth(int(screen_width * 0.8))
         # self.panel.setFixedWidth(1000)
         self.label_1 = QLabel("Waiting for WebSocket messages...", self.panel)
-        self.label_1.setStyleSheet("color: white; font-size: 18px;")
+        self.label_1.setStyleSheet("color: white; font-size: 30px;")
         self.label_1.setWordWrap(True)
         self.label_1.setAlignment(Qt.AlignLeft | Qt.AlignTop) # Align text to top-left
         self.label_1.setFixedWidth(self.panel.width())
-        self.label_1.setFixedHeight(45) # Approximately 2 lines of 18px font with some padding
+        self.label_1.setFixedHeight(75) # Approximately 2 lines of 18px font with some padding
         # moving position
         self.label_1.move(0, 0)
 
@@ -113,11 +113,14 @@ class mymainwindow(QMainWindow):
         if len(self._message_buffer) == 0 and self.label_1.text() == "Waiting for WebSocket messages...":
             self.label_1.setText("") # Clear the initial message visually
         
-        self._message_buffer.append(msg)
+        if args.replace_on_receive:
+            # Discard the previous flow and display only the newest message.
+            self._message_buffer = [msg]
+        else:
+            self._message_buffer.append(msg)
 
         # Loop to ensure the displayed text fits within two lines, by removing oldest messages
         while True:
-            print("cycle")
             if not self._message_buffer:
                 text_to_display = ""
             else:
@@ -125,9 +128,9 @@ class mymainwindow(QMainWindow):
                 text_to_display = " ".join(self._message_buffer)
             
             self.label_1.setText(text_to_display)
-            
             font_metrics = self.label_1.fontMetrics()
             label_width = self.label_1.width()
+            characters_per_line = int(label_width / font_metrics.averageCharWidth()) - 4
             
             # Calculate the bounding rectangle for the text with word wrap
             # This gives the height the text would occupy if rendered
@@ -144,11 +147,24 @@ class mymainwindow(QMainWindow):
             # AND if there's more than one message in the buffer to remove.
             # If there's only one message, even if it's long, we should still display it.
             if rect.height() > self.label_1.height() and len(self._message_buffer) > 1:
-                self._message_buffer.pop(0) # Remove the oldest message
+                characters_per_line_temp = characters_per_line
+                message_buffer_temp = self._message_buffer.copy()
+                for i in range(len(self._message_buffer)):
+                    if characters_per_line_temp == 0:
+                        break
+                    if len(self._message_buffer[i]) <= characters_per_line_temp:
+                        message_buffer_temp[i] = ""
+                        characters_per_line_temp -= len(self._message_buffer[i])
+                    else:
+                        message_buffer_temp[i] = message_buffer_temp[i][characters_per_line_temp - 1:]
+                        characters_per_line_temp = 0
+                self._message_buffer = [m for m in message_buffer_temp if m]
+                # text_to_display = text_to_display[characters_per_line:]
             else:
                 # Either the text fits within two lines, or it's a single message
                 # (even if it's long and wraps to more than two lines, it should be displayed).
                 break
+
     def closeEvent(self, event):
         if self.ws_thread:
             self.ws_thread.stop()
@@ -157,6 +173,11 @@ class mymainwindow(QMainWindow):
 
 parser = argparse.ArgumentParser(description="Websocket client for subtitle translation.")
 parser.add_argument("--host", default="localhost:3030", help="Websocket server host (e.g., localhost:3030)")
+parser.add_argument(
+    "--replace-on-receive",
+    action="store_true",
+    help="completely replace the displayed text with each new WebSocket message",
+)
 args = parser.parse_args()
 
 app = QApplication(sys.argv)
