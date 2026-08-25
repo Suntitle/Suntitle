@@ -1,0 +1,642 @@
+openapi: 3.1.0
+info:
+  title: Suntitle Control API
+  version: 0.1.0
+  description: |
+    API for authenticating operators and managing nodes in the live subtitle
+    pipeline. Connection topology is represented by the `connections` field of
+    each node; there is intentionally no separate routes resource.
+servers:
+  - url: /api/v1
+    description: API version 1
+
+tags:
+  - name: Authentication
+  - name: Nodes
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Log in
+      description: Exchange user credentials for a bearer access token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid username or password.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Log out
+      description: Revoke the bearer token used for this request.
+      responses:
+        '204':
+          description: Logout successful.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /nodes:
+    get:
+      tags: [Nodes]
+      operationId: listNodes
+      summary: List connected nodes and their connections
+      description: |
+        Returns nodes currently known by the backend. Each node includes its type,
+        IP and connection metadata, type-specific settings, and links to peer nodes.
+      parameters:
+        - name: type
+          in: query
+          description: Return only nodes of this type.
+          schema:
+            $ref: '#/components/schemas/NodeType'
+        - name: status
+          in: query
+          description: Return only nodes with this status.
+          schema:
+            $ref: '#/components/schemas/NodeStatus'
+      responses:
+        '200':
+          description: Nodes and their connection topology.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /nodes/{nodeId}:
+    parameters:
+      - name: nodeId
+        in: path
+        required: true
+        description: Unique node identifier.
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Nodes]
+      operationId: getNode
+      summary: Get a node
+      responses:
+        '200':
+          description: Node details and connections.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Nodes]
+      operationId: updateNode
+      summary: Replace editable node information and settings
+      description: |
+        Replaces operator-managed fields. The request `type` and `settings` must
+        match the node's existing type. ID, type, status, connection topology, IP
+        information, and timestamps are server-managed and cannot be changed here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeUpdate'
+      responses:
+        '200':
+          description: Updated node.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Request type conflicts with the existing node type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: The request is malformed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: A valid bearer token is required.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          example: Bearer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ValidationFailed:
+      description: One or more fields failed validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 1024
+
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, tokenType, expiresIn, user]
+      properties:
+        accessToken:
+          type: string
+          description: Value to use with the `Authorization` header.
+        tokenType:
+          type: string
+          const: Bearer
+        expiresIn:
+          type: integer
+          minimum: 1
+          description: Token lifetime in seconds.
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+
+    NodeType:
+      type: string
+      enum: [audio_source, transcriber, translator, display]
+
+    NodeStatus:
+      type: string
+      enum: [connected, disconnected, degraded]
+
+    ConnectionStatus:
+      type: string
+      enum: [connected, reconnecting, degraded]
+
+    DataType:
+      type: string
+      description: Type of data transferred over a node connection.
+      enum: [audio, transcription, translation]
+
+    NodeBase:
+      type: object
+      required:
+        - id
+        - type
+        - name
+        - enabled
+        - status
+        - network
+        - connections
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        type:
+          $ref: '#/components/schemas/NodeType'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: [string, 'null']
+          maxLength: 1000
+        enabled:
+          type: boolean
+        status:
+          allOf:
+            - $ref: '#/components/schemas/NodeStatus'
+          readOnly: true
+        network:
+          allOf:
+            - $ref: '#/components/schemas/NetworkInfo'
+          readOnly: true
+        connections:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/NodeConnection'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    NetworkInfo:
+      type: object
+      additionalProperties: false
+      required: [ip, protocol, connectedAt, lastSeenAt]
+      properties:
+        ip:
+          type: string
+          format: ip
+          examples: [192.0.2.10, '2001:db8::10']
+        port:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 65535
+        protocol:
+          type: string
+          enum: [websocket, http, https]
+        connectedAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        clientVersion:
+          type: [string, 'null']
+
+    NodeConnection:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - peerNodeId
+        - peerNodeType
+        - direction
+        - dataType
+        - status
+        - peerIp
+        - protocol
+        - connectedAt
+        - lastActivityAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable identifier of this connection.
+        peerNodeId:
+          type: string
+          format: uuid
+        peerNodeType:
+          $ref: '#/components/schemas/NodeType'
+        peerName:
+          type: string
+        direction:
+          type: string
+          enum: [incoming, outgoing]
+        dataType:
+          $ref: '#/components/schemas/DataType'
+        status:
+          $ref: '#/components/schemas/ConnectionStatus'
+        peerIp:
+          type: string
+          format: ip
+        peerPort:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 65535
+        protocol:
+          type: string
+          enum: [websocket, http, https]
+        connectedAt:
+          type: string
+          format: date-time
+        lastActivityAt:
+          type: string
+          format: date-time
+        bytesTransferred:
+          type: integer
+          minimum: 0
+        metadata:
+          type: object
+          description: Optional implementation-specific connection information.
+          additionalProperties: true
+
+    Node:
+      oneOf:
+        - $ref: '#/components/schemas/AudioSourceNode'
+        - $ref: '#/components/schemas/TranscriberNode'
+        - $ref: '#/components/schemas/TranslatorNode'
+        - $ref: '#/components/schemas/DisplayNode'
+      discriminator:
+        propertyName: type
+        mapping:
+          audio_source: '#/components/schemas/AudioSourceNode'
+          transcriber: '#/components/schemas/TranscriberNode'
+          translator: '#/components/schemas/TranslatorNode'
+          display: '#/components/schemas/DisplayNode'
+
+    AudioSourceNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/AudioSourceVariant'
+      unevaluatedProperties: false
+    TranscriberNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/TranscriberVariant'
+      unevaluatedProperties: false
+    TranslatorNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/TranslatorVariant'
+      unevaluatedProperties: false
+    DisplayNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/DisplayVariant'
+      unevaluatedProperties: false
+
+    AudioSourceVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: audio_source
+        settings:
+          $ref: '#/components/schemas/AudioSourceSettings'
+    TranscriberVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: transcriber
+        settings:
+          $ref: '#/components/schemas/TranscriberSettings'
+    TranslatorVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: translator
+        settings:
+          $ref: '#/components/schemas/TranslatorSettings'
+    DisplayVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: display
+        settings:
+          $ref: '#/components/schemas/DisplaySettings'
+
+    NodeUpdateBase:
+      type: object
+      required: [type, name, enabled, settings]
+      properties:
+        type:
+          $ref: '#/components/schemas/NodeType'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: [string, 'null']
+          maxLength: 1000
+        enabled:
+          type: boolean
+
+    NodeUpdate:
+      oneOf:
+        - $ref: '#/components/schemas/AudioSourceNodeUpdate'
+        - $ref: '#/components/schemas/TranscriberNodeUpdate'
+        - $ref: '#/components/schemas/TranslatorNodeUpdate'
+        - $ref: '#/components/schemas/DisplayNodeUpdate'
+      discriminator:
+        propertyName: type
+        mapping:
+          audio_source: '#/components/schemas/AudioSourceNodeUpdate'
+          transcriber: '#/components/schemas/TranscriberNodeUpdate'
+          translator: '#/components/schemas/TranslatorNodeUpdate'
+          display: '#/components/schemas/DisplayNodeUpdate'
+
+    AudioSourceNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/AudioSourceVariant'
+      unevaluatedProperties: false
+    TranscriberNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranscriberVariant'
+      unevaluatedProperties: false
+    TranslatorNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranslatorVariant'
+      unevaluatedProperties: false
+    DisplayNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/DisplayVariant'
+      unevaluatedProperties: false
+
+    AudioSourceSettings:
+      type: object
+      additionalProperties: false
+      required: [sampleRateHz, channels, encoding]
+      properties:
+        sampleRateHz:
+          type: integer
+          enum: [8000, 16000, 22050, 44100, 48000]
+        channels:
+          type: integer
+          minimum: 1
+          maximum: 2
+        encoding:
+          type: string
+          enum: [pcm_s16le, pcm_f32le, opus]
+        deviceName:
+          type: [string, 'null']
+          maxLength: 256
+
+    TranscriberSettings:
+      type: object
+      additionalProperties: false
+      required: [model, language]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          examples: [large-v3]
+        language:
+          $ref: '#/components/schemas/LanguageTag'
+        task:
+          type: string
+          enum: [transcribe, translate]
+          default: transcribe
+        beamSize:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+        vadEnabled:
+          type: boolean
+          default: true
+
+    TranslatorSettings:
+      type: object
+      additionalProperties: false
+      required: [sourceLanguage, targetLanguage, provider]
+      properties:
+        sourceLanguage:
+          $ref: '#/components/schemas/LanguageTag'
+        targetLanguage:
+          $ref: '#/components/schemas/LanguageTag'
+        provider:
+          type: string
+          minLength: 1
+          examples: [openai]
+        model:
+          type: [string, 'null']
+        preserveFormatting:
+          type: boolean
+          default: true
+
+    DisplaySettings:
+      type: object
+      additionalProperties: false
+      required: [maxLines, fontScale, showOriginal]
+      properties:
+        maxLines:
+          type: integer
+          minimum: 1
+          maximum: 10
+        fontScale:
+          type: number
+          minimum: 0.5
+          maximum: 4
+        showOriginal:
+          type: boolean
+        theme:
+          type: string
+          enum: [light, dark, transparent]
+          default: dark
+
+    LanguageTag:
+      type: string
+      pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'
+      description: BCP 47 language tag.
+      examples: [en, en-US]
+
+    NodeList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Node'
+        total:
+          type: integer
+          minimum: 0
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        requestId:
+          type: string
+
+    ValidationProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [errors]
+          properties:
+            errors:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [path, message]
+                properties:
+                  path:
+                    type: string
+                    examples: [settings.language]
+                  message:
+                    type: string

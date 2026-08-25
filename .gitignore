@@ -24,4 +24,7 @@ Thumbs.db
 *.log
 *.sqlite3
 
+# Node.js package cache
+.npm-cache/
+
 target
