@@ -3,15 +3,16 @@ info:
   title: Suntitle Control API
   version: 0.1.0
   description: |
-    API for authenticating operators and managing nodes in the live subtitle
-    pipeline. Connection topology is represented by the `connections` field of
-    each node; there is intentionally no separate routes resource.
+    API for authenticating operators and managing hosts and nodes in the live
+    subtitle pipeline. Connection topology is represented by the `connections`
+    field of each node; there is intentionally no separate routes resource.
 servers:
   - url: /api/v1
     description: API version 1
 
 tags:
   - name: Authentication
+  - name: Hosts
   - name: Nodes
 
 security:
@@ -59,6 +60,46 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentUser
+      summary: Get the authenticated user
+      description: |
+        Validates the bearer token and returns its user. A missing, expired,
+        revoked, or otherwise invalid token returns `401 Unauthorized`.
+      responses:
+        '200':
+          description: The bearer token is valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /hosts:
+    get:
+      tags: [Hosts]
+      operationId: listHosts
+      summary: List hosts
+      description: Returns hosts running one or more pipeline nodes, including their IP and software version.
+      parameters:
+        - name: status
+          in: query
+          description: Return only hosts with this status.
+          schema:
+            $ref: '#/components/schemas/HostStatus'
+      responses:
+        '200':
+          description: Known hosts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /nodes:
     get:
       tags: [Nodes]
@@ -66,7 +107,7 @@ paths:
       summary: List connected nodes and their connections
       description: |
         Returns nodes currently known by the backend. Each node includes its type,
-        IP and connection metadata, type-specific settings, and links to peer nodes.
+        nested host, type-specific settings, and links to peer nodes.
       parameters:
         - name: type
           in: query
@@ -118,8 +159,8 @@ paths:
       summary: Replace editable node information and settings
       description: |
         Replaces operator-managed fields. The request `type` and `settings` must
-        match the node's existing type. ID, type, status, connection topology, IP
-        information, and timestamps are server-managed and cannot be changed here.
+        match the node's existing type. ID, type, host, status, connection topology,
+        and timestamps are server-managed and cannot be changed here.
       requestBody:
         required: true
         content:
@@ -239,6 +280,54 @@ components:
       type: string
       enum: [connected, disconnected, degraded]
 
+    HostStatus:
+      type: string
+      enum: [online, offline, degraded]
+
+    Host:
+      type: object
+      additionalProperties: false
+      required: [id, name, ip, version, status, lastSeenAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        ip:
+          type: string
+          format: ip
+          examples: [192.0.2.10, '2001:db8::10']
+        version:
+          type: string
+          minLength: 1
+          description: Version of the Suntitle host agent or runtime.
+          examples: [0.1.0]
+        status:
+          $ref: '#/components/schemas/HostStatus'
+        lastSeenAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          description: Optional host capabilities or implementation-specific information.
+          additionalProperties: true
+
+    HostList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Host'
+        total:
+          type: integer
+          minimum: 0
+
     ConnectionStatus:
       type: string
       enum: [connected, reconnecting, degraded]
@@ -256,7 +345,7 @@ components:
         - name
         - enabled
         - status
-        - network
+        - host
         - connections
         - createdAt
         - updatedAt
@@ -280,9 +369,9 @@ components:
           allOf:
             - $ref: '#/components/schemas/NodeStatus'
           readOnly: true
-        network:
+        host:
           allOf:
-            - $ref: '#/components/schemas/NetworkInfo'
+            - $ref: '#/components/schemas/Host'
           readOnly: true
         connections:
           type: array
@@ -298,31 +387,6 @@ components:
           format: date-time
           readOnly: true
 
-    NetworkInfo:
-      type: object
-      additionalProperties: false
-      required: [ip, protocol, connectedAt, lastSeenAt]
-      properties:
-        ip:
-          type: string
-          format: ip
-          examples: [192.0.2.10, '2001:db8::10']
-        port:
-          type: [integer, 'null']
-          minimum: 1
-          maximum: 65535
-        protocol:
-          type: string
-          enum: [websocket, http, https]
-        connectedAt:
-          type: string
-          format: date-time
-        lastSeenAt:
-          type: string
-          format: date-time
-        clientVersion:
-          type: [string, 'null']
-
     NodeConnection:
       type: object
       additionalProperties: false
@@ -333,7 +397,6 @@ components:
         - direction
         - dataType
         - status
-        - peerIp
         - protocol
         - connectedAt
         - lastActivityAt
@@ -356,13 +419,6 @@ components:
           $ref: '#/components/schemas/DataType'
         status:
           $ref: '#/components/schemas/ConnectionStatus'
-        peerIp:
-          type: string
-          format: ip
-        peerPort:
-          type: [integer, 'null']
-          minimum: 1
-          maximum: 65535
         protocol:
           type: string
           enum: [websocket, http, https]

@@ -1,0 +1,9 @@
+{
+  "accessToken": "mock-token",
+  "tokenType": "Bearer",
+  "expiresIn": 86400,
+  "user": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "username": "operator"
+  }
+}
