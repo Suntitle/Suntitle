@@ -27,3 +27,18 @@ cd ui
 cp .env.example .env.local
 # Edit SUNTITLE_API_PROXY_TARGET, then restart npm run dev.
 ```
+
+## Cypress integration tests
+
+Run the headless integration suite from the `ui` directory:
+
+```bash
+npm run test:e2e
+```
+
+The command starts Vite on a dedicated test port, runs Cypress, and shuts the
+server down afterward. API calls are intercepted by the specs; the successful
+auth and hosts responses use the JSON fixtures in `../mockserver`.
+
+For interactive debugging, start the UI with `npm run dev:test`, then run
+`npm run cypress:open` in a second terminal.
