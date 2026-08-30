@@ -1,0 +1,218 @@
+{
+  "items": [
+    {
+      "type": "transcriber",
+      "name": "Transcriber",
+      "description": "Turns incoming audio into timestamped text.",
+      "settings": [
+        {
+          "key": "model",
+          "label": "Model",
+          "description": "Whisper model loaded by the transcriber.",
+          "input": "text",
+          "valueType": "string",
+          "required": true,
+          "defaultValue": "large-v3",
+          "placeholder": "large-v3"
+        },
+        {
+          "key": "language",
+          "label": "Language",
+          "description": "BCP 47 language tag used for recognition.",
+          "input": "text",
+          "valueType": "string",
+          "required": true,
+          "defaultValue": "en-US",
+          "placeholder": "en-US"
+        },
+        {
+          "key": "task",
+          "label": "Task",
+          "input": "select",
+          "valueType": "string",
+          "required": false,
+          "defaultValue": "transcribe",
+          "options": [
+            { "value": "transcribe", "label": "Transcribe" },
+            { "value": "translate", "label": "Translate to English" }
+          ]
+        },
+        {
+          "key": "beamSize",
+          "label": "Beam size",
+          "input": "number",
+          "valueType": "integer",
+          "required": false,
+          "defaultValue": 5,
+          "minimum": 1,
+          "maximum": 20
+        },
+        {
+          "key": "vadEnabled",
+          "label": "Enable voice activity detection",
+          "description": "Skip silent audio before transcription.",
+          "input": "checkbox",
+          "valueType": "boolean",
+          "required": false,
+          "defaultValue": true
+        }
+      ]
+    },
+    {
+      "type": "audio_source",
+      "name": "Audio source",
+      "description": "Captures audio from a device or stream.",
+      "settings": [
+        {
+          "key": "sampleRateHz",
+          "label": "Sample rate",
+          "input": "select",
+          "valueType": "integer",
+          "required": true,
+          "defaultValue": 48000,
+          "options": [
+            { "value": 8000, "label": "8 kHz" },
+            { "value": 16000, "label": "16 kHz" },
+            { "value": 22050, "label": "22.05 kHz" },
+            { "value": 44100, "label": "44.1 kHz" },
+            { "value": 48000, "label": "48 kHz" }
+          ]
+        },
+        {
+          "key": "channels",
+          "label": "Channels",
+          "input": "select",
+          "valueType": "integer",
+          "required": true,
+          "defaultValue": 1,
+          "options": [
+            { "value": 1, "label": "Mono" },
+            { "value": 2, "label": "Stereo" }
+          ]
+        },
+        {
+          "key": "encoding",
+          "label": "Encoding",
+          "input": "select",
+          "valueType": "string",
+          "required": true,
+          "defaultValue": "pcm_s16le",
+          "options": [
+            { "value": "pcm_s16le", "label": "PCM 16-bit" },
+            { "value": "pcm_f32le", "label": "PCM 32-bit float" },
+            { "value": "opus", "label": "Opus" }
+          ]
+        },
+        {
+          "key": "deviceName",
+          "label": "Device name",
+          "input": "text",
+          "valueType": "string",
+          "required": false,
+          "defaultValue": "",
+          "placeholder": "USB Audio Device"
+        }
+      ]
+    },
+    {
+      "type": "translator",
+      "name": "Translator",
+      "description": "Translates transcription text into another language.",
+      "settings": [
+        {
+          "key": "sourceLanguage",
+          "label": "Source language",
+          "input": "text",
+          "valueType": "string",
+          "required": true,
+          "defaultValue": "en",
+          "placeholder": "en"
+        },
+        {
+          "key": "targetLanguage",
+          "label": "Target language",
+          "input": "text",
+          "valueType": "string",
+          "required": true,
+          "defaultValue": "es",
+          "placeholder": "es"
+        },
+        {
+          "key": "provider",
+          "label": "Provider",
+          "input": "text",
+          "valueType": "string",
+          "required": true,
+          "defaultValue": "openai",
+          "placeholder": "openai"
+        },
+        {
+          "key": "model",
+          "label": "Model",
+          "input": "text",
+          "valueType": "string",
+          "required": false,
+          "defaultValue": "",
+          "placeholder": "Optional model override"
+        },
+        {
+          "key": "preserveFormatting",
+          "label": "Preserve formatting",
+          "input": "checkbox",
+          "valueType": "boolean",
+          "required": false,
+          "defaultValue": true
+        }
+      ]
+    },
+    {
+      "type": "display",
+      "name": "Display",
+      "description": "Presents transcription and translation output.",
+      "settings": [
+        {
+          "key": "maxLines",
+          "label": "Maximum lines",
+          "input": "number",
+          "valueType": "integer",
+          "required": true,
+          "defaultValue": 3,
+          "minimum": 1,
+          "maximum": 10
+        },
+        {
+          "key": "fontScale",
+          "label": "Font scale",
+          "input": "number",
+          "valueType": "number",
+          "required": true,
+          "defaultValue": 1,
+          "minimum": 0.5,
+          "maximum": 4
+        },
+        {
+          "key": "showOriginal",
+          "label": "Show original text",
+          "input": "checkbox",
+          "valueType": "boolean",
+          "required": true,
+          "defaultValue": true
+        },
+        {
+          "key": "theme",
+          "label": "Theme",
+          "input": "select",
+          "valueType": "string",
+          "required": false,
+          "defaultValue": "dark",
+          "options": [
+            { "value": "light", "label": "Light" },
+            { "value": "dark", "label": "Dark" },
+            { "value": "transparent", "label": "Transparent" }
+          ]
+        }
+      ]
+    }
+  ],
+  "total": 4
+}

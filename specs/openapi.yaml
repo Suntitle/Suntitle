@@ -13,6 +13,7 @@ servers:
 tags:
   - name: Authentication
   - name: Hosts
+  - name: Node types
   - name: Nodes
 
 security:
@@ -97,6 +98,63 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /hosts/{hostId}/nodes:
+    parameters:
+      - name: hostId
+        in: path
+        required: true
+        description: Host that should install and run the node.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Nodes]
+      operationId: installNodeOnHost
+      summary: Install a node on a host
+      description: |
+        Installs a configured pipeline node on the selected host. The request
+        `type` and `settings` must match one of the definitions returned by
+        `GET /node-types`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeCreate'
+      responses:
+        '201':
+          description: Node installation was accepted and the node was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /node-types:
+    get:
+      tags: [Node types]
+      operationId: listNodeTypes
+      summary: List installable node types
+      description: |
+        Returns the node types supported by the control plane and the field
+        metadata needed to configure their type-specific settings.
+      responses:
+        '200':
+          description: Installable node types and their setting definitions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeTypeDefinitionList'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -275,6 +333,87 @@ components:
     NodeType:
       type: string
       enum: [audio_source, transcriber, translator, display]
+
+    NodeSettingValue:
+      description: A value accepted by a node setting field.
+      anyOf:
+        - type: string
+        - type: number
+        - type: boolean
+        - type: 'null'
+
+    NodeSettingOption:
+      type: object
+      additionalProperties: false
+      required: [value, label]
+      properties:
+        value:
+          $ref: '#/components/schemas/NodeSettingValue'
+        label:
+          type: string
+
+    NodeSettingDefinition:
+      type: object
+      additionalProperties: false
+      required: [key, label, input, valueType, required]
+      properties:
+        key:
+          type: string
+          pattern: '^[A-Za-z][A-Za-z0-9]*$'
+          description: Property name used in the node's settings object.
+        label:
+          type: string
+        description:
+          type: string
+        input:
+          type: string
+          enum: [text, number, select, checkbox]
+        valueType:
+          type: string
+          enum: [string, integer, number, boolean]
+        required:
+          type: boolean
+        defaultValue:
+          $ref: '#/components/schemas/NodeSettingValue'
+        placeholder:
+          type: string
+        minimum:
+          type: number
+        maximum:
+          type: number
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeSettingOption'
+
+    NodeTypeDefinition:
+      type: object
+      additionalProperties: false
+      required: [type, name, description, settings]
+      properties:
+        type:
+          $ref: '#/components/schemas/NodeType'
+        name:
+          type: string
+        description:
+          type: string
+        settings:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeSettingDefinition'
+
+    NodeTypeDefinitionList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeTypeDefinition'
+        total:
+          type: integer
+          minimum: 0
 
     NodeStatus:
       type: string
@@ -533,6 +672,41 @@ components:
           transcriber: '#/components/schemas/TranscriberNodeUpdate'
           translator: '#/components/schemas/TranslatorNodeUpdate'
           display: '#/components/schemas/DisplayNodeUpdate'
+
+    NodeCreate:
+      oneOf:
+        - $ref: '#/components/schemas/AudioSourceNodeCreate'
+        - $ref: '#/components/schemas/TranscriberNodeCreate'
+        - $ref: '#/components/schemas/TranslatorNodeCreate'
+        - $ref: '#/components/schemas/DisplayNodeCreate'
+      discriminator:
+        propertyName: type
+        mapping:
+          audio_source: '#/components/schemas/AudioSourceNodeCreate'
+          transcriber: '#/components/schemas/TranscriberNodeCreate'
+          translator: '#/components/schemas/TranslatorNodeCreate'
+          display: '#/components/schemas/DisplayNodeCreate'
+
+    AudioSourceNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/AudioSourceVariant'
+      unevaluatedProperties: false
+    TranscriberNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranscriberVariant'
+      unevaluatedProperties: false
+    TranslatorNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranslatorVariant'
+      unevaluatedProperties: false
+    DisplayNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/DisplayVariant'
+      unevaluatedProperties: false
 
     AudioSourceNodeUpdate:
       allOf:

@@ -1,4 +1,7 @@
 export type NodeType = "audio_source" | "transcriber" | "translator" | "display"
+export type NodeSettingInput = "text" | "number" | "select" | "checkbox"
+export type NodeSettingValueType = "string" | "integer" | "number" | "boolean"
+export type NodeSettingValue = string | number | boolean | null
 export type NodeStatus = "connected" | "disconnected" | "degraded"
 export type HostStatus = "online" | "offline" | "degraded"
 export type ConnectionStatus = "connected" | "reconnecting" | "degraded"
@@ -6,6 +9,37 @@ export type DataType = "audio" | "transcription" | "translation"
 export type ConnectionDirection = "incoming" | "outgoing"
 export type ConnectionProtocol = "websocket" | "http" | "https"
 export type JsonMetadata = Record<string, unknown>
+
+export interface NodeSettingOption {
+  value: NodeSettingValue
+  label: string
+}
+
+export interface NodeSettingDefinition {
+  key: string
+  label: string
+  description?: string
+  input: NodeSettingInput
+  valueType: NodeSettingValueType
+  required: boolean
+  defaultValue?: NodeSettingValue
+  placeholder?: string
+  minimum?: number
+  maximum?: number
+  options?: NodeSettingOption[]
+}
+
+export interface NodeTypeDefinition {
+  type: NodeType
+  name: string
+  description: string
+  settings: NodeSettingDefinition[]
+}
+
+export interface NodeTypeDefinitionList {
+  items: NodeTypeDefinition[]
+  total: number
+}
 
 export interface LoginRequest {
   username: string
@@ -117,6 +151,14 @@ export interface DisplayNode extends NodeBase {
 }
 
 export type Node = AudioSourceNode | TranscriberNode | TranslatorNode | DisplayNode
+
+export interface NodeCreate {
+  type: NodeType
+  name: string
+  description?: string | null
+  enabled: boolean
+  settings: Record<string, NodeSettingValue>
+}
 
 interface NodeUpdateBase {
   name: string

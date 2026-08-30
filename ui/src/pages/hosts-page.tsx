@@ -1,13 +1,15 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Box, Boxes, CircleUserRound, Server } from "lucide-react"
 import { observer } from "mobx-react-lite"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { HostManagementDialog } from "@/components/host-management-dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { useStores } from "@/stores"
-import type { HostStatus } from "@/stores/models"
+import type { Host, HostStatus } from "@/stores/models"
 
 const statusStyles: Record<HostStatus, string> = {
   online: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -29,12 +31,19 @@ function formatLastSeen(value: string) {
 export const HostsPage = observer(function HostsPage() {
   const { hostsStore } = useStores()
   const requestedHosts = useRef(false)
+  const [selectedHost, setSelectedHost] = useState<Host | null>(null)
+  const [isHostDialogOpen, setIsHostDialogOpen] = useState(false)
 
   useEffect(() => {
     if (requestedHosts.current) return
     requestedHosts.current = true
     void hostsStore.loadHosts().catch(() => undefined)
   }, [hostsStore])
+
+  function openHost(host: Host) {
+    setSelectedHost(host)
+    setIsHostDialogOpen(true)
+  }
 
   return (
     <main className="flex min-h-svh flex-col bg-violet-50/70 text-foreground md:flex-row">
@@ -126,7 +135,14 @@ export const HostsPage = observer(function HostsPage() {
                           <span className="grid size-8 place-items-center rounded-lg bg-violet-100 text-violet-700">
                             <Server className="size-4" aria-hidden="true" />
                           </span>
-                          {host.name}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="-ml-2 h-auto px-2 py-1 font-medium hover:bg-violet-100/70"
+                            onClick={() => openHost(host)}
+                          >
+                            {host.name}
+                          </Button>
                         </span>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">{host.ip}</TableCell>
@@ -146,6 +162,8 @@ export const HostsPage = observer(function HostsPage() {
           </Card>
         </div>
       </section>
+
+      <HostManagementDialog host={selectedHost} open={isHostDialogOpen} onOpenChange={setIsHostDialogOpen} />
     </main>
   )
 })

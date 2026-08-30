@@ -6,7 +6,10 @@
       "ip": "192.0.2.10",
       "version": "0.1.0",
       "status": "online",
-      "lastSeenAt": "2026-08-26T15:50:00Z"
+      "lastSeenAt": "2026-08-26T15:50:00Z",
+      "metadata": {
+        "runtime": "Linux x86_64"
+      }
     }
   ],
   "total": 1
