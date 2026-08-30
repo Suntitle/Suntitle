@@ -1,6 +1,6 @@
 import { makeAutoObservable, runInAction } from "mobx"
 import type { ApiClient } from "./api-client"
-import { getErrorMessage } from "./api-client"
+import { ApiError, getErrorMessage } from "./api-client"
 import type { LoginRequest, LoginResponse, User } from "./models"
 
 const TOKEN_STORAGE_KEY = "suntitle.accessToken"
@@ -9,6 +9,8 @@ export class AuthStore {
   accessToken: string | null = localStorage.getItem(TOKEN_STORAGE_KEY)
   user: User | null = null
   expiresAt: number | null = null
+  isInitialized = false
+  isCheckingSession = false
   isLoading = false
   error: string | null = null
 
@@ -17,7 +19,37 @@ export class AuthStore {
   }
 
   get isAuthenticated(): boolean {
-    return this.accessToken !== null && (this.expiresAt === null || this.expiresAt > Date.now())
+    return this.accessToken !== null && this.user !== null && (this.expiresAt === null || this.expiresAt > Date.now())
+  }
+
+  async initialize(): Promise<void> {
+    if (this.isInitialized || this.isCheckingSession) return
+
+    this.isCheckingSession = true
+    this.error = null
+
+    if (this.accessToken === null) {
+      this.isCheckingSession = false
+      this.isInitialized = true
+      return
+    }
+
+    try {
+      const user = await this.api.get<User>("/auth/me")
+      runInAction(() => { this.user = user })
+    } catch (error) {
+      runInAction(() => {
+        this.clearSession()
+        if (!(error instanceof ApiError && error.status === 401)) {
+          this.error = getErrorMessage(error)
+        }
+      })
+    } finally {
+      runInAction(() => {
+        this.isCheckingSession = false
+        this.isInitialized = true
+      })
+    }
   }
 
   async login(credentials: LoginRequest): Promise<void> {
@@ -29,6 +61,7 @@ export class AuthStore {
         this.accessToken = response.accessToken
         this.user = response.user
         this.expiresAt = Date.now() + response.expiresIn * 1000
+        this.isInitialized = true
         localStorage.setItem(TOKEN_STORAGE_KEY, response.accessToken)
       })
     } catch (error) {

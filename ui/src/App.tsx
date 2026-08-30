@@ -1,17 +1,46 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { Box, Eye, EyeOff, Languages } from "lucide-react"
 import { observer } from "mobx-react-lite"
+import { HostsPage } from "@/pages/hosts-page"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
 import { useStores } from "@/stores"
+
+function AuthenticationCheckScreen() {
+  return (
+    <main className="grid min-h-svh place-items-center bg-violet-50/70 px-6" aria-busy="true">
+      <div className="flex flex-col items-center gap-8 text-center">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-10 place-items-center rounded-lg bg-violet-600 text-white">
+            <Box className="size-[18px]" aria-hidden="true" />
+          </span>
+          <span className="text-xl font-semibold tracking-tight text-foreground">Suntitle</span>
+        </div>
+
+        <div className="flex flex-col items-center gap-3" aria-live="polite">
+          <Spinner className="size-6 text-violet-600" />
+          <div className="grid gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">Checking your session…</h1>
+            <p className="text-sm text-muted-foreground">Securely confirming your access to Suntitle.</p>
+          </div>
+        </div>
+      </div>
+    </main>
+  )
+}
 
 const App = observer(function App() {
   const [showPassword, setShowPassword] = useState(false)
   const { authStore } = useStores()
+
+  useEffect(() => {
+    void authStore.initialize()
+  }, [authStore])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -26,6 +55,9 @@ const App = observer(function App() {
       // AuthStore exposes the normalized API error to this observer.
     }
   }
+
+  if (!authStore.isInitialized) return <AuthenticationCheckScreen />
+  if (authStore.isAuthenticated) return <HostsPage />
 
   return (
     <main className="grid min-h-svh bg-background lg:grid-cols-2">

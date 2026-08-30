@@ -27,4 +27,8 @@ Thumbs.db
 # Node.js package cache
 .npm-cache/
 
+# Local environment overrides
+.env.local
+.env.*.local
+
 target
