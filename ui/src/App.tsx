@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { Box, Eye, EyeOff, Languages } from "lucide-react"
 import { observer } from "mobx-react-lite"
-import { HostsPage } from "@/pages/hosts-page"
+import { BrowserRouter } from "react-router-dom"
+import { WorkspaceLayout } from "@/components/workspace-layout"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -57,7 +58,13 @@ const App = observer(function App() {
   }
 
   if (!authStore.isInitialized) return <AuthenticationCheckScreen />
-  if (authStore.isAuthenticated) return <HostsPage />
+  if (authStore.isAuthenticated) {
+    return (
+      <BrowserRouter>
+        <WorkspaceLayout />
+      </BrowserRouter>
+    )
+  }
 
   return (
     <main className="grid min-h-svh bg-background lg:grid-cols-2">

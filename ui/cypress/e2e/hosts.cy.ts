@@ -27,6 +27,7 @@ describe("Hosts page", () => {
       .its("request.headers.authorization")
       .should("equal", `Bearer ${accessToken}`)
 
+    cy.location("pathname").should("equal", "/hosts")
     cy.get("h1").should("have.text", "Hosts").and("be.visible")
     cy.contains("1 host").should("be.visible")
     cy.contains("tr", "studio-host").within(() => {
@@ -127,6 +128,6 @@ describe("Hosts page", () => {
     })
 
     cy.get('[role="status"]').should("have.text", "live-transcriber was installed on studio-host.")
-    cy.contains("2 nodes").should("exist")
+    cy.contains("8 nodes").should("exist")
   })
 })
