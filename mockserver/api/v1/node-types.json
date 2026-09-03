@@ -4,6 +4,7 @@
       "type": "transcriber",
       "name": "Transcriber",
       "description": "Turns incoming audio into timestamped text.",
+      "inputTypes": ["audio_source"],
       "settings": [
         {
           "key": "model",
@@ -62,6 +63,7 @@
       "type": "audio_source",
       "name": "Audio source",
       "description": "Captures audio from a device or stream.",
+      "inputTypes": [],
       "settings": [
         {
           "key": "sampleRateHz",
@@ -118,6 +120,7 @@
       "type": "translator",
       "name": "Translator",
       "description": "Translates transcription text into another language.",
+      "inputTypes": ["transcriber"],
       "settings": [
         {
           "key": "sourceLanguage",
@@ -169,6 +172,7 @@
       "type": "display",
       "name": "Display",
       "description": "Presents transcription and translation output.",
+      "inputTypes": ["transcriber", "translator"],
       "settings": [
         {
           "key": "maxLines",

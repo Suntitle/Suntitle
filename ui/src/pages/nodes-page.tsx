@@ -4,6 +4,7 @@ import { observer } from "mobx-react-lite"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { NodeSettingsDialog } from "@/components/node-settings-dialog"
 import { cn } from "@/lib/utils"
 import { useStores } from "@/stores"
 import type { DataType, Node, NodeStatus, NodeType } from "@/stores/models"
@@ -202,36 +203,41 @@ function getPipelineLabel(index: number) {
   return index < 26 ? `Pipeline ${String.fromCharCode(65 + index)}` : `Pipeline ${index + 1}`
 }
 
-export function NodeCard({ node, position }: { node: Node; position: { x: number; y: number } }) {
+export function NodeCard({ node, position, onSelect }: { node: Node; position: { x: number; y: number }; onSelect: (node: Node) => void }) {
   const Icon = nodeTypeIcons[node.type]
 
   return (
-    <Card
+    <button
+      type="button"
       data-testid="topology-node"
       aria-label={`${node.name}, ${nodeTypeLabels[node.type]}, ${node.status}`}
-      className="absolute h-[196px] w-[210px] gap-0 border-violet-100/80 bg-white py-0 shadow-sm"
+      aria-haspopup="dialog"
+      className="absolute h-[196px] w-[210px] rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-violet-400/50"
       style={{ left: position.x, top: position.y }}
+      onClick={() => onSelect(node)}
     >
-      <CardContent className="flex h-full flex-col px-5 py-5">
-        <div className="flex items-center gap-2.5">
-          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-violet-50 text-violet-700">
-            <Icon className="size-[18px]" aria-hidden="true" />
-          </span>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-violet-700">
-            {nodeTypeLabels[node.type]}
-          </span>
-        </div>
-        <h3 className="mt-3 truncate text-base font-semibold tracking-[-0.015em]">{node.name}</h3>
-        <p className="mt-2 truncate text-xs text-muted-foreground">{node.host.name}</p>
-        <Badge variant="outline" className={cn("mt-auto capitalize", statusStyles[node.status])}>
-          {node.status}
-        </Badge>
-      </CardContent>
-    </Card>
+      <Card className="h-full w-full gap-0 border-violet-100/80 bg-white py-0 shadow-sm transition-[border-color,box-shadow] hover:border-violet-200 hover:shadow-md">
+        <CardContent className="flex h-full flex-col px-5 py-5">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-violet-50 text-violet-700">
+              <Icon className="size-[18px]" aria-hidden="true" />
+            </span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-violet-700">
+              {nodeTypeLabels[node.type]}
+            </span>
+          </div>
+          <h3 className="mt-3 truncate text-base font-semibold tracking-[-0.015em]">{node.name}</h3>
+          <p className="mt-2 truncate text-xs text-muted-foreground">{node.host.name}</p>
+          <Badge variant="outline" className={cn("mt-auto capitalize", statusStyles[node.status])}>
+            {node.status}
+          </Badge>
+        </CardContent>
+      </Card>
+    </button>
   )
 }
 
-export function PipelineDiagram({ pipeline, index }: { pipeline: PositionedPipeline; index: number }) {
+export function PipelineDiagram({ pipeline, index, onSelectNode }: { pipeline: PositionedPipeline; index: number; onSelectNode: (node: Node) => void }) {
   const label = getPipelineLabel(index)
   const markerId = `arrow-${index}-${pipeline.id.replaceAll(/[^a-zA-Z0-9_-]/g, "")}`
 
@@ -293,7 +299,7 @@ export function PipelineDiagram({ pipeline, index }: { pipeline: PositionedPipel
 
           {pipeline.nodes.map((node) => {
             const position = pipeline.positions.get(node.id)
-            return position ? <NodeCard key={node.id} node={node} position={position} /> : null
+            return position ? <NodeCard key={node.id} node={node} position={position} onSelect={onSelectNode} /> : null
           })}
         </div>
       </div>
@@ -354,12 +360,13 @@ export const NodesPage = observer(function NodesPage() {
 
             {pipelines.length > 0 && (
               <div className="space-y-8">
-                {pipelines.map((pipeline, index) => <PipelineDiagram key={pipeline.id} pipeline={pipeline} index={index} />)}
+                {pipelines.map((pipeline, index) => <PipelineDiagram key={pipeline.id} pipeline={pipeline} index={index} onSelectNode={nodesStore.selectNode} />)}
               </div>
             )}
           </CardContent>
         </Card>
       </div>
+      <NodeSettingsDialog />
     </section>
   )
 })

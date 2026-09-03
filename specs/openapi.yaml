@@ -217,8 +217,9 @@ paths:
       summary: Replace editable node information and settings
       description: |
         Replaces operator-managed fields. The request `type` and `settings` must
-        match the node's existing type. ID, type, host, status, connection topology,
-        and timestamps are server-managed and cannot be changed here.
+        match the node's existing type. `inputNodeId` selects an upstream node
+        whose type is allowed by the node type's `inputTypes`. ID, type, host,
+        status, outgoing connection topology, and timestamps are server-managed.
       requestBody:
         required: true
         content:
@@ -389,7 +390,7 @@ components:
     NodeTypeDefinition:
       type: object
       additionalProperties: false
-      required: [type, name, description, settings]
+      required: [type, name, description, inputTypes, settings]
       properties:
         type:
           $ref: '#/components/schemas/NodeType'
@@ -397,6 +398,11 @@ components:
           type: string
         description:
           type: string
+        inputTypes:
+          type: array
+          description: Node types that may be selected as this node's upstream input.
+          items:
+            $ref: '#/components/schemas/NodeType'
         settings:
           type: array
           items:
@@ -673,6 +679,17 @@ components:
           translator: '#/components/schemas/TranslatorNodeUpdate'
           display: '#/components/schemas/DisplayNodeUpdate'
 
+    NodeInputUpdate:
+      type: object
+      required: [inputNodeId]
+      properties:
+        inputNodeId:
+          type: [string, 'null']
+          format: uuid
+          description: |
+            Upstream node to connect as input. Must have a type included in the
+            selected node type's `inputTypes`; use null when the type accepts no input.
+
     NodeCreate:
       oneOf:
         - $ref: '#/components/schemas/AudioSourceNodeCreate'
@@ -712,21 +729,25 @@ components:
       allOf:
         - $ref: '#/components/schemas/NodeUpdateBase'
         - $ref: '#/components/schemas/AudioSourceVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
       unevaluatedProperties: false
     TranscriberNodeUpdate:
       allOf:
         - $ref: '#/components/schemas/NodeUpdateBase'
         - $ref: '#/components/schemas/TranscriberVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
       unevaluatedProperties: false
     TranslatorNodeUpdate:
       allOf:
         - $ref: '#/components/schemas/NodeUpdateBase'
         - $ref: '#/components/schemas/TranslatorVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
       unevaluatedProperties: false
     DisplayNodeUpdate:
       allOf:
         - $ref: '#/components/schemas/NodeUpdateBase'
         - $ref: '#/components/schemas/DisplayVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
       unevaluatedProperties: false
 
     AudioSourceSettings:

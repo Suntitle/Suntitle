@@ -33,6 +33,7 @@ export interface NodeTypeDefinition {
   type: NodeType
   name: string
   description: string
+  inputTypes: NodeType[]
   settings: NodeSettingDefinition[]
 }
 
@@ -164,6 +165,7 @@ interface NodeUpdateBase {
   name: string
   description?: string | null
   enabled: boolean
+  inputNodeId: string | null
 }
 
 export type NodeUpdate =

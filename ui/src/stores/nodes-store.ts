@@ -27,6 +27,7 @@ export class NodesStore {
   error: string | null = null
   nodeTypesError: string | null = null
   installError: string | null = null
+  saveError: string | null = null
 
   constructor(private readonly api: ApiClient) {
     makeAutoObservable<this, "api">(this, { api: false }, { autoBind: true })
@@ -52,6 +53,7 @@ export class NodesStore {
   selectNode(node: Node | null): void { this.selectedNode = node }
   clearError(): void { this.error = null }
   clearInstallError(): void { this.installError = null }
+  clearSaveError(): void { this.saveError = null }
 
   async loadNodeTypes(): Promise<void> {
     this.isLoadingNodeTypes = true
@@ -111,7 +113,7 @@ export class NodesStore {
 
   async updateNode(nodeId: string, update: NodeUpdate): Promise<Node> {
     this.isSaving = true
-    this.error = null
+    this.saveError = null
     try {
       const node = await this.api.put<Node>(`/nodes/${encodeURIComponent(nodeId)}`, update)
       runInAction(() => {
@@ -120,7 +122,7 @@ export class NodesStore {
       })
       return node
     } catch (error) {
-      runInAction(() => { this.error = getErrorMessage(error) })
+      runInAction(() => { this.saveError = getErrorMessage(error) })
       throw error
     } finally {
       runInAction(() => { this.isSaving = false })
@@ -148,10 +150,10 @@ export class NodesStore {
   private upsertNode(node: Node): void {
     const index = this.items.findIndex((item) => item.id === node.id)
     if (index === -1) {
-      this.items.push(node)
+      this.items = [...this.items, node]
       this.total += 1
     } else {
-      this.items[index] = node
+      this.items = this.items.map((item) => item.id === node.id ? node : item)
     }
   }
 }

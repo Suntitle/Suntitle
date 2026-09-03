@@ -1,0 +1,39 @@
+{
+  "id": "30000000-0000-4000-8000-000000000003",
+  "type": "transcriber",
+  "name": "Updated transcriber",
+  "description": "English transcription",
+  "enabled": true,
+  "status": "connected",
+  "host": {
+    "id": "20000000-0000-4000-8000-000000000001",
+    "name": "studio-host",
+    "ip": "192.0.2.10",
+    "version": "0.1.0",
+    "status": "online",
+    "lastSeenAt": "2026-08-26T15:50:00Z"
+  },
+  "connections": [
+    {
+      "id": "40000000-0000-4000-8000-000000000002",
+      "peerNodeId": "30000000-0000-4000-8000-000000000004",
+      "peerNodeType": "translator",
+      "peerName": "English → Spanish",
+      "direction": "outgoing",
+      "dataType": "transcription",
+      "status": "connected",
+      "protocol": "websocket",
+      "connectedAt": "2026-08-26T15:00:00Z",
+      "lastActivityAt": "2026-08-26T15:50:00Z"
+    }
+  ],
+  "createdAt": "2026-08-20T10:05:00Z",
+  "updatedAt": "2026-09-01T20:55:00Z",
+  "settings": {
+    "model": "medium",
+    "language": "en-US",
+    "task": "transcribe",
+    "beamSize": 5,
+    "vadEnabled": true
+  }
+}
