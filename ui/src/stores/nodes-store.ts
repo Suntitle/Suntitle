@@ -12,6 +12,38 @@ import type {
   NodeUpdate,
 } from "./models"
 
+function getInputNodeId(node: Node, nodes: Node[]): string | null {
+  const nodeIds = new Set(nodes.map((item) => item.id))
+
+  for (const candidate of nodes) {
+    for (const connection of candidate.connections) {
+      if (!nodeIds.has(connection.peerNodeId)) continue
+
+      const sourceId = connection.direction === "outgoing" ? candidate.id : connection.peerNodeId
+      const targetId = connection.direction === "outgoing" ? connection.peerNodeId : candidate.id
+      if (targetId === node.id) return sourceId
+    }
+  }
+
+  return null
+}
+
+function createEnabledUpdate(node: Node, nodes: Node[], enabled: boolean): NodeUpdate {
+  const base = {
+    name: node.name,
+    description: node.description ?? null,
+    enabled,
+    inputNodeId: getInputNodeId(node, nodes),
+  }
+
+  switch (node.type) {
+    case "audio_source": return { ...base, type: node.type, settings: node.settings }
+    case "transcriber": return { ...base, type: node.type, settings: node.settings }
+    case "translator": return { ...base, type: node.type, settings: node.settings }
+    case "display": return { ...base, type: node.type, settings: node.settings }
+  }
+}
+
 export class NodesStore {
   items: Node[] = []
   total = 0
@@ -24,10 +56,12 @@ export class NodesStore {
   isLoadingNodeTypes = false
   isSaving = false
   isInstalling = false
+  pendingNodeActionIds = new Set<string>()
   error: string | null = null
   nodeTypesError: string | null = null
   installError: string | null = null
   saveError: string | null = null
+  nodeActionErrors = new Map<string, string>()
 
   constructor(private readonly api: ApiClient) {
     makeAutoObservable<this, "api">(this, { api: false }, { autoBind: true })
@@ -54,6 +88,9 @@ export class NodesStore {
   clearError(): void { this.error = null }
   clearInstallError(): void { this.installError = null }
   clearSaveError(): void { this.saveError = null }
+  isNodeActionPending(nodeId: string): boolean { return this.pendingNodeActionIds.has(nodeId) }
+  nodeActionError(nodeId: string): string | null { return this.nodeActionErrors.get(nodeId) ?? null }
+  clearNodeActionError(nodeId: string): void { this.nodeActionErrors.delete(nodeId) }
 
   async loadNodeTypes(): Promise<void> {
     this.isLoadingNodeTypes = true
@@ -144,6 +181,37 @@ export class NodesStore {
       throw error
     } finally {
       runInAction(() => { this.isInstalling = false })
+    }
+  }
+
+  async restartNode(nodeId: string): Promise<Node> {
+    this.pendingNodeActionIds.add(nodeId)
+    this.nodeActionErrors.delete(nodeId)
+    try {
+      const node = await this.api.post<Node>(`/nodes/${encodeURIComponent(nodeId)}/restart`)
+      runInAction(() => { this.upsertNode(node) })
+      return node
+    } catch (error) {
+      runInAction(() => { this.nodeActionErrors.set(nodeId, getErrorMessage(error)) })
+      throw error
+    } finally {
+      runInAction(() => { this.pendingNodeActionIds.delete(nodeId) })
+    }
+  }
+
+  async disableNode(node: Node): Promise<Node> {
+    this.pendingNodeActionIds.add(node.id)
+    this.nodeActionErrors.delete(node.id)
+    try {
+      const update = createEnabledUpdate(node, this.items, false)
+      const updatedNode = await this.api.put<Node>(`/nodes/${encodeURIComponent(node.id)}`, update)
+      runInAction(() => { this.upsertNode(updatedNode) })
+      return updatedNode
+    } catch (error) {
+      runInAction(() => { this.nodeActionErrors.set(node.id, getErrorMessage(error)) })
+      throw error
+    } finally {
+      runInAction(() => { this.pendingNodeActionIds.delete(node.id) })
     }
   }
 

@@ -70,7 +70,9 @@ describe("Nodes page", () => {
     cy.contains("a", "Nodes").click()
     cy.wait("@getNodes")
 
-    cy.contains('[data-testid="topology-node"]', "Live transcriber").click()
+    cy.contains('[data-testid="topology-node"]', "Live transcriber")
+      .find('button[aria-label^="Open settings for Live transcriber"]')
+      .click()
     cy.wait("@getNodeTypes")
 
     cy.get('[data-slot="dialog-title"]').should("have.text", "Update Live transcriber")
@@ -118,5 +120,83 @@ describe("Nodes page", () => {
 
     cy.get('[data-slot="dialog-content"]').should("not.exist")
     cy.contains('[data-testid="topology-node"]', "Updated transcriber").should("be.visible")
+  })
+
+  it("restarts and disables a node from the actions dropdown after confirmation", () => {
+    cy.intercept("POST", "**/api/v1/nodes/30000000-0000-4000-8000-000000000001/restart", {
+      fixture: "api/v1/nodes/30000000-0000-4000-8000-000000000001/restart.json",
+    }).as("restartNode")
+    cy.intercept("PUT", "**/api/v1/nodes/30000000-0000-4000-8000-000000000001", {
+      fixture: "fixtures/nodes/studio-microphone-disabled.json",
+    }).as("disableNode")
+
+    visitAuthenticatedWorkspace()
+    cy.wait(["@getCurrentUser", "@getHosts"])
+    cy.contains("a", "Nodes").click()
+    cy.wait("@getNodes")
+
+    cy.contains('[data-testid="topology-node"]', "Studio microphone")
+      .find('button[aria-label="Actions for Studio microphone"]')
+      .click()
+    cy.contains('[data-slot="dropdown-menu-item"]', "Restart node").click()
+
+    cy.get('[data-slot="alert-dialog-title"]').should("have.text", "Restart Studio microphone?")
+    cy.contains('[data-slot="alert-dialog-content"]', "may pause briefly").should("be.visible")
+
+    cy.window().then((window) => {
+      let renderedDisableConfirmation = false
+      const observer = new window.MutationObserver(() => {
+        renderedDisableConfirmation ||= window.document.body.textContent?.includes("Disable Studio microphone?") ?? false
+      })
+      observer.observe(window.document.body, { childList: true, subtree: true, characterData: true })
+
+      cy.contains('button[data-slot="alert-dialog-cancel"]', "Cancel").click()
+      cy.wait(500).then(() => {
+        observer.disconnect()
+        expect(renderedDisableConfirmation).to.equal(false)
+      })
+    })
+    cy.get('[data-slot="alert-dialog-content"]').should("not.exist")
+
+    cy.contains('[data-testid="topology-node"]', "Studio microphone")
+      .find('button[aria-label="Actions for Studio microphone"]')
+      .click()
+    cy.contains('[data-slot="dropdown-menu-item"]', "Restart node").click()
+    cy.contains('button[data-slot="alert-dialog-action"]', "Restart node").click()
+
+    cy.wait("@restartNode").then(({ request }) => {
+      expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
+    })
+    cy.get('[data-slot="alert-dialog-content"]').should("not.exist")
+
+    cy.contains('[data-testid="topology-node"]', "Studio microphone")
+      .find('button[aria-label="Actions for Studio microphone"]')
+      .click()
+    cy.contains('[data-slot="dropdown-menu-item"]', "Disable node").click()
+
+    cy.get('[data-slot="alert-dialog-title"]').should("have.text", "Disable Studio microphone?")
+    cy.contains('[data-slot="alert-dialog-content"]', "may interrupt downstream output").should("be.visible")
+    cy.contains('button[data-slot="alert-dialog-action"]', "Disable node").click()
+
+    cy.wait("@disableNode").then(({ request }) => {
+      expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
+      expect(request.body).to.deep.equal({
+        type: "audio_source",
+        name: "Studio microphone",
+        description: "Primary audio input",
+        enabled: false,
+        inputNodeId: null,
+        settings: {
+          sampleRateHz: 48000,
+          channels: 1,
+          encoding: "pcm_s16le",
+          deviceName: "USB Audio Device",
+        },
+      })
+    })
+
+    cy.contains('[data-testid="topology-node"]', "Studio microphone").within(() => {
+      cy.contains("disabled").should("be.visible")
+    })
   })
 })

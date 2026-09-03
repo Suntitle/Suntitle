@@ -4,6 +4,7 @@ import { observer } from "mobx-react-lite"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { NodeActionsMenu } from "@/components/node-actions-menu"
 import { SettingField } from "@/components/node-setting-field"
 import {
   Dialog,
@@ -27,10 +28,11 @@ import type {
   NodeTypeDefinition,
 } from "@/stores/models"
 
-const nodeStatusStyles: Record<NodeStatus, string> = {
+const nodeStatusStyles: Record<NodeStatus | "disabled", string> = {
   connected: "border-emerald-200 bg-emerald-50 text-emerald-700",
   degraded: "border-amber-200 bg-amber-50 text-amber-700",
   disconnected: "border-neutral-200 bg-neutral-100 text-neutral-600",
+  disabled: "border-neutral-200 bg-neutral-100 text-neutral-600",
 }
 
 function formatLastSeen(value: string) {
@@ -163,7 +165,10 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
                         <p className="truncate text-sm font-medium">{node.name}</p>
                         <p className="truncate text-xs text-muted-foreground">{nodesStore.nodeTypes.find((item) => item.type === node.type)?.name ?? node.type.replaceAll("_", " ")} · {host.name}</p>
                       </div>
-                      <Badge variant="outline" className={cn("capitalize", nodeStatusStyles[node.status])}>{node.status}</Badge>
+                      <Badge variant="outline" className={cn("capitalize", nodeStatusStyles[node.enabled ? node.status : "disabled"])}>
+                        {node.enabled ? node.status : "disabled"}
+                      </Badge>
+                      <NodeActionsMenu node={node} />
                     </div>
                   ))}
                 </div>

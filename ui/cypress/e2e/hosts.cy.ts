@@ -96,7 +96,13 @@ describe("Hosts page", () => {
     cy.contains("section", "Installed nodes").within(() => {
       cy.contains("Studio microphone").should("be.visible")
       cy.contains(/connected/i).should("be.visible")
+      cy.get('button[aria-label="Actions for Studio microphone"]').click()
     })
+    cy.get('[data-slot="dropdown-menu-content"]').within(() => {
+      cy.contains('[data-slot="dropdown-menu-item"]', "Restart node").should("be.visible")
+      cy.contains('[data-slot="dropdown-menu-item"]', "Disable node").should("be.visible")
+    })
+    cy.get("body").type("{esc}")
 
     cy.get('button[aria-label="Node type"]').should("contain.text", "Transcriber").click()
     cy.get('[data-slot="select-item"]').contains("Translator").click()

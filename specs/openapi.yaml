@@ -248,6 +248,38 @@ paths:
         '422':
           $ref: '#/components/responses/ValidationFailed'
 
+  /nodes/{nodeId}/restart:
+    parameters:
+      - name: nodeId
+        in: path
+        required: true
+        description: Unique node identifier.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Nodes]
+      operationId: restartNode
+      summary: Restart a node
+      description: Restarts the selected node while preserving its configuration and connections.
+      responses:
+        '200':
+          description: Restarted node.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The node cannot be restarted in its current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
   securitySchemes:
     bearerAuth:

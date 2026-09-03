@@ -4,6 +4,7 @@ import { observer } from "mobx-react-lite"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { NodeActionsMenu } from "@/components/node-actions-menu"
 import { NodeSettingsDialog } from "@/components/node-settings-dialog"
 import { cn } from "@/lib/utils"
 import { useStores } from "@/stores"
@@ -48,10 +49,11 @@ const nodeTypeIcons: Record<NodeType, typeof Mic> = {
   display: Monitor,
 }
 
-const statusStyles: Record<NodeStatus, string> = {
+const statusStyles: Record<NodeStatus | "disabled", string> = {
   connected: "border-emerald-200 bg-emerald-50 text-emerald-700",
   degraded: "border-amber-200 bg-amber-50 text-amber-700",
   disconnected: "border-neutral-200 bg-neutral-100 text-neutral-600",
+  disabled: "border-neutral-200 bg-neutral-100 text-neutral-600",
 }
 
 function buildEdges(nodes: Node[]): TopologyEdge[] {
@@ -205,19 +207,23 @@ function getPipelineLabel(index: number) {
 
 export function NodeCard({ node, position, onSelect }: { node: Node; position: { x: number; y: number }; onSelect: (node: Node) => void }) {
   const Icon = nodeTypeIcons[node.type]
+  const state = node.enabled ? node.status : "disabled"
 
   return (
-    <button
-      type="button"
+    <div
       data-testid="topology-node"
-      aria-label={`${node.name}, ${nodeTypeLabels[node.type]}, ${node.status}`}
-      aria-haspopup="dialog"
-      className="absolute h-[196px] w-[210px] rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-violet-400/50"
+      className="group absolute h-[196px] w-[210px]"
       style={{ left: position.x, top: position.y }}
-      onClick={() => onSelect(node)}
     >
-      <Card className="h-full w-full gap-0 border-violet-100/80 bg-white py-0 shadow-sm transition-[border-color,box-shadow] hover:border-violet-200 hover:shadow-md">
-        <CardContent className="flex h-full flex-col px-5 py-5">
+      <Card className="relative h-full w-full gap-0 border-violet-100/80 bg-white py-0 shadow-sm transition-[border-color,box-shadow] group-hover:border-violet-200 group-hover:shadow-md">
+        <button
+          type="button"
+          aria-label={`Open settings for ${node.name}, ${nodeTypeLabels[node.type]}, ${state}`}
+          aria-haspopup="dialog"
+          className="absolute inset-0 rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-violet-400/50"
+          onClick={() => onSelect(node)}
+        />
+        <CardContent className="pointer-events-none relative flex h-full flex-col px-5 py-5">
           <div className="flex items-center gap-2.5">
             <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-violet-50 text-violet-700">
               <Icon className="size-[18px]" aria-hidden="true" />
@@ -228,12 +234,13 @@ export function NodeCard({ node, position, onSelect }: { node: Node; position: {
           </div>
           <h3 className="mt-3 truncate text-base font-semibold tracking-[-0.015em]">{node.name}</h3>
           <p className="mt-2 truncate text-xs text-muted-foreground">{node.host.name}</p>
-          <Badge variant="outline" className={cn("mt-auto capitalize", statusStyles[node.status])}>
-            {node.status}
-          </Badge>
+          <div className="mt-auto flex items-center justify-between gap-2">
+            <Badge variant="outline" className={cn("capitalize", statusStyles[state])}>{state}</Badge>
+            <div className="pointer-events-auto relative z-10"><NodeActionsMenu node={node} /></div>
+          </div>
         </CardContent>
       </Card>
-    </button>
+    </div>
   )
 }
 
