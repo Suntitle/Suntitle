@@ -16,6 +16,7 @@ setups.
 
 - Python 3.10 and [uv](https://docs.astral.sh/uv/)
 - Rust and Cargo
+- [just](https://just.systems/) command runner
 - A working microphone/input device
 - PortAudio, if it is not already available on the machine (`brew install
   portaudio` on macOS)
@@ -26,8 +27,20 @@ Face, so they require internet access and can take a while to start.
 Install the Python dependencies from the repository root:
 
 ```bash
-uv sync
+just setup
 ```
+
+## Run the web UI with the API backend
+
+Start the WebSocket proxy/control API and UI from the repository root. Press
+`Ctrl+C` to stop both processes:
+
+```bash
+just ui
+```
+
+See [`ui/README.md`](ui/README.md) for separate service commands, custom API
+targets, and Cypress testing.
 
 ## Run the complete stack locally
 
@@ -39,19 +52,19 @@ clients that are not connected.
    on port `3031`, sharing the proxy's in-memory host registry:
 
    ```bash
-   cargo run --release --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
+   just proxy-release
    ```
 
 2. Start the subtitle window:
 
    ```bash
-   uv run python suntitle.py --host localhost:3030
+   just subtitle
    ```
 
 3. Start the translator:
 
    ```bash
-   uv run python suntitle-translator.py --host localhost:3030
+   just translator
    ```
 
    The current translator is fixed to Ukrainian-to-Czech translation using
@@ -60,27 +73,24 @@ clients that are not connected.
 4. Start the Whisper transcriber and wait for it to finish loading the model:
 
    ```bash
-   uv run python whisper_online_client.py \
-     --uri ws://localhost:3030/transcribe \
-     --model small \
-     --language auto
+   just transcriber
    ```
 
    `small` is a practical local default. Use another supported Whisper model if
-   desired; run `uv run python whisper_online_client.py --help` for all options.
+   desired; run `just transcriber-help` for all options.
 
 5. Stream microphone audio to the proxy's root WebSocket endpoint:
 
    ```bash
-   uv run python suntitle-listener.py ws://localhost:3030
+   just listener
    ```
 
    To inspect available input devices and then select one by index or a unique
    part of its name:
 
    ```bash
-   uv run python suntitle-listener.py --list-devices
-   uv run python suntitle-listener.py ws://localhost:3030 --device 2
+   just listener-devices
+   just listener-device 2
    ```
 
 Press `Ctrl+C` in the terminal processes to stop them. Press `Esc` while the
@@ -99,60 +109,37 @@ terminal.
 1. Start the WebSocket proxy and control API:
 
    ```bash
-   cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
+   just proxy
    ```
 
 2. Start Diamant. Its ID file keeps the host UUID stable between restarts, and
    `--project-dir` tells it where to launch node programs:
 
    ```bash
-   cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- \
-     --id-file .suntitle/diamant.id \
-     --project-dir "$PWD"
+   just diamant-local
    ```
 
-3. List hosts and copy the `id` of `local-diamant` into `HOST_ID`:
+3. List hosts and copy the `id` of `local-diamant`:
 
    ```bash
-   curl -sS http://127.0.0.1:3031/api/v1/hosts | python3 -m json.tool
-   HOST_ID="<host-id>"
+   just hosts
    ```
 
 4. Install and start an audio-source node on that host:
 
    ```bash
-   curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/$HOST_ID/nodes" \
-     -H 'Content-Type: application/json' \
-     -d '{
-       "type": "audio_source",
-       "name": "Local microphone",
-       "description": "Default local audio input",
-       "enabled": true,
-       "settings": {
-         "sampleRateHz": 16000,
-         "channels": 1,
-         "encoding": "pcm_s16le",
-         "deviceName": null
-       }
-     }' | python3 -m json.tool
+   just install-audio-source <host-id>
    ```
 
    Diamant launches the audio listener immediately. Set `deviceName` to a device
    name when the system default is not the intended input.
 
-5. List the nodes, then copy the created node's `id` into `NODE_ID` to inspect or
-   restart it:
+5. List the nodes, then use the created node's `id` to inspect or restart it:
 
    ```bash
-   curl -sS http://127.0.0.1:3031/api/v1/nodes | python3 -m json.tool
-   NODE_ID="<node-id>"
-
-   curl -sS "http://127.0.0.1:3031/api/v1/nodes/$NODE_ID" \
-     | python3 -m json.tool
-
-   curl -sS -X POST \
-     "http://127.0.0.1:3031/api/v1/nodes/$NODE_ID/restart" \
-     | python3 -m json.tool
+   just nodes
+   just node <node-id>
+   just restart-node <node-id>
    ```
 
 Use `PUT /api/v1/nodes/{nodeId}` with the complete editable node document to
@@ -173,13 +160,13 @@ mock audio -> /transcribe -> /translate -> /display
 Start the proxy from the repository root:
 
 ```bash
-cargo run --release --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
+just proxy-release
 ```
 
 In a second terminal, run the probe:
 
 ```bash
-cargo run --manifest-path ws-proxy/Cargo.toml --example e2e_probe
+just e2e
 ```
 
 A successful run prints:
@@ -196,7 +183,7 @@ example. It builds and starts `ws-proxy`, starts a temporary `diamant` agent,
 and checks that the host is returned by the control API:
 
 ```bash
-cargo run --manifest-path ws-proxy/Cargo.toml --example host_registration_e2e
+just host-e2e
 ```
 
 The example stops both child processes and removes its temporary identity file
@@ -205,7 +192,7 @@ when it finishes.
 To verify node lifecycle handling end to end, run:
 
 ```bash
-cargo run --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
+just node-e2e
 ```
 
 This starts the proxy/API and Diamant locally, registers audio-source and display
@@ -240,25 +227,24 @@ or upload this release asset.
 From the repository root, deploy the `dev` stack:
 
 ```bash
-cd infrastructure
 export GITHUB_TOKEN="<token>"
-pulumi stack select dev
-pulumi preview
-pulumi up
+just infra-select
+just infra-preview
+just infra-up
 ```
 
 For a new Pulumi backend where the stack does not exist yet, initialize it with
-`pulumi stack init dev` instead of selecting it. The checked-in dev configuration
+`just infra-init` instead of selecting it. The checked-in dev configuration
 uses AWS region `eu-north-1`; change it before deployment if needed:
 
 ```bash
-pulumi config set aws:region <region>
+just infra-region <region>
 ```
 
 Get the proxy address after deployment:
 
 ```bash
-pulumi stack output publicIp
+just infra-ip
 ```
 
 Cloud-init downloads and starts the release after the instance is created. Wait
@@ -266,22 +252,19 @@ until TCP port `3030` accepts connections, then return to the repository root
 and run the local components in separate terminals, replacing `<public-ip>`:
 
 ```bash
-uv run python suntitle.py --host <public-ip>:3030
+just subtitle <public-ip>:3030
 ```
 
 ```bash
-uv run python suntitle-translator.py --host <public-ip>:3030
+just translator <public-ip>:3030
 ```
 
 ```bash
-uv run python whisper_online_client.py \
-  --uri ws://<public-ip>:3030/transcribe \
-  --model small \
-  --language auto
+just transcriber <public-ip>:3030
 ```
 
 ```bash
-uv run python suntitle-listener.py ws://<public-ip>:3030
+just listener <public-ip>:3030
 ```
 
 Port `3030` is currently exposed publicly and uses unencrypted WebSockets
@@ -293,9 +276,8 @@ Pulumi state; use a short-lived, read-only token.
 Destroy the AWS resources when they are no longer needed:
 
 ```bash
-cd infrastructure
 export GITHUB_TOKEN="<token>"
-pulumi destroy
+just infra-destroy
 ```
 
 ## WebSocket routes
@@ -314,8 +296,7 @@ pulumi destroy
 each host that should register with the proxy:
 
 ```bash
-cargo run --release --manifest-path ws-proxy/Cargo.toml --bin diamant -- \
-  --proxy-url ws://localhost:3030/register
+just diamant
 ```
 
 The host name defaults to the operating system hostname and can be overridden
