@@ -1,40 +1,60 @@
-import asyncio
-import websockets
 import argparse
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import asyncio
+from typing import Optional
 
-# Load model directly
-tokenizer = AutoTokenizer.from_pretrained("Helsinki-NLP/opus-mt-uk-cs")
-model = AutoModelForSeq2SeqLM.from_pretrained("Helsinki-NLP/opus-mt-uk-cs")
+import websockets
 
-def translate_text(text_to_translate):
-    input_ids = tokenizer(text_to_translate, return_tensors="pt").input_ids
-    outputs = model.generate(input_ids)
-    translated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return translated_text
 
-async def websocket_client(host):
-    uri = f"ws://{host}/translate"
+def parse_args(argv: Optional[list[str]] = None):
+    parser = argparse.ArgumentParser(description="Websocket client for subtitle translation.")
+    parser.add_argument("--host", default="localhost:3030", help="Websocket server authority")
+    parser.add_argument("--source-language", required=True)
+    parser.add_argument("--target-language", required=True)
+    parser.add_argument("--provider", required=True, choices=["huggingface"])
+    parser.add_argument("--model", help="Hugging Face model override")
+    parser.add_argument("--no-preserve-formatting", action="store_false", dest="preserve_formatting")
+    return parser.parse_args(argv)
+
+
+def model_name(args) -> str:
+    return args.model or f"Helsinki-NLP/opus-mt-{args.source_language}-{args.target_language}"
+
+
+def load_translator(name: str):
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(name)
+    model = AutoModelForSeq2SeqLM.from_pretrained(name)
+
+    def translate(text: str) -> str:
+        input_ids = tokenizer(text, return_tensors="pt").input_ids
+        output = model.generate(input_ids)
+        return tokenizer.decode(output[0], skip_special_tokens=True)
+
+    return translate
+
+
+def preserve_surrounding_whitespace(source: str, translated: str) -> str:
+    leading = source[: len(source) - len(source.lstrip())]
+    trailing = source[len(source.rstrip()) :]
+    return f"{leading}{translated}{trailing}"
+
+
+async def websocket_client(args, translate):
+    uri = f"ws://{args.host}/translate"
     async with websockets.connect(uri) as websocket:
         print(f"Connected to {uri}")
-        while True:
-            try:
-                message = await websocket.recv()
-                print(f"Received: {message}")
-                translated_message = translate_text(message)
-                print(f"Translated: {translated_message}")
-                await websocket.send(translated_message)
-                print(f"Sent: {translated_message}")
-            except websockets.exceptions.ConnectionClosedOK:
-                print("Connection closed normally.")
-                break
-            except Exception as e:
-                print(f"An error occurred: {e}")
-                break
+        async for message in websocket:
+            translated = translate(message.strip() if args.preserve_formatting else message)
+            if args.preserve_formatting:
+                translated = preserve_surrounding_whitespace(message, translated)
+            await websocket.send(translated)
+
+
+def main(argv: Optional[list[str]] = None):
+    args = parse_args(argv)
+    asyncio.run(websocket_client(args, load_translator(model_name(args))))
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Websocket client for subtitle translation.")
-    parser.add_argument("--host", default="localhost:3030", help="Websocket server host (e.g., localhost:3030)")
-    args = parser.parse_args()
-
-    asyncio.run(websocket_client(args.host))
+    main()

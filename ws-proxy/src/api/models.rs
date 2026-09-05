@@ -53,7 +53,7 @@ pub struct User {
     pub username: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
     AudioSource,
@@ -149,7 +149,7 @@ pub struct NodeTypeDefinitionList {
     pub total: u64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
     Connected,
@@ -271,7 +271,7 @@ pub struct NodeBase {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeUpdateBase {
     #[serde(rename = "type")]
@@ -283,7 +283,7 @@ pub struct NodeUpdateBase {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeInputUpdate {
     /// Upstream node to connect as input. Must have a type included in the
@@ -292,7 +292,7 @@ pub struct NodeInputUpdate {
     pub input_node_id: Option<Uuid>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioSourceSettings {
     #[schema(schema_with = sample_rate_schema)]
@@ -305,7 +305,7 @@ pub struct AudioSourceSettings {
     pub device_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioEncoding {
     PcmS16le,
@@ -314,7 +314,7 @@ pub enum AudioEncoding {
 }
 
 /// BCP 47 language tag.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct LanguageTag(pub String);
 
@@ -331,7 +331,7 @@ impl utoipa::PartialSchema for LanguageTag {
 
 impl ToSchema for LanguageTag {}
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriberTask {
     #[default]
@@ -339,7 +339,7 @@ pub enum TranscriberTask {
     Translate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranscriberSettings {
     #[schema(min_length = 1, examples("large-v3"))]
@@ -357,7 +357,7 @@ pub struct TranscriberSettings {
     pub vad_enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslatorSettings {
     pub source_language: LanguageTag,
@@ -371,7 +371,7 @@ pub struct TranslatorSettings {
     pub preserve_formatting: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DisplayTheme {
     Light,
@@ -380,7 +380,7 @@ pub enum DisplayTheme {
     Transparent,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisplaySettings {
     #[schema(minimum = 1, maximum = 10)]
@@ -396,7 +396,7 @@ pub struct DisplaySettings {
 
 macro_rules! variant {
     ($name:ident, $settings:ty) => {
-        #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
         pub struct $name {
             #[serde(rename = "type")]
             pub node_type: NodeType,
@@ -434,7 +434,7 @@ node_shape!(DisplayNodeCreate, NodeUpdateBase, DisplayVariant);
 
 macro_rules! update_shape {
     ($name:ident, $variant:ty) => {
-        #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
         pub struct $name {
             #[serde(flatten)]
             pub base: NodeUpdateBase,
@@ -481,7 +481,7 @@ pub enum NodeCreate {
     Display(DisplayNodeCreate),
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(untagged)]
 #[schema(discriminator(property_name = "type", mapping(
     ("audio_source" = "#/components/schemas/AudioSourceNodeUpdate"),
@@ -494,6 +494,137 @@ pub enum NodeUpdate {
     Transcriber(TranscriberNodeUpdate),
     Translator(TranslatorNodeUpdate),
     Display(DisplayNodeUpdate),
+}
+
+impl Node {
+    pub fn base(&self) -> &NodeBase {
+        match self {
+            Self::AudioSource(node) => &node.base,
+            Self::Transcriber(node) => &node.base,
+            Self::Translator(node) => &node.base,
+            Self::Display(node) => &node.base,
+        }
+    }
+
+    pub fn base_mut(&mut self) -> &mut NodeBase {
+        match self {
+            Self::AudioSource(node) => &mut node.base,
+            Self::Transcriber(node) => &mut node.base,
+            Self::Translator(node) => &mut node.base,
+            Self::Display(node) => &mut node.base,
+        }
+    }
+
+    pub fn id(&self) -> Uuid {
+        self.base().id
+    }
+
+    pub fn node_type(&self) -> NodeType {
+        self.base().node_type
+    }
+
+    pub fn status(&self) -> NodeStatus {
+        self.base().status
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.base().enabled
+    }
+
+    pub fn set_status(&mut self, status: NodeStatus) {
+        let base = self.base_mut();
+        base.status = status;
+        base.updated_at = Utc::now();
+    }
+
+    pub fn from_update(id: Uuid, host: Host, update: &NodeUpdate) -> Self {
+        let now = Utc::now();
+        let update_base = update.base();
+        Self::from_base_and_update(
+            NodeBase {
+                id,
+                node_type: update_base.node_type,
+                name: update_base.name.clone(),
+                description: update_base.description.clone(),
+                enabled: update_base.enabled,
+                status: NodeStatus::Disconnected,
+                host,
+                connections: Vec::new(),
+                created_at: now,
+                updated_at: now,
+            },
+            update,
+        )
+    }
+
+    pub fn with_update(&self, update: &NodeUpdate) -> Self {
+        let old = self.base();
+        let update_base = update.base();
+        Self::from_base_and_update(
+            NodeBase {
+                id: old.id,
+                node_type: update_base.node_type,
+                name: update_base.name.clone(),
+                description: update_base.description.clone(),
+                enabled: update_base.enabled,
+                status: NodeStatus::Disconnected,
+                host: old.host.clone(),
+                connections: old.connections.clone(),
+                created_at: old.created_at,
+                updated_at: Utc::now(),
+            },
+            update,
+        )
+    }
+
+    fn from_base_and_update(base: NodeBase, update: &NodeUpdate) -> Self {
+        match update {
+            NodeUpdate::AudioSource(node) => Self::AudioSource(AudioSourceNode {
+                base,
+                variant: node.variant.clone(),
+            }),
+            NodeUpdate::Transcriber(node) => Self::Transcriber(TranscriberNode {
+                base,
+                variant: node.variant.clone(),
+            }),
+            NodeUpdate::Translator(node) => Self::Translator(TranslatorNode {
+                base,
+                variant: node.variant.clone(),
+            }),
+            NodeUpdate::Display(node) => Self::Display(DisplayNode {
+                base,
+                variant: node.variant.clone(),
+            }),
+        }
+    }
+}
+
+impl NodeUpdate {
+    pub fn base(&self) -> &NodeUpdateBase {
+        match self {
+            Self::AudioSource(node) => &node.base,
+            Self::Transcriber(node) => &node.base,
+            Self::Translator(node) => &node.base,
+            Self::Display(node) => &node.base,
+        }
+    }
+
+    pub fn node_type(&self) -> NodeType {
+        self.base().node_type
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.base().enabled
+    }
+
+    pub fn input_node_id(&self) -> Option<Uuid> {
+        match self {
+            Self::AudioSource(node) => node.input.input_node_id,
+            Self::Transcriber(node) => node.input.input_node_id,
+            Self::Translator(node) => node.input.input_node_id,
+            Self::Display(node) => node.input.input_node_id,
+        }
+    }
 }
 
 #[derive(Deserialize)]

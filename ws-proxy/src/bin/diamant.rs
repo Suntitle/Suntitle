@@ -6,21 +6,23 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, builder::NonEmptyStringValueParser};
-use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use futures_util::{SinkExt, StreamExt};
 use rootcause::compat::MainReport;
 use rootcause::option_ext::OptionExt;
 use rootcause::prelude::*;
-use tokio_stream::wrappers::IntervalStream;
 use tokio_tungstenite::{
-    MaybeTlsStream, connect_async,
+    MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::{Error as WebSocketError, Message},
 };
+use url::Url;
 use uuid::Uuid;
+use ws_proxy::diamant::nodes::{NodeEvent, NodeProcessManager, data_plane_url_from_registration};
 use ws_proxy::registration::{RegistrationClientMessage, RegistrationServerMessage};
 
 const DEFAULT_PROXY_URL: &str = "ws://127.0.0.1:3030/register";
 const DEFAULT_HEALTH_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_ID_FILE: &str = "diamant.id";
+const DEFAULT_SHUTDOWN_GRACE_SECONDS: u64 = 5;
 
 /// Registers this host with a Suntitle VS Proxy.
 #[derive(Debug, Parser)]
@@ -64,6 +66,22 @@ struct Config {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     health_interval_seconds: u64,
+
+    /// Repository directory containing pyproject.toml and the Python entry points.
+    #[arg(long, env = "SUNTITLE_PROJECT_DIR", default_value = ".")]
+    project_dir: PathBuf,
+
+    /// uv executable used to launch node processes.
+    #[arg(long, env = "SUNTITLE_UV_BIN", default_value = "uv")]
+    uv_bin: PathBuf,
+
+    /// WebSocket data-plane base URL. Defaults to the registration URL without /register.
+    #[arg(long, env = "SUNTITLE_DATA_PLANE_URL")]
+    data_plane_url: Option<Url>,
+
+    /// Seconds allowed for children to exit after SIGTERM.
+    #[arg(long, env = "SUNTITLE_SHUTDOWN_GRACE_SECONDS", default_value_t = DEFAULT_SHUTDOWN_GRACE_SECONDS, value_parser = clap::value_parser!(u64).range(1..))]
+    shutdown_grace_seconds: u64,
 }
 
 fn default_host_name() -> String {
@@ -133,7 +151,21 @@ fn host_metadata() -> BTreeMap<String, serde_json::Value> {
 }
 
 async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
-    let (socket, _) = connect_async(&config.proxy_url)
+    let registration_url = Url::parse(&config.proxy_url).context("invalid proxy URL")?;
+    let data_plane_url = match &config.data_plane_url {
+        Some(url) => url.clone(),
+        None => data_plane_url_from_registration(&registration_url).map_err(|message| {
+            rootcause::report!(io::Error::new(io::ErrorKind::InvalidInput, message))
+        })?,
+    };
+    let mut manager = NodeProcessManager::new(
+        config.project_dir.clone(),
+        config.uv_bin.clone(),
+        data_plane_url,
+        Duration::from_secs(config.shutdown_grace_seconds),
+    )
+    .map_err(|message| rootcause::report!(io::Error::new(io::ErrorKind::InvalidInput, message)))?;
+    let (socket, _) = connect_async(registration_url.as_str())
         .await
         .context_with(|| format!("failed to connect to {}", config.proxy_url))?;
     let host_ip = match config.host_ip {
@@ -175,6 +207,7 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
         RegistrationServerMessage::Error { message } => {
             rootcause::bail!("proxy rejected host registration: {message}")
         }
+        _ => rootcause::bail!("proxy sent a node command before acknowledging registration"),
     }
 
     let health = RegistrationClientMessage::HealthOk {
@@ -182,27 +215,124 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
         ip: host_ip,
         metadata,
     };
-    let health_message = Message::Text(
-        serde_json::to_string(&health)
-            .context("failed to serialize health report")?
-            .into(),
-    );
     let mut health_interval =
         tokio::time::interval(Duration::from_secs(config.health_interval_seconds));
     health_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    health_interval.tick().await;
+    let mut reap_interval = tokio::time::interval(Duration::from_millis(250));
+    reap_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    reap_interval.tick().await;
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+    let mut failure = None;
 
-    let health_reports = IntervalStream::new(health_interval)
-        .skip(1)
-        .map(move |_| Ok::<_, Box<WebSocketError>>(health_message.clone()))
-        .forward(write.sink_map_err(Box::new));
-    let proxy_messages = read.try_for_each(|_| async { Ok(()) });
-
-    tokio::select! {
-        result = health_reports => result.context("failed to send health report")?,
-        result = proxy_messages => result.context("failed to receive a proxy message")?,
+    loop {
+        tokio::select! {
+            _ = health_interval.tick() => {
+                if let Err(error) = send_client_message(&mut write, &health).await {
+                    failure = Some(format!("failed to send health report: {error}"));
+                    break;
+                }
+            }
+            _ = reap_interval.tick() => {
+                if let Err(error) = send_events(&mut write, host_id, manager.reap_exited()).await {
+                    failure = Some(format!("failed to report node exit: {error}"));
+                    break;
+                }
+            }
+            _ = &mut shutdown => break,
+            incoming = read.next() => {
+                match incoming {
+                    Some(Ok(message)) if message.is_close() => break,
+                    Some(Ok(message)) if message.is_ping() => {
+                        if let Err(error) = write.send(Message::Pong(message.into_data())).await {
+                            failure = Some(format!("failed to answer proxy ping: {error}"));
+                            break;
+                        }
+                    }
+                    Some(Ok(message)) if message.is_text() || message.is_binary() => {
+                        let command = match serde_json::from_slice::<RegistrationServerMessage>(&message.into_data()) {
+                            Ok(command) => command,
+                            Err(error) => {
+                                failure = Some(format!("proxy sent an invalid node command: {error}"));
+                                break;
+                            }
+                        };
+                        let events = match command {
+                            RegistrationServerMessage::ApplyNode { node_id, revision, update } => manager.apply(node_id, revision, update).await,
+                            RegistrationServerMessage::RestartNode { node_id, revision } => manager.restart(node_id, revision).await,
+                            RegistrationServerMessage::Error { message } => {
+                                failure = Some(format!("proxy error: {message}"));
+                                break;
+                            }
+                            RegistrationServerMessage::Registered { .. } => Vec::new(),
+                        };
+                        if let Err(error) = send_events(&mut write, host_id, events).await {
+                            failure = Some(format!("failed to report node lifecycle: {error}"));
+                            break;
+                        }
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => {
+                        failure = Some(format!("failed to receive a proxy message: {error}"));
+                        break;
+                    }
+                    None => break,
+                }
+            }
+        }
     }
 
+    let _ = send_events(&mut write, host_id, manager.shutdown_all().await).await;
+    let _ = write.send(Message::Close(None)).await;
+    if let Some(message) = failure {
+        rootcause::bail!(message);
+    }
     Ok(())
+}
+
+type RegistrationWriter = futures_util::stream::SplitSink<
+    WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    Message,
+>;
+
+async fn send_client_message(
+    write: &mut RegistrationWriter,
+    message: &RegistrationClientMessage,
+) -> Result<(), Box<WebSocketError>> {
+    let json = serde_json::to_string(message)
+        .map_err(|error| Box::new(WebSocketError::Io(io::Error::other(error))))?;
+    write
+        .send(Message::Text(json.into()))
+        .await
+        .map_err(Box::new)
+}
+
+async fn send_events(
+    write: &mut RegistrationWriter,
+    host_id: Uuid,
+    events: Vec<NodeEvent>,
+) -> Result<(), Box<WebSocketError>> {
+    for event in events {
+        let message = RegistrationClientMessage::NodeStatus {
+            host_id,
+            node_id: event.node_id,
+            revision: event.revision,
+            status: event.status,
+            message: event.message,
+        };
+        send_client_message(write, &message).await?;
+    }
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    ctrlc::set_handler(move || {
+        let _ = sender.send(());
+    })
+    .expect("shutdown signal handler installs");
+    let _ = receiver.recv().await;
 }
 
 #[cfg(test)]

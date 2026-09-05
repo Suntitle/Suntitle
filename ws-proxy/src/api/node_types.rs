@@ -54,10 +54,10 @@ fn transcriber_definition() -> NodeTypeDefinition {
         NodeSettingInput::Text,
         NodeSettingValueType::String,
         true,
-        NodeSettingValue::String("en-US".to_owned()),
+        NodeSettingValue::String("en".to_owned()),
     );
     language.description = Some("BCP 47 language tag used for recognition.".to_owned());
-    language.placeholder = Some("en-US".to_owned());
+    language.placeholder = Some("en".to_owned());
 
     let mut task = setting(
         "task",
@@ -146,17 +146,10 @@ fn audio_source_definition() -> NodeTypeDefinition {
         true,
         NodeSettingValue::String("pcm_s16le".to_owned()),
     );
-    encoding.options = Some(vec![
-        option(
-            NodeSettingValue::String("pcm_s16le".to_owned()),
-            "PCM 16-bit",
-        ),
-        option(
-            NodeSettingValue::String("pcm_f32le".to_owned()),
-            "PCM 32-bit float",
-        ),
-        option(NodeSettingValue::String("opus".to_owned()), "Opus"),
-    ]);
+    encoding.options = Some(vec![option(
+        NodeSettingValue::String("pcm_s16le".to_owned()),
+        "PCM 16-bit",
+    )]);
 
     let mut device_name = setting(
         "deviceName",
@@ -201,12 +194,15 @@ fn translator_definition() -> NodeTypeDefinition {
     let mut provider = setting(
         "provider",
         "Provider",
-        NodeSettingInput::Text,
+        NodeSettingInput::Select,
         NodeSettingValueType::String,
         true,
-        NodeSettingValue::String("openai".to_owned()),
+        NodeSettingValue::String("huggingface".to_owned()),
     );
-    provider.placeholder = Some("openai".to_owned());
+    provider.options = Some(vec![option(
+        NodeSettingValue::String("huggingface".to_owned()),
+        "Hugging Face",
+    )]);
 
     let mut model = setting(
         "model",

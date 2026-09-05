@@ -8,7 +8,7 @@ pub mod nodes;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-use crate::HostRegistry;
+use crate::{ControlPlaneState, HostRegistry};
 
 use self::errors::{BadRequest, NotFound, Unauthorized, ValidationFailed};
 use self::models::*;
@@ -90,7 +90,7 @@ impl Modify for SecurityAddon {
 
 /// Register REST routes and their shared in-memory authentication state.
 pub fn configure(config: &mut utoipa_actix_web::service_config::ServiceConfig) {
-    configure_with_hosts(config, HostRegistry::default());
+    configure_with_state(config, ControlPlaneState::default());
 }
 
 /// Register REST routes backed by the supplied host registry.
@@ -98,8 +98,21 @@ pub fn configure_with_hosts(
     config: &mut utoipa_actix_web::service_config::ServiceConfig,
     hosts: HostRegistry,
 ) {
+    let state = ControlPlaneState {
+        hosts,
+        ..ControlPlaneState::default()
+    };
+    configure_with_state(config, state);
+}
+
+pub fn configure_with_state(
+    config: &mut utoipa_actix_web::service_config::ServiceConfig,
+    state: ControlPlaneState,
+) {
     config.app_data(actix_web::web::Data::new(auth::AuthState::default()));
-    config.app_data(actix_web::web::Data::new(hosts));
+    config.app_data(actix_web::web::Data::new(state.hosts));
+    config.app_data(actix_web::web::Data::new(state.nodes));
+    config.app_data(actix_web::web::Data::new(state.host_controls));
     config.service(
         utoipa_actix_web::scope::scope("/api/v1")
             .service(auth::login)
