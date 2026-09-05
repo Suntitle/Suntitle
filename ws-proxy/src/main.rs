@@ -5,13 +5,18 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use chrono::Utc;
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use tokio::sync::{RwLock, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use utoipa_actix_web::AppExt;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::reply::Reply;
 use warp::ws::{Message, WebSocket};
+use ws_proxy::HostRegistry;
+use ws_proxy::api::models::{Host, HostStatus};
+use ws_proxy::registration::{RegistrationClientMessage, RegistrationServerMessage};
 
 /// Our global unique user id counter.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -22,13 +27,34 @@ type Translators = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 type Displays = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::io::Result<()> {
     pretty_env_logger::init();
-    let routes = proxy().await;
-    warp::serve(routes).run(([0, 0, 0, 0], 3030)).await;
+    let hosts = HostRegistry::default();
+    let routes = proxy_with_hosts(hosts.clone()).await;
+    let control_api = actix_web::HttpServer::new(move || {
+        let hosts = hosts.clone();
+        actix_web::App::new()
+            .into_utoipa_app()
+            .configure(move |config| ws_proxy::api::configure_with_hosts(config, hosts))
+            .into_app()
+    })
+    .bind(("0.0.0.0", 3031))?
+    .run();
+
+    eprintln!("Suntitle WebSocket proxy listening on 0.0.0.0:3030");
+    eprintln!("Suntitle REST API listening on 0.0.0.0:3031");
+    tokio::select! {
+        result = control_api => result,
+        _ = warp::serve(routes).run(([0, 0, 0, 0], 3030)) => Ok(()),
+    }
 }
 
+#[cfg(test)]
 async fn proxy() -> BoxedFilter<(impl Reply,)> {
+    proxy_with_hosts(HostRegistry::default()).await
+}
+
+async fn proxy_with_hosts(hosts: HostRegistry) -> BoxedFilter<(impl Reply,)> {
     let state = Transcribers::default();
     let transcribers = warp::any().map(move || state.clone());
 
@@ -37,6 +63,8 @@ async fn proxy() -> BoxedFilter<(impl Reply,)> {
 
     let state = Displays::default();
     let displays = warp::any().map(move || state.clone());
+
+    let host_registry = warp::any().map(move || hosts.clone());
 
     // GET /transcribe -> transcriber serving
     let transcribe = warp::path("transcribe")
@@ -70,6 +98,16 @@ async fn proxy() -> BoxedFilter<(impl Reply,)> {
                 ws.on_upgrade(move |socket| display_connected(socket, translators))
             });
 
+    // GET /register -> Diamant host registration. Persistence is intentionally
+    // mocked until the control-plane host store is implemented.
+    let register = warp::path("register")
+        .and(warp::path::end())
+        .and(warp::ws())
+        .and(host_registry)
+        .map(|ws: warp::ws::Ws, hosts| {
+            ws.on_upgrade(move |socket| registration_connected(socket, hosts))
+        });
+
     // GET / -> audio data stream
     let index = warp::path::end().and(warp::ws()).and(transcribers).map(
         |ws: warp::ws::Ws, transcribers: Transcribers| {
@@ -85,7 +123,108 @@ async fn proxy() -> BoxedFilter<(impl Reply,)> {
         },
     );
 
-    index.or(transcribe).or(translate).or(display).boxed()
+    index
+        .or(register)
+        .or(transcribe)
+        .or(translate)
+        .or(display)
+        .boxed()
+}
+
+async fn registration_connected(ws: WebSocket, hosts: HostRegistry) {
+    let (mut write, mut read) = ws.split();
+
+    let Some(Ok(message)) = read.next().await else {
+        return;
+    };
+
+    let response = match message
+        .to_str()
+        .ok()
+        .and_then(|json| serde_json::from_str::<RegistrationClientMessage>(json).ok())
+    {
+        Some(RegistrationClientMessage::RegisterHost {
+            id,
+            name,
+            ip,
+            version,
+            metadata,
+        }) if !name.trim().is_empty() && !version.trim().is_empty() => {
+            let host = Host {
+                id,
+                name,
+                ip,
+                version,
+                status: HostStatus::Online,
+                last_seen_at: Utc::now(),
+                metadata,
+            };
+            hosts.write().await.insert(host.id, host.clone());
+            eprintln!(
+                "registered host: {} version={} ip={} id={}",
+                host.name, host.version, host.ip, host.id
+            );
+            RegistrationServerMessage::Registered { host }
+        }
+        _ => RegistrationServerMessage::Error {
+            message: "expected a register_host message with an id, name, IP, and version"
+                .to_owned(),
+        },
+    };
+
+    if let Ok(json) = serde_json::to_string(&response) {
+        let _ = write.send(Message::text(json)).await;
+    }
+
+    let registered_host_id = match &response {
+        RegistrationServerMessage::Registered { host } => Some(host.id),
+        RegistrationServerMessage::Error { .. } => None,
+    };
+
+    // Keep the registration alive so it can later represent host presence.
+    while let Some(result) = read.next().await {
+        match result {
+            Ok(message) if message.is_close() => break,
+            Ok(message) if message.is_ping() => {
+                if write
+                    .send(Message::pong(message.as_bytes().to_vec()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(message) if message.is_text() => {
+                if let Ok(RegistrationClientMessage::HealthOk {
+                    host_id,
+                    ip,
+                    metadata,
+                }) = serde_json::from_slice(message.as_bytes())
+                    && Some(host_id) == registered_host_id
+                {
+                    if let Some(host) = hosts.write().await.get_mut(&host_id) {
+                        host.last_seen_at = Utc::now();
+                        host.status = HostStatus::Online;
+                        host.ip = ip;
+                        host.metadata = metadata;
+                    }
+                    eprintln!("host health OK: id={host_id}");
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("host registration websocket error: {error}");
+                break;
+            }
+        }
+    }
+
+    if let Some(host_id) = registered_host_id
+        && let Some(host) = hosts.write().await.get_mut(&host_id)
+    {
+        host.status = HostStatus::Offline;
+        eprintln!("host disconnected: id={host_id}");
+    }
 }
 
 async fn translator_connected(ws: WebSocket, translators: Translators, displays: Displays) {
@@ -267,7 +406,7 @@ async fn display_message(msg: Message, displays: &Displays) {
 mod tests {
     use warp::filters::ws::Message;
 
-    use crate::proxy;
+    use crate::{HostRegistry, HostStatus, RegistrationClientMessage, proxy, proxy_with_hosts};
 
     #[tokio::test]
     async fn test_transcriber_connected() {
@@ -303,6 +442,90 @@ mod tests {
             .handshake(proxy().await)
             .await
             .expect("handshake");
+    }
+
+    #[tokio::test]
+    async fn test_diamant_registers_a_host() {
+        let host_id = uuid::Uuid::parse_str("20000000-0000-4000-8000-000000000001").unwrap();
+        let hosts = HostRegistry::default();
+        let mut diamant = warp::test::ws()
+            .path("/register")
+            .handshake(proxy_with_hosts(hosts.clone()).await)
+            .await
+            .expect("handshake");
+        let request = ws_proxy::registration::RegistrationClientMessage::RegisterHost {
+            id: host_id,
+            name: "studio-host".to_owned(),
+            ip: "192.0.2.10".parse().unwrap(),
+            version: "0.1.0".to_owned(),
+            metadata: None,
+        };
+
+        diamant
+            .send(Message::text(
+                serde_json::to_string(&request).expect("request serializes"),
+            ))
+            .await;
+
+        let response = diamant.recv().await.expect("registration response");
+        let response: ws_proxy::registration::RegistrationServerMessage =
+            serde_json::from_slice(response.as_bytes()).expect("valid response");
+        let ws_proxy::registration::RegistrationServerMessage::Registered { host } = response
+        else {
+            panic!("expected successful registration");
+        };
+        assert_eq!(host.id, host_id);
+        assert_eq!(host.name, "studio-host");
+        assert_eq!(host.ip.to_string(), "192.0.2.10");
+        assert_eq!(host.version, "0.1.0");
+        assert!(matches!(
+            host.status,
+            ws_proxy::api::models::HostStatus::Online
+        ));
+        assert!(host.metadata.is_none());
+
+        let registered = hosts.read().await.get(&host_id).cloned().unwrap();
+        assert!(matches!(registered.status, HostStatus::Online));
+
+        diamant
+            .send(Message::text(
+                serde_json::to_string(&RegistrationClientMessage::HealthOk {
+                    host_id,
+                    ip: "192.0.2.11".parse().unwrap(),
+                    metadata: Some(std::collections::BTreeMap::from([(
+                        "arch".to_owned(),
+                        serde_json::Value::String("aarch64".to_owned()),
+                    )])),
+                })
+                .unwrap(),
+            ))
+            .await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let updated = hosts.read().await.get(&host_id).cloned().unwrap();
+                if updated.ip.to_string() == "192.0.2.11" {
+                    assert!(updated.metadata.unwrap().contains_key("arch"));
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("health update stored");
+
+        diamant.send(Message::close()).await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let status = hosts.read().await.get(&host_id).unwrap().status;
+                if status == HostStatus::Offline {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("disconnect stored");
     }
 
     #[tokio::test]

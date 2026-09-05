@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update API"
+  short_description: "Update Utoipa contracts and mock API data"
+  default_prompt: "Use $update-api to apply this OpenAPI contract change and prepare matching mock data."

@@ -49,18 +49,21 @@ jobs:
         timeout-minutes: 120
         working-directory: ws-proxy
         run: |
-          cross build --release --target ${{ matrix.target.name }}
+          cross build --release --bins --target ${{ matrix.target.name }}
 
       - name: Package
         working-directory: ws-proxy
         run: |
-          cd target/${{ matrix.target.name }}/release && tar -cJf ws-proxy.${{ matrix.target.name }}.tar.xz ws-proxy
+          cd target/${{ matrix.target.name }}/release
+          tar -cJf ws-proxy.${{ matrix.target.name }}.tar.xz ws-proxy
+          tar -cJf diamant.${{ matrix.target.name }}.tar.xz diamant
 
       - name: Generate checksums
         working-directory: ws-proxy
         run: |
           cd target/${{ matrix.target.name }}/release
           sha256sum ws-proxy.${{ matrix.target.name }}.tar.xz > ws-proxy.${{ matrix.target.name }}.tar.xz.sha256
+          sha256sum diamant.${{ matrix.target.name }}.tar.xz > diamant.${{ matrix.target.name }}.tar.xz.sha256
 
       - name: Upload Github Assets
         uses: softprops/action-gh-release@v2
