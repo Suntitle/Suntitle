@@ -22,7 +22,7 @@ def list_devices() -> None:
 
 def resolve_input_device(choice: Optional[str]) -> Optional[int]:
     """Return a device index from either an int-like string, None, or a name substring."""
-    if choice is None:
+    if choice is None or not choice.strip():
         return None  # use PortAudio default
     # Try numeric index first
     try:
