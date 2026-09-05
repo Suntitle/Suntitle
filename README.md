@@ -89,6 +89,77 @@ subtitle window is focused to close it.
 If only raw transcription is needed, the translator and subtitle window may be
 omitted; completed text is printed by `whisper_online_client.py`.
 
+## Manage hosts and nodes through the API
+
+The proxy and control API share in-memory host and node state. The following
+quickstart runs both services plus one Diamant host and installs an audio-source
+node on it. Run each service command from the repository root in a separate
+terminal.
+
+1. Start the WebSocket proxy and control API:
+
+   ```bash
+   cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
+   ```
+
+2. Start Diamant. Its ID file keeps the host UUID stable between restarts, and
+   `--project-dir` tells it where to launch node programs:
+
+   ```bash
+   cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- \
+     --id-file .suntitle/diamant.id \
+     --project-dir "$PWD"
+   ```
+
+3. List hosts and copy the `id` of `local-diamant` into `HOST_ID`:
+
+   ```bash
+   curl -sS http://127.0.0.1:3031/api/v1/hosts | python3 -m json.tool
+   HOST_ID="<host-id>"
+   ```
+
+4. Install and start an audio-source node on that host:
+
+   ```bash
+   curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/$HOST_ID/nodes" \
+     -H 'Content-Type: application/json' \
+     -d '{
+       "type": "audio_source",
+       "name": "Local microphone",
+       "description": "Default local audio input",
+       "enabled": true,
+       "settings": {
+         "sampleRateHz": 16000,
+         "channels": 1,
+         "encoding": "pcm_s16le",
+         "deviceName": null
+       }
+     }' | python3 -m json.tool
+   ```
+
+   Diamant launches the audio listener immediately. Set `deviceName` to a device
+   name when the system default is not the intended input.
+
+5. List the nodes, then copy the created node's `id` into `NODE_ID` to inspect or
+   restart it:
+
+   ```bash
+   curl -sS http://127.0.0.1:3031/api/v1/nodes | python3 -m json.tool
+   NODE_ID="<node-id>"
+
+   curl -sS "http://127.0.0.1:3031/api/v1/nodes/$NODE_ID" \
+     | python3 -m json.tool
+
+   curl -sS -X POST \
+     "http://127.0.0.1:3031/api/v1/nodes/$NODE_ID/restart" \
+     | python3 -m json.tool
+   ```
+
+Use `PUT /api/v1/nodes/{nodeId}` with the complete editable node document to
+change its name, enabled state, settings, or input. Updating a running node
+replaces its process. Stopping Diamant stops its node processes, marks the host
+offline, and removes all nodes assigned to that host from the process-local API.
+
 ## Quick local end-to-end test
 
 The repository includes a lightweight WebSocket probe that verifies the entire
@@ -130,6 +201,19 @@ cargo run --manifest-path ws-proxy/Cargo.toml --example host_registration_e2e
 
 The example stops both child processes and removes its temporary identity file
 when it finishes.
+
+To verify node lifecycle handling end to end, run:
+
+```bash
+cargo run --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
+```
+
+This starts the proxy/API and Diamant locally, registers audio-source and display
+nodes, verifies listing, restart and update behavior, adds another node, and
+then confirms that stopping Diamant removes all of its nodes. Node processes are
+replaced by a lightweight fixture, so the test does not use audio hardware,
+models, or a graphical session. The lifecycle test currently requires Unix
+process signals.
 
 ## Run the proxy on AWS with Pulumi
 

@@ -82,6 +82,33 @@ impl ApiError {
             authenticate: true,
         }
     }
+
+    pub fn problem(
+        status: StatusCode,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            status,
+            problem: Box::new(Problem {
+                r#type: "about:blank".to_owned(),
+                title: title.into(),
+                status: status.as_u16(),
+                detail: Some(detail.into()),
+                instance: None,
+                request_id: None,
+            }),
+            authenticate: false,
+        }
+    }
+
+    pub fn not_found(detail: impl Into<String>) -> Self {
+        Self::problem(StatusCode::NOT_FOUND, "Not Found", detail)
+    }
+
+    pub fn conflict(detail: impl Into<String>) -> Self {
+        Self::problem(StatusCode::CONFLICT, "Conflict", detail)
+    }
 }
 
 impl fmt::Display for ApiError {

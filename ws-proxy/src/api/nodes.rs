@@ -2,7 +2,9 @@ use actix_web::{get, post, put, web};
 use uuid::Uuid;
 
 use super::errors::{ApiResult, BadRequest, NotFound, Problem, Unauthorized, ValidationFailed};
-use super::models::{ListNodesQuery, Node, NodeList, NodeUpdate};
+use super::models::{ListNodesQuery, Node, NodeList, NodeStatus, NodeType, NodeUpdate};
+use crate::registration::RegistrationServerMessage;
+use crate::{DesiredNode, HostControlRegistry, NodeRegistry};
 
 #[utoipa::path(
     get,
@@ -18,8 +20,28 @@ use super::models::{ListNodesQuery, Node, NodeList, NodeUpdate};
     )
 )]
 #[get("/nodes")]
-pub async fn list_nodes(_query: web::Query<ListNodesQuery>) -> ApiResult<NodeList> {
-    todo!()
+pub async fn list_nodes(
+    nodes: web::Data<NodeRegistry>,
+    query: web::Query<ListNodesQuery>,
+) -> ApiResult<NodeList> {
+    let nodes = nodes.read().await;
+    let mut items: Vec<_> = nodes
+        .values()
+        .map(|desired| desired.node.clone())
+        .filter(|node| {
+            query
+                .node_type
+                .is_none_or(|expected| node.node_type() == expected)
+                && query
+                    .status
+                    .is_none_or(|expected| node.status() == expected)
+        })
+        .collect();
+    items.sort_unstable_by_key(Node::id);
+    Ok(web::Json(NodeList {
+        total: items.len() as u64,
+        items,
+    }))
 }
 
 #[utoipa::path(
@@ -36,8 +58,13 @@ pub async fn list_nodes(_query: web::Query<ListNodesQuery>) -> ApiResult<NodeLis
     )
 )]
 #[get("/nodes/{nodeId}")]
-pub async fn get_node(_node_id: web::Path<Uuid>) -> ApiResult<Node> {
-    todo!()
+pub async fn get_node(nodes: web::Data<NodeRegistry>, node_id: web::Path<Uuid>) -> ApiResult<Node> {
+    nodes
+        .read()
+        .await
+        .get(&node_id.into_inner())
+        .map(|desired| web::Json(desired.node.clone()))
+        .ok_or_else(|| super::errors::ApiError::not_found("node does not exist"))
 }
 
 #[utoipa::path(
@@ -60,10 +87,39 @@ pub async fn get_node(_node_id: web::Path<Uuid>) -> ApiResult<Node> {
 )]
 #[put("/nodes/{nodeId}")]
 pub async fn update_node(
-    _node_id: web::Path<Uuid>,
-    _body: web::Json<NodeUpdate>,
+    nodes: web::Data<NodeRegistry>,
+    controls: web::Data<HostControlRegistry>,
+    node_id: web::Path<Uuid>,
+    body: web::Json<NodeUpdate>,
 ) -> ApiResult<Node> {
-    todo!()
+    let node_id = node_id.into_inner();
+    let update = body.into_inner();
+    let (host_id, revision, response) = {
+        let mut registry = nodes.write().await;
+        let existing = registry
+            .get(&node_id)
+            .ok_or_else(|| super::errors::ApiError::not_found("node does not exist"))?;
+        if update.node_type() != existing.node.node_type() {
+            return Err(super::errors::ApiError::conflict("node type is immutable"));
+        }
+        validate_input(node_id, &update, &registry)?;
+        let desired = registry.get_mut(&node_id).expect("node existence checked");
+        desired.revision += 1;
+        desired.update = update.clone();
+        desired.node = desired.node.with_update(&update);
+        (desired.host_id, desired.revision, desired.node.clone())
+    };
+    send_control(
+        &controls,
+        host_id,
+        RegistrationServerMessage::ApplyNode {
+            node_id,
+            revision,
+            update,
+        },
+    )
+    .await;
+    Ok(web::Json(response))
 }
 
 #[utoipa::path(
@@ -82,6 +138,83 @@ pub async fn update_node(
     )
 )]
 #[post("/nodes/{nodeId}/restart")]
-pub async fn restart_node(_node_id: web::Path<Uuid>) -> ApiResult<Node> {
-    todo!()
+pub async fn restart_node(
+    nodes: web::Data<NodeRegistry>,
+    controls: web::Data<HostControlRegistry>,
+    node_id: web::Path<Uuid>,
+) -> ApiResult<Node> {
+    let node_id = node_id.into_inner();
+    let (host_id, revision, response) = {
+        let mut registry = nodes.write().await;
+        let desired = registry
+            .get_mut(&node_id)
+            .ok_or_else(|| super::errors::ApiError::not_found("node does not exist"))?;
+        if !desired.node.enabled() {
+            return Err(super::errors::ApiError::conflict(
+                "disabled nodes cannot be restarted",
+            ));
+        }
+        desired.revision += 1;
+        desired.node.set_status(NodeStatus::Disconnected);
+        (desired.host_id, desired.revision, desired.node.clone())
+    };
+    send_control(
+        &controls,
+        host_id,
+        RegistrationServerMessage::RestartNode { node_id, revision },
+    )
+    .await;
+    Ok(web::Json(response))
+}
+
+pub(crate) async fn send_control(
+    controls: &HostControlRegistry,
+    host_id: Uuid,
+    message: RegistrationServerMessage,
+) {
+    if let Some(sender) = controls.read().await.get(&host_id).cloned() {
+        let _ = sender.send(message);
+    }
+}
+
+fn validate_input(
+    node_id: Uuid,
+    update: &NodeUpdate,
+    registry: &std::collections::HashMap<Uuid, DesiredNode>,
+) -> Result<(), super::errors::ApiError> {
+    let input_id = update.input_node_id();
+    let Some(input_id) = input_id else {
+        return Ok(());
+    };
+    if input_id == node_id {
+        return Err(super::errors::ApiError::problem(
+            actix_web::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "Validation Failed",
+            "a node cannot use itself as input",
+        ));
+    }
+    let input = registry.get(&input_id).ok_or_else(|| {
+        super::errors::ApiError::problem(
+            actix_web::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "Validation Failed",
+            "inputNodeId does not identify an existing node",
+        )
+    })?;
+    let allowed = match update.node_type() {
+        NodeType::AudioSource => false,
+        NodeType::Transcriber => input.node.node_type() == NodeType::AudioSource,
+        NodeType::Translator => input.node.node_type() == NodeType::Transcriber,
+        NodeType::Display => matches!(
+            input.node.node_type(),
+            NodeType::Transcriber | NodeType::Translator
+        ),
+    };
+    if !allowed {
+        return Err(super::errors::ApiError::problem(
+            actix_web::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "Validation Failed",
+            "input node type is incompatible with this node type",
+        ));
+    }
+    Ok(())
 }
