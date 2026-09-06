@@ -154,6 +154,7 @@ export interface DisplayNode extends NodeBase {
 export type Node = AudioSourceNode | TranscriberNode | TranslatorNode | DisplayNode
 
 export interface NodeCreate {
+  inputNodeId: string | null
   type: NodeType
   name: string
   description?: string | null

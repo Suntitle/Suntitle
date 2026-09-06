@@ -1,3 +1,4 @@
+use super::validated_json::ValidatedJson;
 use actix_web::{get, post, put, web};
 use uuid::Uuid;
 
@@ -90,7 +91,7 @@ pub async fn update_node(
     nodes: web::Data<NodeRegistry>,
     controls: web::Data<HostControlRegistry>,
     node_id: web::Path<Uuid>,
-    body: web::Json<NodeUpdate>,
+    body: ValidatedJson<NodeUpdate>,
 ) -> ApiResult<Node> {
     let node_id = node_id.into_inner();
     let update = body.into_inner();
@@ -177,7 +178,7 @@ pub(crate) async fn send_control(
     }
 }
 
-fn validate_input(
+pub(super) fn validate_input(
     node_id: Uuid,
     update: &NodeUpdate,
     registry: &std::collections::HashMap<Uuid, DesiredNode>,

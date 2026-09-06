@@ -106,7 +106,7 @@ hosts:
 
 # Install and start a default audio-source node on a host.
 install-audio-source host_id:
-    curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/{{ host_id }}/nodes" -H 'Content-Type: application/json' -d '{"type":"audio_source","name":"Local microphone","description":"Default local audio input","enabled":true,"settings":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null}}' | python3 -m json.tool
+    curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/{{ host_id }}/nodes" -H 'Content-Type: application/json' -d '{"type":"audio_source","inputNodeId":null,"name":"Local microphone","description":"Default local audio input","enabled":true,"settings":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null}}' | python3 -m json.tool
 
 # List all nodes from the control API.
 nodes:
@@ -215,6 +215,14 @@ ui-env:
 # Run the headless Cypress integration suite.
 ui-test: _ui-dependencies
     npm --prefix ui run test:e2e
+
+# Start the test server and run selected Cypress specs (paths relative to ui/).
+ui-test-spec spec: _ui-dependencies
+    CYPRESS_specPattern={{quote(spec)}} npm --prefix ui run test:e2e
+
+# Run Cypress against an existing test server, optionally selecting specs.
+ui-test-run spec="cypress/e2e/**/*.cy.ts": _ui-dependencies
+    npm --prefix ui run cypress:run -- --spec {{quote(spec)}}
 
 # Start the UI server used for interactive Cypress debugging.
 ui-test-server: _ui-dependencies

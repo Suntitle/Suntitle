@@ -23,7 +23,9 @@ utoipa = { version = "5", features = ["actix_extras", "chrono", "uuid", "yaml"] 
 utoipa-actix-web = "0.1"
 uuid = { version = "1", features = ["serde", "v4"] }
 url = "2"
+validator = { version = "0.20", features = ["derive"] }
 warp = { version = "0.4.2", features = ["websocket", "server"] }
+clap_reverse = "0.1.1"
 
 [dev-dependencies]
 warp = { version = "0.4.2", features = ["websocket", "server", "test"] }

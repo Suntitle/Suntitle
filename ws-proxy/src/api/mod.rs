@@ -4,6 +4,7 @@ pub mod hosts;
 pub mod models;
 pub mod node_types;
 pub mod nodes;
+pub mod validated_json;
 
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -42,10 +43,8 @@ const DESCRIPTION: &str = "API for authenticating operators and managing hosts a
             NodeStatus, HostStatus, Host, HostList, ConnectionStatus, DataType,
             NodeBase, NodeConnection, Node,
             AudioSourceNode, TranscriberNode, TranslatorNode, DisplayNode,
-            AudioSourceVariant, TranscriberVariant, TranslatorVariant, DisplayVariant,
+            NodeSettings,
             NodeUpdateBase, NodeInputUpdate, NodeUpdate, NodeCreate,
-            AudioSourceNodeCreate, TranscriberNodeCreate, TranslatorNodeCreate, DisplayNodeCreate,
-            AudioSourceNodeUpdate, TranscriberNodeUpdate, TranslatorNodeUpdate, DisplayNodeUpdate,
             AudioSourceSettings, TranscriberSettings, TranslatorSettings, DisplaySettings,
             LanguageTag, NodeList,
             errors::Problem, errors::ValidationProblem
@@ -143,6 +142,10 @@ mod tests {
         let components = document.components.expect("OpenAPI components");
         for schema in [
             "Node",
+            "AudioSourceNode",
+            "TranscriberNode",
+            "TranslatorNode",
+            "DisplayNode",
             "NodeCreate",
             "NodeUpdate",
             "AudioSourceSettings",
@@ -161,5 +164,79 @@ mod tests {
     async fn rest_scope_registers_with_actix() {
         let app = App::new().into_utoipa_app().configure(configure).into_app();
         actix_web::test::init_service(app).await;
+    }
+
+    #[test]
+    fn node_contract_has_four_named_variants() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        let variants = schemas["Node"]["oneOf"].as_array().unwrap();
+        assert_eq!(variants.len(), 4);
+        for (variant, (tag, node, settings)) in variants.iter().zip([
+            ("audio_source", "AudioSourceNode", "AudioSourceSettings"),
+            ("transcriber", "TranscriberNode", "TranscriberSettings"),
+            ("translator", "TranslatorNode", "TranslatorSettings"),
+            ("display", "DisplayNode", "DisplaySettings"),
+        ]) {
+            let parts = variant["allOf"].as_array().unwrap();
+            assert!(
+                parts
+                    .iter()
+                    .any(|part| part["$ref"] == format!("#/components/schemas/{node}"))
+            );
+            assert!(parts.iter().any(|part| {
+                part["properties"]["type"]["enum"] == serde_json::json!([tag])
+                    && part["required"] == serde_json::json!(["type"])
+            }));
+            let fields = schemas[node]["allOf"].as_array().unwrap();
+            assert!(
+                fields
+                    .iter()
+                    .any(|part| part["$ref"] == "#/components/schemas/NodeBase")
+            );
+            assert!(fields.iter().any(|part| {
+                part["properties"]["settings"]["$ref"] == format!("#/components/schemas/{settings}")
+                    && part["required"] == serde_json::json!(["settings"])
+            }));
+        }
+    }
+
+    #[test]
+    fn node_contract_composes_common_fields_with_tagged_settings() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        assert_eq!(
+            schemas["NodeCreate"]["allOf"],
+            serde_json::json!([{ "$ref": "#/components/schemas/NodeUpdate" }])
+        );
+        let parts = schemas["NodeUpdate"]["allOf"].as_array().unwrap();
+        assert!(
+            parts
+                .iter()
+                .any(|part| part["$ref"] == "#/components/schemas/NodeSettings")
+        );
+        let variants = schemas["NodeSettings"]["oneOf"].as_array().unwrap();
+        assert_eq!(variants.len(), 4);
+        for (variant, (tag, settings)) in variants.iter().zip([
+            ("audio_source", "AudioSourceSettings"),
+            ("transcriber", "TranscriberSettings"),
+            ("translator", "TranslatorSettings"),
+            ("display", "DisplaySettings"),
+        ]) {
+            assert_eq!(
+                variant["properties"]["type"]["enum"],
+                serde_json::json!([tag])
+            );
+            assert_eq!(
+                variant["properties"]["settings"]["$ref"],
+                format!("#/components/schemas/{settings}")
+            );
+            let required = variant["required"].as_array().unwrap();
+            assert!(required.contains(&serde_json::json!("type")));
+            assert!(required.contains(&serde_json::json!("settings")));
+        }
+        let committed: serde_yaml::Value =
+            serde_yaml::from_str(include_str!("../../../specs/openapi.yaml")).unwrap();
+        assert_eq!(serde_json::to_value(committed).unwrap(), document);
     }
 }

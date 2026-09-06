@@ -280,16 +280,12 @@ components:
     AudioSourceNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
-      - $ref: '#/components/schemas/AudioSourceVariant'
-    AudioSourceNodeCreate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/AudioSourceVariant'
-    AudioSourceNodeUpdate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/AudioSourceVariant'
-      - $ref: '#/components/schemas/NodeInputUpdate'
+      - type: object
+        required:
+        - settings
+        properties:
+          settings:
+            $ref: '#/components/schemas/AudioSourceSettings'
     AudioSourceSettings:
       type: object
       required:
@@ -322,16 +318,6 @@ components:
           - 44100
           - 48000
       additionalProperties: false
-    AudioSourceVariant:
-      type: object
-      required:
-      - type
-      - settings
-      properties:
-        settings:
-          $ref: '#/components/schemas/AudioSourceSettings'
-        type:
-          $ref: '#/components/schemas/NodeType'
     ConnectionStatus:
       type: string
       enum:
@@ -348,16 +334,12 @@ components:
     DisplayNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
-      - $ref: '#/components/schemas/DisplayVariant'
-    DisplayNodeCreate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/DisplayVariant'
-    DisplayNodeUpdate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/DisplayVariant'
-      - $ref: '#/components/schemas/NodeInputUpdate'
+      - type: object
+        required:
+        - settings
+        properties:
+          settings:
+            $ref: '#/components/schemas/DisplaySettings'
     DisplaySettings:
       type: object
       required:
@@ -386,16 +368,6 @@ components:
             - transparent
           default: dark
       additionalProperties: false
-    DisplayVariant:
-      type: object
-      required:
-      - type
-      - settings
-      properties:
-        settings:
-          $ref: '#/components/schemas/DisplaySettings'
-        type:
-          $ref: '#/components/schemas/NodeType'
     Host:
       type: object
       required:
@@ -503,22 +475,50 @@ components:
       additionalProperties: false
     Node:
       oneOf:
-      - $ref: '#/components/schemas/AudioSourceNode'
-      - $ref: '#/components/schemas/TranscriberNode'
-      - $ref: '#/components/schemas/TranslatorNode'
-      - $ref: '#/components/schemas/DisplayNode'
-      discriminator:
-        propertyName: type
-        mapping:
-          audio_source: '#/components/schemas/AudioSourceNode'
-          display: '#/components/schemas/DisplayNode'
-          transcriber: '#/components/schemas/TranscriberNode'
-          translator: '#/components/schemas/TranslatorNode'
+      - allOf:
+        - $ref: '#/components/schemas/AudioSourceNode'
+        - type: object
+          required:
+          - type
+          properties:
+            type:
+              type: string
+              enum:
+              - audio_source
+      - allOf:
+        - $ref: '#/components/schemas/TranscriberNode'
+        - type: object
+          required:
+          - type
+          properties:
+            type:
+              type: string
+              enum:
+              - transcriber
+      - allOf:
+        - $ref: '#/components/schemas/TranslatorNode'
+        - type: object
+          required:
+          - type
+          properties:
+            type:
+              type: string
+              enum:
+              - translator
+      - allOf:
+        - $ref: '#/components/schemas/DisplayNode'
+        - type: object
+          required:
+          - type
+          properties:
+            type:
+              type: string
+              enum:
+              - display
     NodeBase:
       type: object
       required:
       - id
-      - type
       - name
       - enabled
       - status
@@ -554,8 +554,6 @@ components:
           minLength: 1
         status:
           $ref: '#/components/schemas/NodeStatus'
-        type:
-          $ref: '#/components/schemas/NodeType'
         updatedAt:
           type: string
           format: date-time
@@ -615,18 +613,8 @@ components:
           $ref: '#/components/schemas/ConnectionStatus'
       additionalProperties: false
     NodeCreate:
-      oneOf:
-      - $ref: '#/components/schemas/AudioSourceNodeCreate'
-      - $ref: '#/components/schemas/TranscriberNodeCreate'
-      - $ref: '#/components/schemas/TranslatorNodeCreate'
-      - $ref: '#/components/schemas/DisplayNodeCreate'
-      discriminator:
-        propertyName: type
-        mapping:
-          audio_source: '#/components/schemas/AudioSourceNodeCreate'
-          display: '#/components/schemas/DisplayNodeCreate'
-          transcriber: '#/components/schemas/TranscriberNodeCreate'
-          translator: '#/components/schemas/TranslatorNodeCreate'
+      allOf:
+      - $ref: '#/components/schemas/NodeUpdate'
     NodeInputUpdate:
       type: object
       required:
@@ -723,6 +711,53 @@ components:
       - type: 'null'
         default: null
       description: A value accepted by a node setting field.
+    NodeSettings:
+      oneOf:
+      - type: object
+        required:
+        - settings
+        - type
+        properties:
+          settings:
+            $ref: '#/components/schemas/AudioSourceSettings'
+          type:
+            type: string
+            enum:
+            - audio_source
+      - type: object
+        required:
+        - settings
+        - type
+        properties:
+          settings:
+            $ref: '#/components/schemas/TranscriberSettings'
+          type:
+            type: string
+            enum:
+            - transcriber
+      - type: object
+        required:
+        - settings
+        - type
+        properties:
+          settings:
+            $ref: '#/components/schemas/TranslatorSettings'
+          type:
+            type: string
+            enum:
+            - translator
+      - type: object
+        required:
+        - settings
+        - type
+        properties:
+          settings:
+            $ref: '#/components/schemas/DisplaySettings'
+          type:
+            type: string
+            enum:
+            - display
+      description: The node type and its corresponding settings share a single discriminator.
     NodeStatus:
       type: string
       enum:
@@ -777,22 +812,13 @@ components:
           minimum: 0
       additionalProperties: false
     NodeUpdate:
-      oneOf:
-      - $ref: '#/components/schemas/AudioSourceNodeUpdate'
-      - $ref: '#/components/schemas/TranscriberNodeUpdate'
-      - $ref: '#/components/schemas/TranslatorNodeUpdate'
-      - $ref: '#/components/schemas/DisplayNodeUpdate'
-      discriminator:
-        propertyName: type
-        mapping:
-          audio_source: '#/components/schemas/AudioSourceNodeUpdate'
-          display: '#/components/schemas/DisplayNodeUpdate'
-          transcriber: '#/components/schemas/TranscriberNodeUpdate'
-          translator: '#/components/schemas/TranslatorNodeUpdate'
+      allOf:
+      - $ref: '#/components/schemas/NodeUpdateBase'
+      - $ref: '#/components/schemas/NodeSettings'
+      - $ref: '#/components/schemas/NodeInputUpdate'
     NodeUpdateBase:
       type: object
       required:
-      - type
       - name
       - enabled
       properties:
@@ -807,8 +833,6 @@ components:
           type: string
           maxLength: 128
           minLength: 1
-        type:
-          $ref: '#/components/schemas/NodeType'
     Problem:
       type: object
       required:
@@ -837,16 +861,12 @@ components:
     TranscriberNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
-      - $ref: '#/components/schemas/TranscriberVariant'
-    TranscriberNodeCreate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/TranscriberVariant'
-    TranscriberNodeUpdate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/TranscriberVariant'
-      - $ref: '#/components/schemas/NodeInputUpdate'
+      - type: object
+        required:
+        - settings
+        properties:
+          settings:
+            $ref: '#/components/schemas/TranscriberSettings'
     TranscriberSettings:
       type: object
       required:
@@ -877,29 +897,15 @@ components:
           type: boolean
           default: true
       additionalProperties: false
-    TranscriberVariant:
-      type: object
-      required:
-      - type
-      - settings
-      properties:
-        settings:
-          $ref: '#/components/schemas/TranscriberSettings'
-        type:
-          $ref: '#/components/schemas/NodeType'
     TranslatorNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
-      - $ref: '#/components/schemas/TranslatorVariant'
-    TranslatorNodeCreate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/TranslatorVariant'
-    TranslatorNodeUpdate:
-      allOf:
-      - $ref: '#/components/schemas/NodeUpdateBase'
-      - $ref: '#/components/schemas/TranslatorVariant'
-      - $ref: '#/components/schemas/NodeInputUpdate'
+      - type: object
+        required:
+        - settings
+        properties:
+          settings:
+            $ref: '#/components/schemas/TranslatorSettings'
     TranslatorSettings:
       type: object
       required:
@@ -924,16 +930,6 @@ components:
         targetLanguage:
           $ref: '#/components/schemas/LanguageTag'
       additionalProperties: false
-    TranslatorVariant:
-      type: object
-      required:
-      - type
-      - settings
-      properties:
-        settings:
-          $ref: '#/components/schemas/TranslatorSettings'
-        type:
-          $ref: '#/components/schemas/NodeType'
     User:
       type: object
       required:
