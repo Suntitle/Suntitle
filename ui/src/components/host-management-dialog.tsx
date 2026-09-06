@@ -111,6 +111,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
     if (!host || !selectedDefinition) return
 
     const create: NodeCreate = {
+      inputNodeId: null,
       type: selectedDefinition.type,
       name: nodeName,
       enabled: true,

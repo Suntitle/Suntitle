@@ -42,6 +42,9 @@ async fn main() -> std::io::Result<()> {
     .run();
 
     eprintln!("Suntitle WebSocket proxy listening on 0.0.0.0:3030");
+    // TODO: API must be a separate binary entirely, and nodes/hosts should be stored in shared storage layer.
+    // It must support eventing, allowing ws_proxy to perform modifications on API submitting change to storage.
+    // Something like sqlite/postges, as it can later be used as a backend for kine
     eprintln!("Suntitle REST API listening on 0.0.0.0:3031");
     tokio::select! {
         result = control_api => result,
@@ -623,29 +626,7 @@ mod tests {
             last_seen_at: now,
             metadata: None,
         };
-        let node = ws_proxy::api::models::Node::Display(ws_proxy::api::models::DisplayNode {
-            base: ws_proxy::api::models::NodeBase {
-                id: node_id,
-                node_type: ws_proxy::api::models::NodeType::Display,
-                name: "screen".to_owned(),
-                description: None,
-                enabled: true,
-                status: ws_proxy::api::models::NodeStatus::Disconnected,
-                host,
-                connections: Vec::new(),
-                created_at: now,
-                updated_at: now,
-            },
-            variant: ws_proxy::api::models::DisplayVariant {
-                node_type: ws_proxy::api::models::NodeType::Display,
-                settings: ws_proxy::api::models::DisplaySettings {
-                    max_lines: 3,
-                    font_scale: 1.0,
-                    show_original: false,
-                    theme: ws_proxy::api::models::DisplayTheme::Dark,
-                },
-            },
-        });
+        let node = ws_proxy::api::models::Node::from_update(node_id, host, &update);
         let state = ControlPlaneState::default();
         state.nodes.write().await.insert(
             node_id,

@@ -224,6 +224,7 @@ mod unix {
             "name": name,
             "description": null,
             "enabled": true,
+            "inputNodeId": null,
             "settings": {
                 "sampleRateHz": sample_rate,
                 "channels": 1,
@@ -239,6 +240,7 @@ mod unix {
             "name": name,
             "description": null,
             "enabled": true,
+            "inputNodeId": null,
             "settings": {
                 "maxLines": max_lines,
                 "fontScale": 1.0,

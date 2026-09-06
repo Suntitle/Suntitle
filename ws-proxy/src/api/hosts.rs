@@ -1,3 +1,4 @@
+use super::validated_json::ValidatedJson;
 use actix_web::{HttpResponse, get, post, web};
 use uuid::Uuid;
 
@@ -5,7 +6,7 @@ use crate::registration::RegistrationServerMessage;
 use crate::{DesiredNode, HostControlRegistry, HostRegistry, NodeRegistry};
 
 use super::errors::{ApiResult, BadRequest, NotFound, Unauthorized, ValidationFailed};
-use super::models::{HostList, ListHostsQuery, Node, NodeCreate, NodeInputUpdate, NodeUpdate};
+use super::models::{HostList, ListHostsQuery, Node, NodeCreate};
 
 #[utoipa::path(
     get,
@@ -62,7 +63,7 @@ pub async fn install_node_on_host(
     nodes: web::Data<NodeRegistry>,
     controls: web::Data<HostControlRegistry>,
     host_id: web::Path<Uuid>,
-    body: web::Json<NodeCreate>,
+    body: ValidatedJson<NodeCreate>,
 ) -> Result<HttpResponse, super::errors::ApiError> {
     let host_id = host_id.into_inner();
     let host = hosts
@@ -71,10 +72,12 @@ pub async fn install_node_on_host(
         .get(&host_id)
         .cloned()
         .ok_or_else(|| super::errors::ApiError::not_found("host does not exist"))?;
-    let update = create_to_update(body.into_inner());
+    let update = body.into_inner().update;
     let node_id = Uuid::new_v4();
     let node = Node::from_update(node_id, host, &update);
-    nodes.write().await.insert(
+    let mut registry = nodes.write().await;
+    super::nodes::validate_input(node_id, &update, &registry)?;
+    registry.insert(
         node_id,
         DesiredNode {
             host_id,
@@ -83,6 +86,7 @@ pub async fn install_node_on_host(
             node: node.clone(),
         },
     );
+    drop(registry);
     super::nodes::send_control(
         &controls,
         host_id,
@@ -94,45 +98,6 @@ pub async fn install_node_on_host(
     )
     .await;
     Ok(HttpResponse::Created().json(node))
-}
-
-fn create_to_update(create: NodeCreate) -> NodeUpdate {
-    match create {
-        NodeCreate::AudioSource(value) => {
-            NodeUpdate::AudioSource(super::models::AudioSourceNodeUpdate {
-                base: value.base,
-                variant: value.variant,
-                input: NodeInputUpdate {
-                    input_node_id: None,
-                },
-            })
-        }
-        NodeCreate::Transcriber(value) => {
-            NodeUpdate::Transcriber(super::models::TranscriberNodeUpdate {
-                base: value.base,
-                variant: value.variant,
-                input: NodeInputUpdate {
-                    input_node_id: None,
-                },
-            })
-        }
-        NodeCreate::Translator(value) => {
-            NodeUpdate::Translator(super::models::TranslatorNodeUpdate {
-                base: value.base,
-                variant: value.variant,
-                input: NodeInputUpdate {
-                    input_node_id: None,
-                },
-            })
-        }
-        NodeCreate::Display(value) => NodeUpdate::Display(super::models::DisplayNodeUpdate {
-            base: value.base,
-            variant: value.variant,
-            input: NodeInputUpdate {
-                input_node_id: None,
-            },
-        }),
-    }
 }
 
 #[cfg(test)]

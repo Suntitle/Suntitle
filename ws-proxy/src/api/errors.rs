@@ -65,6 +65,7 @@ pub struct ApiError {
     status: StatusCode,
     problem: Box<Problem>,
     authenticate: bool,
+    errors: Vec<ValidationError>,
 }
 
 impl ApiError {
@@ -80,6 +81,7 @@ impl ApiError {
                 request_id: None,
             }),
             authenticate: true,
+            errors: Vec::new(),
         }
     }
 
@@ -99,7 +101,60 @@ impl ApiError {
                 request_id: None,
             }),
             authenticate: false,
+            errors: Vec::new(),
         }
+    }
+
+    pub fn validation(errors: validator::ValidationErrors) -> Self {
+        fn flatten(
+            prefix: &str,
+            errors: &validator::ValidationErrors,
+            out: &mut Vec<ValidationError>,
+        ) {
+            for (field, kind) in errors.errors() {
+                let field = match field.as_ref() {
+                    "sample_rate_hz" => "sampleRateHz",
+                    "device_name" => "deviceName",
+                    "beam_size" => "beamSize",
+                    "source_language" => "sourceLanguage",
+                    "target_language" => "targetLanguage",
+                    "max_lines" => "maxLines",
+                    "font_scale" => "fontScale",
+                    other => other,
+                };
+                let path = if field == "base" || field == "update" {
+                    prefix.to_owned()
+                } else if prefix.is_empty() {
+                    field.to_owned()
+                } else {
+                    format!("{prefix}.{field}")
+                };
+                match kind {
+                    validator::ValidationErrorsKind::Field(errors) => {
+                        out.extend(errors.iter().map(|error| ValidationError {
+                            path: path.clone(),
+                            message: error.message.as_deref().map(str::to_owned).unwrap_or_else(
+                                || format!("{} validation failed: {:?}", error.code, error.params),
+                            ),
+                        }))
+                    }
+                    validator::ValidationErrorsKind::Struct(errors) => flatten(&path, errors, out),
+                    validator::ValidationErrorsKind::List(errors) => {
+                        for (index, errors) in errors {
+                            flatten(&format!("{path}[{index}]"), errors, out);
+                        }
+                    }
+                }
+            }
+        }
+        let mut result = Self::problem(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Validation Failed",
+            "One or more fields failed validation.",
+        );
+        flatten("", &errors, &mut result.errors);
+        result.errors.sort_by(|a, b| a.path.cmp(&b.path));
+        result
     }
 
     pub fn not_found(detail: impl Into<String>) -> Self {
@@ -128,7 +183,14 @@ impl ResponseError for ApiError {
         if self.authenticate {
             response.insert_header((header::WWW_AUTHENTICATE, "Bearer"));
         }
-        response.json(&*self.problem)
+        if self.errors.is_empty() {
+            response.json(&*self.problem)
+        } else {
+            response.json(ValidationProblem {
+                problem: (*self.problem).clone(),
+                errors: self.errors.clone(),
+            })
+        }
     }
 }
 

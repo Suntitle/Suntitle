@@ -113,19 +113,20 @@ describe("Hosts page", () => {
     cy.get('[data-slot="select-item"]').contains("Transcriber").click()
     cy.get("#node-name").should("have.value", "live-transcriber")
     cy.get("#node-setting-model").should("have.value", "large-v3")
-    cy.get("#node-setting-language").should("have.value", "en-US")
+    cy.get("#node-setting-language").should("have.value", "en")
     cy.get("#node-setting-beamSize").should("have.value", "5")
 
     cy.contains("button", "Install node").click()
     cy.wait("@installNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
       expect(request.body).to.deep.equal({
+        inputNodeId: null,
         type: "transcriber",
         name: "live-transcriber",
         enabled: true,
         settings: {
           model: "large-v3",
-          language: "en-US",
+          language: "en",
           task: "transcribe",
           beamSize: 5,
           vadEnabled: true,

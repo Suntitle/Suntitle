@@ -15,9 +15,7 @@ use tokio::process::{Child, Command};
 use url::Url;
 use uuid::Uuid;
 
-use crate::api::models::{
-    AudioEncoding, DisplayTheme, LanguageTag, NodeType, NodeUpdate, TranscriberTask,
-};
+use crate::api::models::{NodeSettings, NodeUpdate};
 use crate::registration::NodeRuntimeStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,7 +142,7 @@ struct ManagedNode {
 pub struct NodeProcessManager {
     project_dir: PathBuf,
     uv_bin: PathBuf,
-    data_plane_url: Url,
+    endpoints: NodeEndpoints,
     shutdown_grace: Duration,
     nodes: HashMap<Uuid, ManagedNode>,
 }
@@ -162,11 +160,10 @@ impl NodeProcessManager {
                 project_dir.display()
             ));
         }
-        validate_data_plane_url(&data_plane_url)?;
         Ok(Self {
             project_dir,
             uv_bin,
-            data_plane_url,
+            endpoints: NodeEndpoints::new(&data_plane_url)?,
             shutdown_grace,
             nodes: HashMap::new(),
         })
@@ -201,36 +198,6 @@ impl NodeProcessManager {
             )];
         }
 
-        let spec = match command_spec(
-            &self.uv_bin,
-            &self.project_dir,
-            &self.data_plane_url,
-            &update,
-        ) {
-            Ok(spec) => spec,
-            Err(message) => {
-                if let Some(old) = self.nodes.remove(&node_id)
-                    && let Some(child) = old.child
-                {
-                    let _ = child.stop(self.shutdown_grace).await;
-                }
-                self.nodes.insert(
-                    node_id,
-                    ManagedNode {
-                        revision,
-                        update,
-                        child: None,
-                    },
-                );
-                return vec![event(
-                    node_id,
-                    revision,
-                    NodeRuntimeStatus::Failed,
-                    Some(message),
-                )];
-            }
-        };
-
         if let Some(old) = self.nodes.remove(&node_id)
             && let Some(child) = old.child
         {
@@ -249,6 +216,7 @@ impl NodeProcessManager {
             return vec![event(node_id, revision, NodeRuntimeStatus::Stopped, None)];
         }
 
+        let spec = command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &update);
         let mut events = vec![event(node_id, revision, NodeRuntimeStatus::Starting, None)];
         match ChildProcess::spawn(&spec) {
             Ok(child) => {
@@ -423,178 +391,45 @@ fn authority(base: &Url) -> Result<String, String> {
     })
 }
 
-fn language<'a>(tag: &'a LanguageTag, field: &str) -> Result<&'a str, String> {
-    let value = tag.0.as_str();
-    if (value.len() == 2 || value.len() == 3) && value.bytes().all(|byte| byte.is_ascii_lowercase())
-    {
-        Ok(value)
-    } else {
-        Err(format!(
-            "{field} must be a lowercase ISO 639 language code; regional BCP 47 tags are not supported"
-        ))
+// TODO: NodeEndpoints must be moved on API level and imported here. 
+/// Data-plane addresses prepared once from validated host configuration.
+#[derive(Debug)]
+pub struct NodeEndpoints {
+    audio: String,
+    transcriber: String,
+    authority: String,
+}
+
+impl NodeEndpoints {
+    pub fn new(base: &Url) -> Result<Self, String> {
+        validate_data_plane_url(base)?;
+        Ok(Self {
+            audio: endpoint(base, "")?,
+            transcriber: endpoint(base, "transcribe")?,
+            authority: authority(base)?,
+        })
     }
 }
 
+/// Builds arguments for settings already validated at API submission.
 pub fn command_spec(
     uv_bin: &Path,
     project_dir: &Path,
-    base: &Url,
+    endpoints: &NodeEndpoints,
     update: &NodeUpdate,
-) -> Result<CommandSpec, String> {
-    validate_data_plane_url(base)?;
+) -> CommandSpec {
     let mut args: Vec<OsString> = vec!["run".into(), "python".into()];
-    match update {
-        NodeUpdate::AudioSource(node) => {
-            if node.variant.node_type != NodeType::AudioSource
-                || node.base.node_type != NodeType::AudioSource
-            {
-                return Err("node type does not match audio source payload".to_owned());
-            }
-            if node.variant.settings.encoding != AudioEncoding::PcmS16le {
-                return Err("audio encoding is unsupported; only pcm_s16le is available".to_owned());
-            }
-            if ![8000, 16000, 22050, 44100, 48000].contains(&node.variant.settings.sample_rate_hz) {
-                return Err(
-                    "audio sample rate must be one of 8000, 16000, 22050, 44100, or 48000"
-                        .to_owned(),
-                );
-            }
-            if !(1..=2).contains(&node.variant.settings.channels) {
-                return Err("audio channels must be 1 or 2".to_owned());
-            }
-            args.extend([
-                "suntitle-listener.py".into(),
-                endpoint(base, "")?.into(),
-                "--samplerate".into(),
-                node.variant.settings.sample_rate_hz.to_string().into(),
-                "--channels".into(),
-                node.variant.settings.channels.to_string().into(),
-            ]);
-            if let Some(device) = &node.variant.settings.device_name {
-                args.extend(["--device".into(), device.into()]);
-            }
-            args.extend(["--format".into(), "raw".into()]);
-        }
-        NodeUpdate::Transcriber(node) => {
-            if node.variant.node_type != NodeType::Transcriber
-                || node.base.node_type != NodeType::Transcriber
-            {
-                return Err("node type does not match transcriber payload".to_owned());
-            }
-            let settings = &node.variant.settings;
-            let language = language(&settings.language, "transcriber language")?;
-            const MODELS: &[&str] = &[
-                "tiny.en",
-                "tiny",
-                "base.en",
-                "base",
-                "small.en",
-                "small",
-                "medium.en",
-                "medium",
-                "large-v1",
-                "large-v2",
-                "large-v3",
-                "large",
-                "large-v3-turbo",
-            ];
-            if !MODELS.contains(&settings.model.as_str()) {
-                return Err(format!("unsupported transcriber model: {}", settings.model));
-            }
-            if !(1..=20).contains(&settings.beam_size) {
-                return Err("transcriber beam size must be between 1 and 20".to_owned());
-            }
-            args.extend([
-                "whisper_online_client.py".into(),
-                "--uri".into(),
-                endpoint(base, "transcribe")?.into(),
-                "--model".into(),
-                settings.model.clone().into(),
-                "--language".into(),
-                language.into(),
-                "--task".into(),
-                match settings.task {
-                    TranscriberTask::Transcribe => "transcribe",
-                    TranscriberTask::Translate => "translate",
-                }
-                .into(),
-            ]);
-            if settings.vad_enabled {
-                args.push("--vad".into());
-            }
-            args.extend(["--beam-size".into(), settings.beam_size.to_string().into()]);
-        }
-        NodeUpdate::Translator(node) => {
-            if node.variant.node_type != NodeType::Translator
-                || node.base.node_type != NodeType::Translator
-            {
-                return Err("node type does not match translator payload".to_owned());
-            }
-            let settings = &node.variant.settings;
-            let source = language(&settings.source_language, "translator source language")?;
-            let target = language(&settings.target_language, "translator target language")?;
-            if settings.provider != "huggingface" {
-                return Err("translator provider must be huggingface".to_owned());
-            }
-            args.extend([
-                "suntitle-translator.py".into(),
-                "--host".into(),
-                authority(base)?.into(),
-                "--source-language".into(),
-                source.into(),
-                "--target-language".into(),
-                target.into(),
-                "--provider".into(),
-                settings.provider.clone().into(),
-            ]);
-            if let Some(model) = &settings.model {
-                args.extend(["--model".into(), model.into()]);
-            }
-            if !settings.preserve_formatting {
-                args.push("--no-preserve-formatting".into());
-            }
-        }
-        NodeUpdate::Display(node) => {
-            if node.variant.node_type != NodeType::Display
-                || node.base.node_type != NodeType::Display
-            {
-                return Err("node type does not match display payload".to_owned());
-            }
-            let settings = &node.variant.settings;
-            if !(1..=10).contains(&settings.max_lines) {
-                return Err("display max lines must be between 1 and 10".to_owned());
-            }
-            if !(0.5..=4.0).contains(&settings.font_scale) {
-                return Err("display font scale must be between 0.5 and 4.0".to_owned());
-            }
-            args.extend([
-                "suntitle.py".into(),
-                "--host".into(),
-                authority(base)?.into(),
-                "--max-lines".into(),
-                settings.max_lines.to_string().into(),
-                "--font-scale".into(),
-                settings.font_scale.to_string().into(),
-            ]);
-            if settings.show_original {
-                args.push("--show-original".into());
-            }
-            args.extend([
-                "--theme".into(),
-                match settings.theme {
-                    DisplayTheme::Light => "light",
-                    DisplayTheme::Dark => "dark",
-                    DisplayTheme::Transparent => "transparent",
-                }
-                .into(),
-            ]);
-        }
-    }
-    Ok(CommandSpec {
+    args.extend(match &update.settings {
+        NodeSettings::AudioSource(settings) => settings.command_args(&endpoints.audio),
+        NodeSettings::Transcriber(settings) => settings.command_args(&endpoints.transcriber),
+        NodeSettings::Translator(settings) => settings.command_args(&endpoints.authority),
+        NodeSettings::Display(settings) => settings.command_args(&endpoints.authority),
+    });
+    CommandSpec {
         executable: uv_bin.to_path_buf(),
         args,
         current_dir: project_dir.to_path_buf(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -607,10 +442,9 @@ mod tests {
         command_spec(
             Path::new("fake uv"),
             Path::new("/project with spaces"),
-            &Url::parse("wss://example.test:9443/prefix/").unwrap(),
+            &NodeEndpoints::new(&Url::parse("wss://example.test:9443/prefix/").unwrap()).unwrap(),
             &update,
         )
-        .unwrap()
     }
 
     #[test]
@@ -733,36 +567,6 @@ mod tests {
                 "--theme",
                 "transparent"
             ]
-        );
-    }
-
-    #[test]
-    fn unsupported_audio_and_regional_language_fail_before_spawn() {
-        let audio: NodeUpdate = serde_json::from_value(serde_json::json!({
-            "type":"audio_source", "name":"mic", "enabled":true, "description":null,
-            "settings":{"sampleRateHz":16000,"channels":1,"encoding":"opus","deviceName":null}, "inputNodeId":null
-        })).unwrap();
-        assert!(
-            command_spec(
-                Path::new("uv"),
-                Path::new("."),
-                &Url::parse("ws://localhost/").unwrap(),
-                &audio
-            )
-            .is_err()
-        );
-        let transcriber: NodeUpdate = serde_json::from_value(serde_json::json!({
-            "type":"transcriber", "name":"asr", "enabled":true, "description":null,
-            "settings":{"model":"large-v3","language":"en-US","task":"transcribe","beamSize":5,"vadEnabled":false}, "inputNodeId":null
-        })).unwrap();
-        assert!(
-            command_spec(
-                Path::new("uv"),
-                Path::new("."),
-                &Url::parse("ws://localhost/").unwrap(),
-                &transcriber
-            )
-            .is_err()
         );
     }
 
