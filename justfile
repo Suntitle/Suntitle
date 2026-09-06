@@ -8,13 +8,37 @@ default:
 setup:
     uv sync
 
-# Start the WebSocket proxy and control API in release mode.
+# Start the WebSocket proxy in release mode.
 proxy-release:
     cargo run --release --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
 
-# Start the WebSocket proxy and control API in development mode.
+# Start the WebSocket proxy in development mode.
 proxy:
     cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
+
+# Create local database configuration without overwriting existing settings.
+db-env:
+    @if [[ ! -e .env.local ]]; then cp .env.example .env.local; fi
+
+# Start PostgreSQL and wait until it is healthy.
+db-up: db-env
+    docker compose up -d --wait --wait-timeout 90 postgres
+
+# Apply versioned database migrations.
+db-migrate:
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin db_migrate
+
+# Run live storage tests in isolated schemas.
+db-test: db-up db-migrate
+    cargo test --manifest-path ws-proxy/Cargo.toml --test postgres_store -- --ignored
+
+# Stop PostgreSQL, retaining its data volume.
+db-stop:
+    docker compose stop postgres
+
+# Start the independent control API.
+api:
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api
 
 # Start the subtitle window.
 subtitle host="localhost:3030":
@@ -48,8 +72,8 @@ listener-device device host="localhost:3030":
 diamant-local:
     cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --id-file .suntitle/diamant.id --project-dir "{{ justfile_directory() }}"
 
-# Start the UI, WebSocket proxy/control API, and Diamant locally. Ctrl+C stops all processes.
-local-stack: _ui-dependencies
+# Start PostgreSQL, API, proxy, Diamant and UI. Ctrl+C leaves PostgreSQL running.
+local-stack: _ui-dependencies db-up db-migrate
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -66,31 +90,43 @@ local-stack: _ui-dependencies
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy &
+    cargo build --manifest-path ws-proxy/Cargo.toml --bins
+    ws-proxy/target/debug/control_api &
+    api_pid=$!
+    pids+=("$api_pid")
+
+    ws-proxy/target/debug/ws-proxy &
     proxy_pid=$!
     pids+=("$proxy_pid")
 
     for _ in {1..120}; do
-        if curl -fsS http://127.0.0.1:3031/api/v1/hosts >/dev/null 2>&1; then
+        if curl -fsS http://127.0.0.1:3031/api/v1/hosts >/dev/null 2>&1 && (echo > /dev/tcp/127.0.0.1/3030) 2>/dev/null; then
             break
+        fi
+        if ! kill -0 "$api_pid" 2>/dev/null; then
+            wait "$api_pid"
+            exit 1
         fi
         if ! kill -0 "$proxy_pid" 2>/dev/null; then
             wait "$proxy_pid"
+            exit 1
         fi
         sleep 0.25
     done
     curl -fsS http://127.0.0.1:3031/api/v1/hosts >/dev/null
+    (echo > /dev/tcp/127.0.0.1/3030) 2>/dev/null
 
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --id-file .suntitle/diamant.id --project-dir "{{ justfile_directory() }}" &
+    ws-proxy/target/debug/diamant --id-file .suntitle/diamant.id --project-dir "{{ justfile_directory() }}" &
     pids+=("$!")
 
-    SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 npm --prefix ui run dev &
+    (cd ui && exec env SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js) &
     pids+=("$!")
 
     while true; do
         for pid in "${pids[@]}"; do
             if ! kill -0 "$pid" 2>/dev/null; then
                 wait "$pid"
+                exit 1
             fi
         done
         sleep 1
@@ -125,11 +161,11 @@ e2e:
     cargo run --manifest-path ws-proxy/Cargo.toml --example e2e_probe
 
 # Run the host-registration end-to-end test.
-host-e2e:
+host-e2e: db-up db-migrate
     cargo run --manifest-path ws-proxy/Cargo.toml --example host_registration_e2e
 
 # Run the node-lifecycle end-to-end test.
-node-e2e:
+node-e2e: db-up db-migrate
     cargo run --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
 
 # Select an existing Pulumi stack.
@@ -165,11 +201,12 @@ _ui-dependencies:
     @if [[ ! -x ui/node_modules/.bin/vite ]]; then npm --prefix ui install; fi
 
 # Start the UI and control API together. Ctrl+C stops both processes.
-ui: _ui-dependencies
+ui: _ui-dependencies db-up db-migrate
     #!/usr/bin/env bash
     set -euo pipefail
 
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy &
+    cargo build --manifest-path ws-proxy/Cargo.toml --bin control_api
+    ws-proxy/target/debug/control_api &
     backend_pid=$!
 
     cleanup() {
@@ -178,7 +215,7 @@ ui: _ui-dependencies
     }
     trap cleanup EXIT INT TERM
 
-    SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 npm --prefix ui run dev
+    (cd ui && exec env SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js)
 
 # Start the UI and mock API together. Ctrl+C stops both processes.
 ui-mock: _ui-dependencies

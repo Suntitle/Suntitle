@@ -1,3 +1,5 @@
+mod support;
+
 #[cfg(not(unix))]
 fn main() {
     eprintln!("node_handling_e2e currently requires a Unix host");
@@ -107,6 +109,8 @@ mod unix {
     }
 
     pub async fn run() -> Result<(), Box<dyn Error>> {
+        crate::support::require_free_ports()?;
+        let database = crate::support::Database::create().await?;
         build_helpers()?;
         let binary_directory = binary_directory()?;
         let temporary_directory = TemporaryDirectory::new()?;
@@ -114,9 +118,15 @@ mod unix {
         let process_log = temporary_directory.0.join("node-processes.log");
         let host_name = format!("node-e2e-{}", Uuid::new_v4().simple());
 
+        let mut api = ChildProcess::spawn(
+            "control_api",
+            Command::new(binary_path(&binary_directory, "control_api"))
+                .env("DATABASE_URL", &database.url),
+        )?;
         let mut proxy = ChildProcess::spawn(
             "ws-proxy",
-            &mut Command::new(binary_path(&binary_directory, "ws-proxy")),
+            Command::new(binary_path(&binary_directory, "ws-proxy"))
+                .env("DATABASE_URL", &database.url),
         )?;
         wait_for_proxy(&mut proxy).await?;
 
@@ -208,12 +218,37 @@ mod unix {
 
         diamant.terminate()?;
         diamant.wait_for_exit().await?;
-        wait_for_nodes(0, false, &mut proxy, &mut diamant).await?;
+        wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
         wait_for_host(&host_name, "offline", &mut proxy, &mut diamant).await?;
         wait_for_all_processes_to_stop(&process_log).await?;
 
+        // Restart both independent services with the same database. The API
+        // must retain desired nodes, and a fresh agent must replay them.
+        drop(api);
+        drop(proxy);
+        api = ChildProcess::spawn(
+            "control_api",
+            Command::new(binary_path(&binary_directory, "control_api"))
+                .env("DATABASE_URL", &database.url),
+        )?;
+        proxy = ChildProcess::spawn(
+            "ws-proxy",
+            Command::new(binary_path(&binary_directory, "ws-proxy"))
+                .env("DATABASE_URL", &database.url),
+        )?;
+        wait_for_proxy(&mut proxy).await?;
+        api.ensure_running()?;
+        wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
+        diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
+        wait_for_nodes(3, true, &mut proxy, &mut diamant).await?;
+        wait_for_node(&audio_id, "Updated microphone", true).await?;
+        diamant.terminate()?;
+        diamant.wait_for_exit().await?;
+        wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
+        wait_for_all_processes_to_stop(&process_log).await?;
+
         println!(
-            "PASS: node create/list/restart/update/add and Diamant shutdown cleanup completed for host {host_id}"
+            "PASS: node create/list/restart/update/add, process restart replay, and Diamant shutdown cleanup completed for host {host_id}"
         );
         Ok(())
     }
@@ -305,7 +340,7 @@ mod unix {
             if Instant::now() >= deadline {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "timed out waiting for ws-proxy ports 3030 and 3031",
+                    "timed out waiting for proxy port 3030 and API port 3031",
                 ));
             }
             sleep(POLL_INTERVAL).await;
@@ -353,15 +388,21 @@ mod unix {
         let deadline = Instant::now() + ACTION_TIMEOUT;
         loop {
             proxy.ensure_running()?;
-            if total > 0 {
+            if connected {
                 diamant.ensure_running()?;
             }
             if let Ok(nodes) = request_json("GET", "/api/v1/nodes", None, 200).await
                 && nodes["total"].as_u64() == Some(total as u64)
-                && (!connected
-                    || nodes["items"].as_array().is_some_and(|items| {
-                        items.iter().all(|node| node["status"] == "connected")
-                    }))
+                && nodes["items"].as_array().is_some_and(|items| {
+                    items.iter().all(|node| {
+                        node["status"]
+                            == if connected {
+                                "connected"
+                            } else {
+                                "disconnected"
+                            }
+                    })
+                })
             {
                 return Ok(());
             }

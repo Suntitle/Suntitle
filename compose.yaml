@@ -1,0 +1,19 @@
+name: suntitle
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: suntitle
+      POSTGRES_USER: suntitle
+      POSTGRES_PASSWORD: suntitle-local
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U suntitle -d suntitle"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  postgres-data:

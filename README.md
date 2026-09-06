@@ -30,10 +30,63 @@ Install the Python dependencies from the repository root:
 just setup
 ```
 
+## Local database and independent services
+
+Docker Compose runs PostgreSQL 18; the Rust binaries run on the host:
+
+```bash
+cp .env.example .env.local  # first setup only; credentials are for local development
+just db-up
+just db-migrate
+just api                  # terminal 1, port 3031
+just proxy                # terminal 2, port 3030
+```
+
+Both binaries read `.env.local` without overriding exported environment variables.
+They require `DATABASE_URL`, a reachable database, and the exact migrated schema;
+startup fails otherwise. Each uses a bounded pool of eight connections. Only the
+proxy listens for database notifications. Run one proxy instance per database;
+a database advisory lock rejects a second instance.
+
+`just local-stack` prepares the database and starts API, proxy, Diamant, and UI.
+It waits for the API and proxy before starting clients. Ctrl+C stops application
+children and leaves PostgreSQL running. `just db-stop` stops PostgreSQL while
+preserving its volume. `just ui` starts the database, API, and UI.
+
+Commands are committed with desired state, delivered in revision order per node,
+and completed only by a matching terminal runtime acknowledgement. Duplicate
+commands are ignored by Diamant when their revision has already been applied. Recovery from
+lost terminal acknowledgements is deferred. Registration reconciles a fresh agent
+with the latest full desired configuration. Timer scans recover missed notifications, and session tokens
+reject late messages from replaced connections. Domain models and OpenAPI stay
+unchanged, including typed `NodeSettings`. Callers Get current models, modify them,
+then submit direct Updates. An optimistic version check rejects stale submissions;
+retries Get fresh state before reapplying changes. SQL Create, Update, and Delete
+operations stay inside the PostgreSQL adapter.
+
+Run `just db-test` for live storage checks, `just host-e2e` and `just node-e2e`
+for separate-process checks. These use isolated schemas and leave development
+records intact. Run E2E examples one at a time with ports 3030 and 3031 free.
+
+For a local backup, capture a PostgreSQL custom-format dump:
+
+```bash
+docker compose exec -T postgres pg_dump -U suntitle -d suntitle -Fc > suntitle.dump
+```
+
+To restore into a separate empty database (keeping the current database intact):
+
+```bash
+docker compose exec -T postgres createdb -U suntitle suntitle_restore
+docker compose exec -T postgres pg_restore -U suntitle -d suntitle_restore < suntitle.dump
+```
+
+Set `DATABASE_URL` to the restored database before starting the applications.
+
 ## Run the web UI with the API backend
 
-Start the WebSocket proxy/control API and UI from the repository root. Press
-`Ctrl+C` to stop both processes:
+Start PostgreSQL, the control API, and UI from the repository root. Press
+`Ctrl+C` to stop the API and UI; PostgreSQL stays available:
 
 ```bash
 just ui
@@ -48,8 +101,9 @@ Start each process in a separate terminal, from the repository root. Start the
 consumers before the microphone because the proxy does not buffer messages for
 clients that are not connected.
 
-1. Start the WebSocket proxy on port `3030`. This also starts the control API
-   on port `3031`, sharing the proxy's in-memory host registry:
+1. Prepare PostgreSQL with `just db-up` and `just db-migrate`, then start the
+   WebSocket proxy on port `3030`. Start `just api` in another terminal for the
+   independent control API on port `3031`:
 
    ```bash
    just proxy-release
@@ -101,16 +155,13 @@ omitted; completed text is printed by `whisper_online_client.py`.
 
 ## Manage hosts and nodes through the API
 
-The proxy and control API share in-memory host and node state. The following
+The proxy and control API share durable PostgreSQL host, node, and command state. The following
 quickstart runs both services plus one Diamant host and installs an audio-source
 node on it. Run each service command from the repository root in a separate
 terminal.
 
-1. Start the WebSocket proxy and control API:
-
-   ```bash
-   just proxy
-   ```
+1. Run `just db-up` and `just db-migrate`, then start `just proxy` and `just api`
+   in separate terminals.
 
 2. Start Diamant. Its ID file keeps the host UUID stable between restarts, and
    `--project-dir` tells it where to launch node programs:
@@ -179,15 +230,16 @@ The probe disconnects its mock clients automatically. Return to the proxy
 terminal and press `Ctrl+C` to shut down the server.
 
 To verify the complete host-registration path, run the self-contained host E2E
-example. It builds and starts `ws-proxy`, starts a temporary `diamant` agent,
+example. It prepares PostgreSQL, builds and starts `ws-proxy` and `control_api`,
+starts a temporary `diamant` agent,
 and checks that the host is returned by the control API:
 
 ```bash
 just host-e2e
 ```
 
-The example stops both child processes and removes its temporary identity file
-when it finishes.
+The example stops its application children and removes its temporary identity
+file and isolated database schema when it finishes. PostgreSQL remains running.
 
 To verify node lifecycle handling end to end, run:
 
@@ -197,7 +249,7 @@ just node-e2e
 
 This starts the proxy/API and Diamant locally, registers audio-source and display
 nodes, verifies listing, restart and update behavior, adds another node, and
-then confirms that stopping Diamant removes all of its nodes. Node processes are
+then confirms that stopping Diamant retains its nodes with disconnected status. Node processes are
 replaced by a lightweight fixture, so the test does not use audio hardware,
 models, or a graphical session. The lifecycle test currently requires Unix
 process signals.
@@ -311,6 +363,8 @@ WebSocket open until the connection ends, and then exits. The health interval
 can be changed with `--health-interval-seconds` or
 `SUNTITLE_HEALTH_INTERVAL_SECONDS`.
 
-The proxy currently returns a complete online host record but does not persist
-it in the control API; that storage remains an explicit follow-up. CI publishes
+Host identity, health, desired nodes, and pending commands persist in PostgreSQL.
+Disconnected hosts become offline; missing health reports expire after 45 seconds,
+so configure the health interval below that limit. Nodes remain available through
+the API while the host is offline. CI publishes
 Diamant as `diamant.<target>.tar.xz` alongside the proxy release.

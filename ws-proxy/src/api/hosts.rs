@@ -2,8 +2,7 @@ use super::validated_json::ValidatedJson;
 use actix_web::{HttpResponse, get, post, web};
 use uuid::Uuid;
 
-use crate::registration::RegistrationServerMessage;
-use crate::{DesiredNode, HostControlRegistry, HostRegistry, NodeRegistry};
+use crate::storage::Store;
 
 use super::errors::{ApiResult, BadRequest, NotFound, Unauthorized, ValidationFailed};
 use super::models::{HostList, ListHostsQuery, Node, NodeCreate};
@@ -23,14 +22,14 @@ use super::models::{HostList, ListHostsQuery, Node, NodeCreate};
 )]
 #[get("/hosts")]
 pub async fn list_hosts(
-    hosts: web::Data<HostRegistry>,
+    store: web::Data<Store>,
     query: web::Query<ListHostsQuery>,
 ) -> ApiResult<HostList> {
-    let hosts = hosts.read().await;
-    let mut items: Vec<_> = hosts
-        .values()
+    let mut items: Vec<_> = store
+        .hosts()
+        .await?
+        .into_iter()
         .filter(|host| query.status.is_none_or(|status| host.status == status))
-        .cloned()
         .collect();
     items.sort_unstable_by_key(|host| host.id);
 
@@ -59,105 +58,14 @@ pub async fn list_hosts(
 )]
 #[post("/hosts/{hostId}/nodes")]
 pub async fn install_node_on_host(
-    hosts: web::Data<HostRegistry>,
-    nodes: web::Data<NodeRegistry>,
-    controls: web::Data<HostControlRegistry>,
+    store: web::Data<Store>,
     host_id: web::Path<Uuid>,
     body: ValidatedJson<NodeCreate>,
 ) -> Result<HttpResponse, super::errors::ApiError> {
     let host_id = host_id.into_inner();
-    let host = hosts
-        .read()
-        .await
-        .get(&host_id)
-        .cloned()
-        .ok_or_else(|| super::errors::ApiError::not_found("host does not exist"))?;
-    let update = body.into_inner().update;
     let node_id = Uuid::new_v4();
-    let node = Node::from_update(node_id, host, &update);
-    let mut registry = nodes.write().await;
-    super::nodes::validate_input(node_id, &update, &registry)?;
-    registry.insert(
-        node_id,
-        DesiredNode {
-            host_id,
-            revision: 1,
-            update: update.clone(),
-            node: node.clone(),
-        },
-    );
-    drop(registry);
-    super::nodes::send_control(
-        &controls,
-        host_id,
-        RegistrationServerMessage::ApplyNode {
-            node_id,
-            revision: 1,
-            update,
-        },
-    )
-    .await;
+    let node = store
+        .create_node(host_id, node_id, body.into_inner().update)
+        .await?;
     Ok(HttpResponse::Created().json(node))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::net::IpAddr;
-
-    use actix_web::{App, test, web};
-    use chrono::Utc;
-
-    use super::*;
-    use crate::api::models::{Host, HostStatus};
-
-    fn host(id: &str, status: HostStatus) -> Host {
-        Host {
-            id: Uuid::parse_str(id).unwrap(),
-            name: id.to_owned(),
-            ip: "192.0.2.10".parse::<IpAddr>().unwrap(),
-            version: "0.1.0".to_owned(),
-            status,
-            last_seen_at: Utc::now(),
-            metadata: None,
-        }
-    }
-
-    #[actix_web::test]
-    async fn lists_registry_hosts_and_filters_by_status() {
-        let registry = HostRegistry::default();
-        {
-            let mut hosts = registry.write().await;
-            let online = host("20000000-0000-4000-8000-000000000002", HostStatus::Online);
-            let offline = host("20000000-0000-4000-8000-000000000001", HostStatus::Offline);
-            hosts.insert(online.id, online);
-            hosts.insert(offline.id, offline);
-        }
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(registry))
-                .service(list_hosts),
-        )
-        .await;
-
-        let all: HostList = test::call_and_read_body_json(
-            &app,
-            test::TestRequest::get().uri("/hosts").to_request(),
-        )
-        .await;
-        assert_eq!(all.total, 2);
-        assert_eq!(
-            all.items[0].id,
-            Uuid::parse_str("20000000-0000-4000-8000-000000000001").unwrap()
-        );
-
-        let online: HostList = test::call_and_read_body_json(
-            &app,
-            test::TestRequest::get()
-                .uri("/hosts?status=online")
-                .to_request(),
-        )
-        .await;
-        assert_eq!(online.total, 1);
-        assert!(matches!(online.items[0].status, HostStatus::Online));
-    }
 }

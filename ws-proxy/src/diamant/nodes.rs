@@ -391,7 +391,7 @@ fn authority(base: &Url) -> Result<String, String> {
     })
 }
 
-// TODO: NodeEndpoints must be moved on API level and imported here. 
+// TODO: NodeEndpoints must be moved on API level and imported here.
 /// Data-plane addresses prepared once from validated host configuration.
 #[derive(Debug)]
 pub struct NodeEndpoints {
@@ -479,14 +479,10 @@ mod tests {
                 "python",
                 "suntitle-listener.py",
                 "wss://example.test:9443/prefix/",
-                "--samplerate",
-                "16000",
-                "--channels",
-                "1",
-                "--device",
-                "USB; touch /tmp/nope",
-                "--format",
-                "raw"
+                "--samplerate=16000",
+                "--channels=1",
+                "--device=USB; touch /tmp/nope",
+                "--format=raw"
             ]
         );
     }
@@ -504,17 +500,12 @@ mod tests {
                 "run",
                 "python",
                 "whisper_online_client.py",
-                "--uri",
-                "wss://example.test:9443/prefix/transcribe",
-                "--model",
-                "large-v3",
-                "--language",
-                "en",
-                "--task",
-                "translate",
+                "--uri=wss://example.test:9443/prefix/transcribe",
+                "--model=large-v3",
+                "--language=en",
+                "--task=translate",
                 "--vad",
-                "--beam-size",
-                "8"
+                "--beam-size=8"
             ]
         );
     }
@@ -532,16 +523,11 @@ mod tests {
                 "run",
                 "python",
                 "suntitle-translator.py",
-                "--host",
-                "example.test:9443",
-                "--source-language",
-                "uk",
-                "--target-language",
-                "cs",
-                "--provider",
-                "huggingface",
-                "--model",
-                "custom model",
+                "--host=example.test:9443",
+                "--source-language=uk",
+                "--target-language=cs",
+                "--provider=huggingface",
+                "--model=custom model",
                 "--no-preserve-formatting"
             ]
         );
@@ -557,15 +543,11 @@ mod tests {
                 "run",
                 "python",
                 "suntitle.py",
-                "--host",
-                "example.test:9443",
-                "--max-lines",
-                "3",
-                "--font-scale",
-                "1.5",
+                "--host=example.test:9443",
+                "--max-lines=3",
+                "--font-scale=1.5",
                 "--show-original",
-                "--theme",
-                "transparent"
+                "--theme=transparent"
             ]
         );
     }

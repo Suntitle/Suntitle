@@ -1,36 +1,35 @@
 use actix_web::{App, http::StatusCode, test, web};
 use chrono::Utc;
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
 use uuid::Uuid;
-use ws_proxy::ControlPlaneState;
 use ws_proxy::api::models::{Host, HostStatus, Node};
 use ws_proxy::api::{hosts::install_node_on_host, nodes::update_node};
 use ws_proxy::registration::RegistrationServerMessage;
+use ws_proxy::storage::{MemoryStore, Mutation, Store};
 
 #[actix_web::test]
 async fn submissions_validate_settings_before_mutating_or_dispatching() {
-    let state = ControlPlaneState::default();
+    let state: Store = std::sync::Arc::new(MemoryStore::default());
     let host_id = Uuid::new_v4();
-    state.hosts.write().await.insert(
-        host_id,
-        Host {
-            id: host_id,
-            name: "host".into(),
-            ip: "127.0.0.1".parse().unwrap(),
-            version: "0.1.0".into(),
-            status: HostStatus::Online,
-            last_seen_at: Utc::now(),
-            metadata: None,
-        },
-    );
-    let (sender, mut receiver) = mpsc::unbounded_channel();
-    state.host_controls.write().await.insert(host_id, sender);
+    let session = Uuid::new_v4();
+    state
+        .mutate(Mutation::Register(
+            Host {
+                id: host_id,
+                name: "host".into(),
+                ip: "127.0.0.1".parse().unwrap(),
+                version: "0.1.0".into(),
+                status: HostStatus::Online,
+                last_seen_at: Utc::now(),
+                metadata: None,
+            },
+            session,
+        ))
+        .await
+        .unwrap();
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(state.hosts.clone()))
-            .app_data(web::Data::new(state.nodes.clone()))
-            .app_data(web::Data::new(state.host_controls.clone()))
+            .app_data(web::Data::new(state.clone()))
             .service(install_node_on_host)
             .service(update_node),
     )
@@ -96,20 +95,33 @@ async fn submissions_validate_settings_before_mutating_or_dispatching() {
         let node: Node = test::read_body_json(response).await;
         let RegistrationServerMessage::ApplyNode {
             revision, update, ..
-        } = receiver.try_recv().unwrap()
+        } = state
+            .snapshot()
+            .await
+            .unwrap()
+            .commands
+            .values()
+            .filter(|c| c.node_id == node.id())
+            .max_by_key(|c| c.revision)
+            .unwrap()
+            .message
+            .clone()
         else {
             panic!("expected node creation dispatch");
         };
         assert_eq!(revision, 1);
         assert_eq!(update.input_node_id(), upstream);
         assert_eq!(
-            state.nodes.read().await[&node.id()].update.input_node_id(),
+            state.snapshot().await.unwrap().nodes[&node.id()]
+                .update
+                .input_node_id(),
             upstream
         );
         upstream = Some(node.id());
         let mut invalid_input = valid.clone();
         invalid_input["inputNodeId"] = json!(Uuid::new_v4());
-        let count = state.nodes.read().await.len();
+        let count = state.snapshot().await.unwrap().nodes.len();
+        let commands_count = state.snapshot().await.unwrap().commands.len();
         let response = test::call_service(
             &app,
             test::TestRequest::post()
@@ -119,11 +131,15 @@ async fn submissions_validate_settings_before_mutating_or_dispatching() {
         )
         .await;
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(state.nodes.read().await.len(), count);
-        assert!(receiver.try_recv().is_err());
+        assert_eq!(state.snapshot().await.unwrap().nodes.len(), count);
+        assert_eq!(
+            state.snapshot().await.unwrap().commands.len(),
+            commands_count
+        );
+
         let update_uri = format!("/nodes/{}", node.id());
-        let original = state.nodes.read().await[&node.id()].clone();
-        let original_count = state.nodes.read().await.len();
+        let original = state.snapshot().await.unwrap().nodes[&node.id()].clone();
+        let original_count = state.snapshot().await.unwrap().nodes.len();
         let mut invalid_requests: Vec<_> = invalid_fields
             .into_iter()
             .map(|(field, value)| {
@@ -162,8 +178,12 @@ async fn submissions_validate_settings_before_mutating_or_dispatching() {
                 );
                 let problem: Value = test::read_body_json(response).await;
                 assert_eq!(problem["errors"][0]["path"], path);
-                assert!(receiver.try_recv().is_err());
-                let registry = state.nodes.read().await;
+
+                assert_eq!(
+                    state.snapshot().await.unwrap().commands.len(),
+                    commands_count
+                );
+                let registry = state.snapshot().await.unwrap().nodes;
                 assert_eq!(registry.len(), original_count);
                 assert_eq!(registry[&node.id()].revision, original.revision);
                 assert_eq!(registry[&node.id()].update, original.update);
@@ -186,7 +206,17 @@ async fn submissions_validate_settings_before_mutating_or_dispatching() {
         .await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(matches!(
-            receiver.try_recv().unwrap(),
+            state
+                .snapshot()
+                .await
+                .unwrap()
+                .commands
+                .values()
+                .filter(|c| c.node_id == node.id())
+                .max_by_key(|c| c.revision)
+                .unwrap()
+                .message
+                .clone(),
             RegistrationServerMessage::ApplyNode { revision: 2, .. }
         ));
     }
