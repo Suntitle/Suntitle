@@ -1,3 +1,5 @@
+mod support;
+
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
@@ -70,15 +72,22 @@ impl Drop for TemporaryDirectory {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    support::require_free_ports()?;
+    let database = support::Database::create().await?;
     build_binaries()?;
     let binary_directory = binary_directory()?;
     let temporary_directory = TemporaryDirectory::new()?;
     let identity_file = temporary_directory.0.join("diamant.id");
     let host_name = format!("e2e-host-{}", Uuid::new_v4().simple());
 
+    let _api = ChildProcess::spawn(
+        "control_api",
+        Command::new(binary_path(&binary_directory, "control_api"))
+            .env("DATABASE_URL", &database.url),
+    )?;
     let mut proxy = ChildProcess::spawn(
         "ws-proxy",
-        &mut Command::new(binary_path(&binary_directory, "ws-proxy")),
+        Command::new(binary_path(&binary_directory, "ws-proxy")).env("DATABASE_URL", &database.url),
     )?;
     wait_for_proxy(&mut proxy).await?;
 
@@ -156,7 +165,7 @@ async fn wait_for_proxy(proxy: &mut ChildProcess) -> io::Result<()> {
         if Instant::now() >= deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "timed out waiting for ws-proxy ports 3030 and 3031",
+                "timed out waiting for proxy port 3030 and API port 3031",
             ));
         }
         sleep(POLL_INTERVAL).await;

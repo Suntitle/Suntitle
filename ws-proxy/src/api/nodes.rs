@@ -3,9 +3,9 @@ use actix_web::{get, post, put, web};
 use uuid::Uuid;
 
 use super::errors::{ApiResult, BadRequest, NotFound, Problem, Unauthorized, ValidationFailed};
-use super::models::{ListNodesQuery, Node, NodeList, NodeStatus, NodeType, NodeUpdate};
-use crate::registration::RegistrationServerMessage;
-use crate::{DesiredNode, HostControlRegistry, NodeRegistry};
+use super::models::{ListNodesQuery, Node, NodeList, NodeType, NodeUpdate};
+use crate::DesiredNode;
+use crate::storage::{Mutation, Store};
 
 #[utoipa::path(
     get,
@@ -22,13 +22,13 @@ use crate::{DesiredNode, HostControlRegistry, NodeRegistry};
 )]
 #[get("/nodes")]
 pub async fn list_nodes(
-    nodes: web::Data<NodeRegistry>,
+    store: web::Data<Store>,
     query: web::Query<ListNodesQuery>,
 ) -> ApiResult<NodeList> {
-    let nodes = nodes.read().await;
-    let mut items: Vec<_> = nodes
-        .values()
-        .map(|desired| desired.node.clone())
+    let mut items: Vec<_> = store
+        .nodes()
+        .await?
+        .into_iter()
         .filter(|node| {
             query
                 .node_type
@@ -59,13 +59,8 @@ pub async fn list_nodes(
     )
 )]
 #[get("/nodes/{nodeId}")]
-pub async fn get_node(nodes: web::Data<NodeRegistry>, node_id: web::Path<Uuid>) -> ApiResult<Node> {
-    nodes
-        .read()
-        .await
-        .get(&node_id.into_inner())
-        .map(|desired| web::Json(desired.node.clone()))
-        .ok_or_else(|| super::errors::ApiError::not_found("node does not exist"))
+pub async fn get_node(store: web::Data<Store>, node_id: web::Path<Uuid>) -> ApiResult<Node> {
+    Ok(web::Json(store.node(node_id.into_inner()).await?))
 }
 
 #[utoipa::path(
@@ -88,38 +83,13 @@ pub async fn get_node(nodes: web::Data<NodeRegistry>, node_id: web::Path<Uuid>) 
 )]
 #[put("/nodes/{nodeId}")]
 pub async fn update_node(
-    nodes: web::Data<NodeRegistry>,
-    controls: web::Data<HostControlRegistry>,
+    store: web::Data<Store>,
     node_id: web::Path<Uuid>,
     body: ValidatedJson<NodeUpdate>,
 ) -> ApiResult<Node> {
     let node_id = node_id.into_inner();
     let update = body.into_inner();
-    let (host_id, revision, response) = {
-        let mut registry = nodes.write().await;
-        let existing = registry
-            .get(&node_id)
-            .ok_or_else(|| super::errors::ApiError::not_found("node does not exist"))?;
-        if update.node_type() != existing.node.node_type() {
-            return Err(super::errors::ApiError::conflict("node type is immutable"));
-        }
-        validate_input(node_id, &update, &registry)?;
-        let desired = registry.get_mut(&node_id).expect("node existence checked");
-        desired.revision += 1;
-        desired.update = update.clone();
-        desired.node = desired.node.with_update(&update);
-        (desired.host_id, desired.revision, desired.node.clone())
-    };
-    send_control(
-        &controls,
-        host_id,
-        RegistrationServerMessage::ApplyNode {
-            node_id,
-            revision,
-            update,
-        },
-    )
-    .await;
+    let response = store.apply_node_change(node_id, update).await?;
     Ok(web::Json(response))
 }
 
@@ -139,46 +109,14 @@ pub async fn update_node(
     )
 )]
 #[post("/nodes/{nodeId}/restart")]
-pub async fn restart_node(
-    nodes: web::Data<NodeRegistry>,
-    controls: web::Data<HostControlRegistry>,
-    node_id: web::Path<Uuid>,
-) -> ApiResult<Node> {
+pub async fn restart_node(store: web::Data<Store>, node_id: web::Path<Uuid>) -> ApiResult<Node> {
     let node_id = node_id.into_inner();
-    let (host_id, revision, response) = {
-        let mut registry = nodes.write().await;
-        let desired = registry
-            .get_mut(&node_id)
-            .ok_or_else(|| super::errors::ApiError::not_found("node does not exist"))?;
-        if !desired.node.enabled() {
-            return Err(super::errors::ApiError::conflict(
-                "disabled nodes cannot be restarted",
-            ));
-        }
-        desired.revision += 1;
-        desired.node.set_status(NodeStatus::Disconnected);
-        (desired.host_id, desired.revision, desired.node.clone())
-    };
-    send_control(
-        &controls,
-        host_id,
-        RegistrationServerMessage::RestartNode { node_id, revision },
-    )
-    .await;
+    let state = store.mutate(Mutation::Restart(node_id)).await?;
+    let response = state.nodes[&node_id].node.clone();
     Ok(web::Json(response))
 }
 
-pub(crate) async fn send_control(
-    controls: &HostControlRegistry,
-    host_id: Uuid,
-    message: RegistrationServerMessage,
-) {
-    if let Some(sender) = controls.read().await.get(&host_id).cloned() {
-        let _ = sender.send(message);
-    }
-}
-
-pub(super) fn validate_input(
+pub(crate) fn validate_input(
     node_id: Uuid,
     update: &NodeUpdate,
     registry: &std::collections::HashMap<Uuid, DesiredNode>,

@@ -61,7 +61,7 @@ impl TranslatorSettings {
             model: self.model.clone().unwrap_or_default(),
             no_preserve_formatting: !self.preserve_formatting,
         };
-        
+
         let cmd = args.as_command();
         std::iter::once(cmd.get_program().to_os_string())
             .chain(cmd.get_args().map(OsString::from))
