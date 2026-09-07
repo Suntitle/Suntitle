@@ -1,0 +1,925 @@
+openapi: 3.1.0
+info:
+  title: Suntitle Control API
+  version: 0.1.0
+  description: |
+    API for authenticating operators and managing hosts and nodes in the live
+    subtitle pipeline. Connection topology is represented by the `connections`
+    field of each node; there is intentionally no separate routes resource.
+servers:
+  - url: /api/v1
+    description: API version 1
+
+tags:
+  - name: Authentication
+  - name: Hosts
+  - name: Node types
+  - name: Nodes
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Log in
+      description: Exchange user credentials for a bearer access token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid username or password.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Log out
+      description: Revoke the bearer token used for this request.
+      responses:
+        '204':
+          description: Logout successful.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentUser
+      summary: Get the authenticated user
+      description: |
+        Validates the bearer token and returns its user. A missing, expired,
+        revoked, or otherwise invalid token returns `401 Unauthorized`.
+      responses:
+        '200':
+          description: The bearer token is valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /hosts:
+    get:
+      tags: [Hosts]
+      operationId: listHosts
+      summary: List hosts
+      description: Returns hosts running one or more pipeline nodes, including their IP and software version.
+      parameters:
+        - name: status
+          in: query
+          description: Return only hosts with this status.
+          schema:
+            $ref: '#/components/schemas/HostStatus'
+      responses:
+        '200':
+          description: Known hosts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /hosts/{hostId}/nodes:
+    parameters:
+      - name: hostId
+        in: path
+        required: true
+        description: Host that should install and run the node.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Nodes]
+      operationId: installNodeOnHost
+      summary: Install a node on a host
+      description: |
+        Installs a configured pipeline node on the selected host. The request
+        `type` and `settings` must match one of the definitions returned by
+        `GET /node-types`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeCreate'
+      responses:
+        '201':
+          description: Node installation was accepted and the node was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /node-types:
+    get:
+      tags: [Node types]
+      operationId: listNodeTypes
+      summary: List installable node types
+      description: |
+        Returns the node types supported by the control plane and the field
+        metadata needed to configure their type-specific settings.
+      responses:
+        '200':
+          description: Installable node types and their setting definitions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeTypeDefinitionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /nodes:
+    get:
+      tags: [Nodes]
+      operationId: listNodes
+      summary: List connected nodes and their connections
+      description: |
+        Returns nodes currently known by the backend. Each node includes its type,
+        nested host, type-specific settings, and links to peer nodes.
+      parameters:
+        - name: type
+          in: query
+          description: Return only nodes of this type.
+          schema:
+            $ref: '#/components/schemas/NodeType'
+        - name: status
+          in: query
+          description: Return only nodes with this status.
+          schema:
+            $ref: '#/components/schemas/NodeStatus'
+      responses:
+        '200':
+          description: Nodes and their connection topology.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /nodes/{nodeId}:
+    parameters:
+      - name: nodeId
+        in: path
+        required: true
+        description: Unique node identifier.
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Nodes]
+      operationId: getNode
+      summary: Get a node
+      responses:
+        '200':
+          description: Node details and connections.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Nodes]
+      operationId: updateNode
+      summary: Replace editable node information and settings
+      description: |
+        Replaces operator-managed fields. The request `type` and `settings` must
+        match the node's existing type. `inputNodeId` selects an upstream node
+        whose type is allowed by the node type's `inputTypes`. ID, type, host,
+        status, outgoing connection topology, and timestamps are server-managed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeUpdate'
+      responses:
+        '200':
+          description: Updated node.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Request type conflicts with the existing node type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /nodes/{nodeId}/restart:
+    parameters:
+      - name: nodeId
+        in: path
+        required: true
+        description: Unique node identifier.
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Nodes]
+      operationId: restartNode
+      summary: Restart a node
+      description: Restarts the selected node while preserving its configuration and connections.
+      responses:
+        '200':
+          description: Restarted node.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The node cannot be restarted in its current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: The request is malformed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: A valid bearer token is required.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          example: Bearer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ValidationFailed:
+      description: One or more fields failed validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 1024
+
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, tokenType, expiresIn, user]
+      properties:
+        accessToken:
+          type: string
+          description: Value to use with the `Authorization` header.
+        tokenType:
+          type: string
+          const: Bearer
+        expiresIn:
+          type: integer
+          minimum: 1
+          description: Token lifetime in seconds.
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+
+    NodeType:
+      type: string
+      enum: [audio_source, transcriber, translator, display]
+
+    NodeSettingValue:
+      description: A value accepted by a node setting field.
+      anyOf:
+        - type: string
+        - type: number
+        - type: boolean
+        - type: 'null'
+
+    NodeSettingOption:
+      type: object
+      additionalProperties: false
+      required: [value, label]
+      properties:
+        value:
+          $ref: '#/components/schemas/NodeSettingValue'
+        label:
+          type: string
+
+    NodeSettingDefinition:
+      type: object
+      additionalProperties: false
+      required: [key, label, input, valueType, required]
+      properties:
+        key:
+          type: string
+          pattern: '^[A-Za-z][A-Za-z0-9]*$'
+          description: Property name used in the node's settings object.
+        label:
+          type: string
+        description:
+          type: string
+        input:
+          type: string
+          enum: [text, number, select, checkbox]
+        valueType:
+          type: string
+          enum: [string, integer, number, boolean]
+        required:
+          type: boolean
+        defaultValue:
+          $ref: '#/components/schemas/NodeSettingValue'
+        placeholder:
+          type: string
+        minimum:
+          type: number
+        maximum:
+          type: number
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeSettingOption'
+
+    NodeTypeDefinition:
+      type: object
+      additionalProperties: false
+      required: [type, name, description, inputTypes, settings]
+      properties:
+        type:
+          $ref: '#/components/schemas/NodeType'
+        name:
+          type: string
+        description:
+          type: string
+        inputTypes:
+          type: array
+          description: Node types that may be selected as this node's upstream input.
+          items:
+            $ref: '#/components/schemas/NodeType'
+        settings:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeSettingDefinition'
+
+    NodeTypeDefinitionList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeTypeDefinition'
+        total:
+          type: integer
+          minimum: 0
+
+    NodeStatus:
+      type: string
+      enum: [connected, disconnected, degraded]
+
+    HostStatus:
+      type: string
+      enum: [online, offline, degraded]
+
+    Host:
+      type: object
+      additionalProperties: false
+      required: [id, name, ip, version, status, lastSeenAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        ip:
+          type: string
+          format: ip
+          examples: [192.0.2.10, '2001:db8::10']
+        version:
+          type: string
+          minLength: 1
+          description: Version of the Suntitle host agent or runtime.
+          examples: [0.1.0]
+        status:
+          $ref: '#/components/schemas/HostStatus'
+        lastSeenAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          description: Optional host capabilities or implementation-specific information.
+          additionalProperties: true
+
+    HostList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Host'
+        total:
+          type: integer
+          minimum: 0
+
+    ConnectionStatus:
+      type: string
+      enum: [connected, reconnecting, degraded]
+
+    DataType:
+      type: string
+      description: Type of data transferred over a node connection.
+      enum: [audio, transcription, translation]
+
+    NodeBase:
+      type: object
+      required:
+        - id
+        - type
+        - name
+        - enabled
+        - status
+        - host
+        - connections
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        type:
+          $ref: '#/components/schemas/NodeType'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: [string, 'null']
+          maxLength: 1000
+        enabled:
+          type: boolean
+        status:
+          allOf:
+            - $ref: '#/components/schemas/NodeStatus'
+          readOnly: true
+        host:
+          allOf:
+            - $ref: '#/components/schemas/Host'
+          readOnly: true
+        connections:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/NodeConnection'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    NodeConnection:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - peerNodeId
+        - peerNodeType
+        - direction
+        - dataType
+        - status
+        - protocol
+        - connectedAt
+        - lastActivityAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable identifier of this connection.
+        peerNodeId:
+          type: string
+          format: uuid
+        peerNodeType:
+          $ref: '#/components/schemas/NodeType'
+        peerName:
+          type: string
+        direction:
+          type: string
+          enum: [incoming, outgoing]
+        dataType:
+          $ref: '#/components/schemas/DataType'
+        status:
+          $ref: '#/components/schemas/ConnectionStatus'
+        protocol:
+          type: string
+          enum: [websocket, http, https]
+        connectedAt:
+          type: string
+          format: date-time
+        lastActivityAt:
+          type: string
+          format: date-time
+        bytesTransferred:
+          type: integer
+          minimum: 0
+        metadata:
+          type: object
+          description: Optional implementation-specific connection information.
+          additionalProperties: true
+
+    Node:
+      oneOf:
+        - $ref: '#/components/schemas/AudioSourceNode'
+        - $ref: '#/components/schemas/TranscriberNode'
+        - $ref: '#/components/schemas/TranslatorNode'
+        - $ref: '#/components/schemas/DisplayNode'
+      discriminator:
+        propertyName: type
+        mapping:
+          audio_source: '#/components/schemas/AudioSourceNode'
+          transcriber: '#/components/schemas/TranscriberNode'
+          translator: '#/components/schemas/TranslatorNode'
+          display: '#/components/schemas/DisplayNode'
+
+    AudioSourceNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/AudioSourceVariant'
+      unevaluatedProperties: false
+    TranscriberNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/TranscriberVariant'
+      unevaluatedProperties: false
+    TranslatorNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/TranslatorVariant'
+      unevaluatedProperties: false
+    DisplayNode:
+      allOf:
+        - $ref: '#/components/schemas/NodeBase'
+        - $ref: '#/components/schemas/DisplayVariant'
+      unevaluatedProperties: false
+
+    AudioSourceVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: audio_source
+        settings:
+          $ref: '#/components/schemas/AudioSourceSettings'
+    TranscriberVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: transcriber
+        settings:
+          $ref: '#/components/schemas/TranscriberSettings'
+    TranslatorVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: translator
+        settings:
+          $ref: '#/components/schemas/TranslatorSettings'
+    DisplayVariant:
+      type: object
+      required: [type, settings]
+      properties:
+        type:
+          const: display
+        settings:
+          $ref: '#/components/schemas/DisplaySettings'
+
+    NodeUpdateBase:
+      type: object
+      required: [type, name, enabled, settings]
+      properties:
+        type:
+          $ref: '#/components/schemas/NodeType'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: [string, 'null']
+          maxLength: 1000
+        enabled:
+          type: boolean
+
+    NodeUpdate:
+      oneOf:
+        - $ref: '#/components/schemas/AudioSourceNodeUpdate'
+        - $ref: '#/components/schemas/TranscriberNodeUpdate'
+        - $ref: '#/components/schemas/TranslatorNodeUpdate'
+        - $ref: '#/components/schemas/DisplayNodeUpdate'
+      discriminator:
+        propertyName: type
+        mapping:
+          audio_source: '#/components/schemas/AudioSourceNodeUpdate'
+          transcriber: '#/components/schemas/TranscriberNodeUpdate'
+          translator: '#/components/schemas/TranslatorNodeUpdate'
+          display: '#/components/schemas/DisplayNodeUpdate'
+
+    NodeInputUpdate:
+      type: object
+      required: [inputNodeId]
+      properties:
+        inputNodeId:
+          type: [string, 'null']
+          format: uuid
+          description: |
+            Upstream node to connect as input. Must have a type included in the
+            selected node type's `inputTypes`; use null when the type accepts no input.
+
+    NodeCreate:
+      oneOf:
+        - $ref: '#/components/schemas/AudioSourceNodeCreate'
+        - $ref: '#/components/schemas/TranscriberNodeCreate'
+        - $ref: '#/components/schemas/TranslatorNodeCreate'
+        - $ref: '#/components/schemas/DisplayNodeCreate'
+      discriminator:
+        propertyName: type
+        mapping:
+          audio_source: '#/components/schemas/AudioSourceNodeCreate'
+          transcriber: '#/components/schemas/TranscriberNodeCreate'
+          translator: '#/components/schemas/TranslatorNodeCreate'
+          display: '#/components/schemas/DisplayNodeCreate'
+
+    AudioSourceNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/AudioSourceVariant'
+      unevaluatedProperties: false
+    TranscriberNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranscriberVariant'
+      unevaluatedProperties: false
+    TranslatorNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranslatorVariant'
+      unevaluatedProperties: false
+    DisplayNodeCreate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/DisplayVariant'
+      unevaluatedProperties: false
+
+    AudioSourceNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/AudioSourceVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
+      unevaluatedProperties: false
+    TranscriberNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranscriberVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
+      unevaluatedProperties: false
+    TranslatorNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/TranslatorVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
+      unevaluatedProperties: false
+    DisplayNodeUpdate:
+      allOf:
+        - $ref: '#/components/schemas/NodeUpdateBase'
+        - $ref: '#/components/schemas/DisplayVariant'
+        - $ref: '#/components/schemas/NodeInputUpdate'
+      unevaluatedProperties: false
+
+    AudioSourceSettings:
+      type: object
+      additionalProperties: false
+      required: [sampleRateHz, channels, encoding]
+      properties:
+        sampleRateHz:
+          type: integer
+          enum: [8000, 16000, 22050, 44100, 48000]
+        channels:
+          type: integer
+          minimum: 1
+          maximum: 2
+        encoding:
+          type: string
+          enum: [pcm_s16le, pcm_f32le, opus]
+        deviceName:
+          type: [string, 'null']
+          maxLength: 256
+
+    TranscriberSettings:
+      type: object
+      additionalProperties: false
+      required: [model, language]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          examples: [large-v3]
+        language:
+          $ref: '#/components/schemas/LanguageTag'
+        task:
+          type: string
+          enum: [transcribe, translate]
+          default: transcribe
+        beamSize:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+        vadEnabled:
+          type: boolean
+          default: true
+
+    TranslatorSettings:
+      type: object
+      additionalProperties: false
+      required: [sourceLanguage, targetLanguage, provider]
+      properties:
+        sourceLanguage:
+          $ref: '#/components/schemas/LanguageTag'
+        targetLanguage:
+          $ref: '#/components/schemas/LanguageTag'
+        provider:
+          type: string
+          minLength: 1
+          examples: [openai]
+        model:
+          type: [string, 'null']
+        preserveFormatting:
+          type: boolean
+          default: true
+
+    DisplaySettings:
+      type: object
+      additionalProperties: false
+      required: [maxLines, fontScale, showOriginal]
+      properties:
+        maxLines:
+          type: integer
+          minimum: 1
+          maximum: 10
+        fontScale:
+          type: number
+          minimum: 0.5
+          maximum: 4
+        showOriginal:
+          type: boolean
+        theme:
+          type: string
+          enum: [light, dark, transparent]
+          default: dark
+
+    LanguageTag:
+      type: string
+      pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'
+      description: BCP 47 language tag.
+      examples: [en, en-US]
+
+    NodeList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Node'
+        total:
+          type: integer
+          minimum: 0
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        requestId:
+          type: string
+
+    ValidationProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [errors]
+          properties:
+            errors:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [path, message]
+                properties:
+                  path:
+                    type: string
+                    examples: [settings.language]
+                  message:
+                    type: string

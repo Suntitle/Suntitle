@@ -1,0 +1,248 @@
+{
+  "items": [
+    {
+      "id": "30000000-0000-4000-8000-000000000001",
+      "type": "audio_source",
+      "name": "Studio microphone",
+      "description": "Primary audio input",
+      "enabled": true,
+      "status": "connected",
+      "host": {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "name": "studio-host",
+        "ip": "192.0.2.10",
+        "version": "0.1.0",
+        "status": "online",
+        "lastSeenAt": "2026-08-26T15:50:00Z"
+      },
+      "connections": [
+        {
+          "id": "40000000-0000-4000-8000-000000000001",
+          "peerNodeId": "30000000-0000-4000-8000-000000000003",
+          "peerNodeType": "transcriber",
+          "peerName": "Live transcriber",
+          "direction": "outgoing",
+          "dataType": "audio",
+          "status": "connected",
+          "protocol": "websocket",
+          "connectedAt": "2026-08-26T15:00:00Z",
+          "lastActivityAt": "2026-08-26T15:50:00Z"
+        }
+      ],
+      "createdAt": "2026-08-20T10:00:00Z",
+      "updatedAt": "2026-08-26T15:50:00Z",
+      "settings": {
+        "sampleRateHz": 48000,
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "deviceName": "USB Audio Device"
+      }
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000003",
+      "type": "transcriber",
+      "name": "Live transcriber",
+      "description": "English transcription",
+      "enabled": true,
+      "status": "connected",
+      "host": {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "name": "studio-host",
+        "ip": "192.0.2.10",
+        "version": "0.1.0",
+        "status": "online",
+        "lastSeenAt": "2026-08-26T15:50:00Z"
+      },
+      "connections": [
+        {
+          "id": "40000000-0000-4000-8000-000000000002",
+          "peerNodeId": "30000000-0000-4000-8000-000000000004",
+          "peerNodeType": "translator",
+          "peerName": "English → Spanish",
+          "direction": "outgoing",
+          "dataType": "transcription",
+          "status": "connected",
+          "protocol": "websocket",
+          "connectedAt": "2026-08-26T15:00:00Z",
+          "lastActivityAt": "2026-08-26T15:50:00Z"
+        }
+      ],
+      "createdAt": "2026-08-20T10:05:00Z",
+      "updatedAt": "2026-08-26T15:50:00Z",
+      "settings": {
+        "model": "large-v3",
+        "language": "en-US",
+        "task": "transcribe",
+        "beamSize": 5,
+        "vadEnabled": true
+      }
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000004",
+      "type": "translator",
+      "name": "English → Spanish",
+      "description": "Spanish translation",
+      "enabled": true,
+      "status": "connected",
+      "host": {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "name": "studio-host",
+        "ip": "192.0.2.10",
+        "version": "0.1.0",
+        "status": "online",
+        "lastSeenAt": "2026-08-26T15:50:00Z"
+      },
+      "connections": [
+        {
+          "id": "40000000-0000-4000-8000-000000000003",
+          "peerNodeId": "30000000-0000-4000-8000-000000000005",
+          "peerNodeType": "display",
+          "peerName": "Stage display",
+          "direction": "outgoing",
+          "dataType": "translation",
+          "status": "connected",
+          "protocol": "websocket",
+          "connectedAt": "2026-08-26T15:00:00Z",
+          "lastActivityAt": "2026-08-26T15:50:00Z"
+        }
+      ],
+      "createdAt": "2026-08-20T10:10:00Z",
+      "updatedAt": "2026-08-26T15:50:00Z",
+      "settings": {
+        "sourceLanguage": "en",
+        "targetLanguage": "es",
+        "provider": "openai",
+        "model": null,
+        "preserveFormatting": true
+      }
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000005",
+      "type": "display",
+      "name": "Stage display",
+      "description": "Main venue captions",
+      "enabled": true,
+      "status": "connected",
+      "host": {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "name": "studio-host",
+        "ip": "192.0.2.10",
+        "version": "0.1.0",
+        "status": "online",
+        "lastSeenAt": "2026-08-26T15:50:00Z"
+      },
+      "connections": [],
+      "createdAt": "2026-08-20T10:15:00Z",
+      "updatedAt": "2026-08-26T15:50:00Z",
+      "settings": {
+        "maxLines": 3,
+        "fontScale": 1,
+        "showOriginal": true,
+        "theme": "dark"
+      }
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000006",
+      "type": "audio_source",
+      "name": "Lobby microphone",
+      "description": "Lobby audio input",
+      "enabled": true,
+      "status": "connected",
+      "host": {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "name": "studio-host",
+        "ip": "192.0.2.10",
+        "version": "0.1.0",
+        "status": "online",
+        "lastSeenAt": "2026-08-26T15:50:00Z"
+      },
+      "connections": [
+        {
+          "id": "40000000-0000-4000-8000-000000000004",
+          "peerNodeId": "30000000-0000-4000-8000-000000000007",
+          "peerNodeType": "transcriber",
+          "peerName": "Lobby transcriber",
+          "direction": "outgoing",
+          "dataType": "audio",
+          "status": "connected",
+          "protocol": "websocket",
+          "connectedAt": "2026-08-26T15:10:00Z",
+          "lastActivityAt": "2026-08-26T15:50:00Z"
+        }
+      ],
+      "createdAt": "2026-08-20T10:20:00Z",
+      "updatedAt": "2026-08-26T15:50:00Z",
+      "settings": {
+        "sampleRateHz": 48000,
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "deviceName": "Lobby USB Audio"
+      }
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000007",
+      "type": "transcriber",
+      "name": "Lobby transcriber",
+      "description": "Lobby transcription",
+      "enabled": true,
+      "status": "connected",
+      "host": {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "name": "studio-host",
+        "ip": "192.0.2.10",
+        "version": "0.1.0",
+        "status": "online",
+        "lastSeenAt": "2026-08-26T15:50:00Z"
+      },
+      "connections": [
+        {
+          "id": "40000000-0000-4000-8000-000000000005",
+          "peerNodeId": "30000000-0000-4000-8000-000000000008",
+          "peerNodeType": "display",
+          "peerName": "Lobby display",
+          "direction": "outgoing",
+          "dataType": "transcription",
+          "status": "connected",
+          "protocol": "websocket",
+          "connectedAt": "2026-08-26T15:10:00Z",
+          "lastActivityAt": "2026-08-26T15:50:00Z"
+        }
+      ],
+      "createdAt": "2026-08-20T10:25:00Z",
+      "updatedAt": "2026-08-26T15:50:00Z",
+      "settings": {
+        "model": "large-v3",
+        "language": "en-US",
+        "task": "transcribe",
+        "beamSize": 5,
+        "vadEnabled": true
+      }
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000008",
+      "type": "display",
+      "name": "Lobby display",
+      "description": "Lobby captions",
+      "enabled": true,
+      "status": "connected",
+      "host": {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "name": "studio-host",
+        "ip": "192.0.2.10",
+        "version": "0.1.0",
+        "status": "online",
+        "lastSeenAt": "2026-08-26T15:50:00Z"
+      },
+      "connections": [],
+      "createdAt": "2026-08-20T10:30:00Z",
+      "updatedAt": "2026-08-26T15:50:00Z",
+      "settings": {
+        "maxLines": 2,
+        "fontScale": 1,
+        "showOriginal": true,
+        "theme": "dark"
+      }
+    }
+  ],
+  "total": 7
+}
