@@ -418,7 +418,7 @@ pub fn command_spec(
     endpoints: &NodeEndpoints,
     update: &NodeUpdate,
 ) -> CommandSpec {
-    let mut args: Vec<OsString> = vec!["run".into(), "python".into()];
+    let mut args: Vec<OsString> = vec!["uv".into(), "run".into(), "python".into()];
     args.extend(match &update.settings {
         NodeSettings::AudioSource(settings) => settings.command_args(&endpoints.audio),
         NodeSettings::Transcriber(settings) => settings.command_args(&endpoints.transcriber),

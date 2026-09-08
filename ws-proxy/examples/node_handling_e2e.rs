@@ -116,6 +116,24 @@ mod unix {
         let temporary_directory = TemporaryDirectory::new()?;
         let identity_file = temporary_directory.0.join("diamant.id");
         let process_log = temporary_directory.0.join("node-processes.log");
+        let project = temporary_directory.0.join("project with spaces");
+        fs::create_dir(&project)?;
+        fs::write(
+            project.join("pyproject.toml"),
+            "[project]\nname = \"embedded-uv-e2e\"\nversion = \"0.0.0\"\nrequires-python = \">=3.9\"\ndependencies = []\n",
+        )?;
+        let fixture = r#"import json, os, pathlib, sys, time
+log = pathlib.Path(os.environ['FAKE_NODE_LOG'])
+with log.open('a') as f:
+    f.write(f'START\t{os.getpid()}\t{json.dumps(sys.argv)}\n')
+deadline = time.monotonic() + 45
+while not pathlib.Path('finish').exists() and time.monotonic() < deadline:
+    time.sleep(.05)
+with log.open('a') as f:
+    f.write(f'STOP\t{os.getpid()}\n')
+"#;
+        fs::write(project.join("suntitle-listener.py"), fixture)?;
+        fs::write(project.join("suntitle.py"), fixture)?;
         let host_name = format!("node-e2e-{}", Uuid::new_v4().simple());
 
         let mut api = ChildProcess::spawn(
@@ -142,12 +160,11 @@ mod unix {
             .arg(&identity_file)
             .arg("--health-interval-seconds")
             .arg("1")
-            .arg("--shutdown-grace-seconds")
-            .arg("2")
             .arg("--project-dir")
-            .arg(project_directory())
-            .arg("--uv-bin")
-            .arg(binary_directory.join("examples").join("fake_uv"))
+            .arg(&project)
+            .env("UV_PYTHON", fixture_python()?)
+            .env("UV_OFFLINE", "true")
+            .env("UV_PYTHON_DOWNLOADS", "never")
             .env("FAKE_NODE_LOG", &process_log);
         let mut diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
 
@@ -173,38 +190,8 @@ mod unix {
         wait_for_starts(&process_log, "suntitle-listener.py", 1).await?;
         wait_for_starts(&process_log, "suntitle.py", 1).await?;
 
-        request_json(
-            "POST",
-            &format!("/api/v1/nodes/{display_id}/restart"),
-            None,
-            200,
-        )
-        .await?;
-        wait_for_starts(&process_log, "suntitle.py", 2).await?;
+        wait_for_node(&audio_id, "Studio microphone", true).await?;
         wait_for_node(&display_id, "Main display", true).await?;
-
-        let update = json!({
-            "type": "audio_source",
-            "name": "Updated microphone",
-            "description": "updated by node lifecycle E2E",
-            "enabled": true,
-            "settings": {
-                "sampleRateHz": 48000,
-                "channels": 1,
-                "encoding": "pcm_s16le",
-                "deviceName": null
-            },
-            "inputNodeId": null
-        });
-        request_json(
-            "PUT",
-            &format!("/api/v1/nodes/{audio_id}"),
-            Some(&update),
-            200,
-        )
-        .await?;
-        wait_for_starts(&process_log, "suntitle-listener.py", 2).await?;
-        wait_for_node(&audio_id, "Updated microphone", true).await?;
 
         request_json(
             "POST",
@@ -214,8 +201,12 @@ mod unix {
         )
         .await?;
         wait_for_nodes(3, true, &mut proxy, &mut diamant).await?;
-        wait_for_starts(&process_log, "suntitle.py", 3).await?;
+        wait_for_starts(&process_log, "suntitle.py", 2).await?;
 
+        // Fixtures exit themselves. This deliberately does not claim that
+        // aborting a Rust task stops Python; live stop/restart is deferred.
+        fs::write(project.join("finish"), "")?;
+        wait_for_all_processes_to_stop(&process_log).await?;
         diamant.terminate()?;
         diamant.wait_for_exit().await?;
         wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
@@ -239,16 +230,23 @@ mod unix {
         wait_for_proxy(&mut proxy).await?;
         api.ensure_running()?;
         wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
+        fs::remove_file(project.join("finish"))?;
         diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
         wait_for_nodes(3, true, &mut proxy, &mut diamant).await?;
-        wait_for_node(&audio_id, "Updated microphone", true).await?;
+        wait_for_starts(&process_log, "suntitle-listener.py", 2).await?;
+        wait_for_starts(&process_log, "suntitle.py", 4).await?;
+        wait_for_node(&audio_id, "Studio microphone", true).await?;
+        // Fixtures exit themselves. This deliberately does not claim that
+        // aborting a Rust task stops Python; live stop/restart is deferred.
+        fs::write(project.join("finish"), "")?;
+        wait_for_all_processes_to_stop(&process_log).await?;
         diamant.terminate()?;
         diamant.wait_for_exit().await?;
         wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
         wait_for_all_processes_to_stop(&process_log).await?;
 
         println!(
-            "PASS: node create/list/restart/update/add, process restart replay, and Diamant shutdown cleanup completed for host {host_id}"
+            "PASS: embedded uv node create/list/add, fixture completion, and service restart replay completed for host {host_id}"
         );
         Ok(())
     }
@@ -291,6 +289,27 @@ mod unix {
         })?)?)
     }
 
+    fn fixture_python() -> io::Result<OsString> {
+        // On macOS /usr/bin/python3 is an Xcode launcher. Pin its actual
+        // interpreter so uv recognizes and reuses the created environment.
+        use std::os::unix::ffi::OsStringExt;
+        let output = Command::new("/usr/bin/python3")
+            .args(["-c", "import sys; print(sys.executable)"])
+            .output()?;
+        if !output.status.success() || output.stdout.is_empty() {
+            return Err(io::Error::other(
+                "could not locate the fixture Python interpreter",
+            ));
+        }
+        Ok(OsString::from_vec(
+            output
+                .stdout
+                .strip_suffix(b"\n")
+                .unwrap_or(&output.stdout)
+                .to_vec(),
+        ))
+    }
+
     fn build_helpers() -> io::Result<()> {
         let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
         let status = Command::new(cargo)
@@ -298,8 +317,12 @@ mod unix {
             .arg("--manifest-path")
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
             .arg("--bins")
-            .arg("--example")
-            .arg("fake_uv")
+            .arg("--target-dir")
+            .arg(
+                binary_directory()?
+                    .parent()
+                    .expect("debug directory has target parent"),
+            )
             .status()?;
         if status.success() {
             Ok(())
@@ -320,12 +343,6 @@ mod unix {
 
     fn binary_path(directory: &Path, name: &str) -> PathBuf {
         directory.join(format!("{name}{}", env::consts::EXE_SUFFIX))
-    }
-
-    fn project_directory() -> &'static Path {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("ws-proxy has a repository parent")
     }
 
     async fn wait_for_proxy(proxy: &mut ChildProcess) -> io::Result<()> {

@@ -49,7 +49,7 @@ jobs:
         timeout-minutes: 120
         working-directory: ws-proxy
         run: |
-          cross build --release --bins --target ${{ matrix.target.name }}
+          cross build --locked --release --bins --target ${{ matrix.target.name }}
 
       - name: Package
         working-directory: ws-proxy

@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::{Parser, builder::NonEmptyStringValueParser};
+use clap::{Args, Parser, Subcommand, builder::NonEmptyStringValueParser};
 use futures_util::{SinkExt, StreamExt};
 use rootcause::compat::MainReport;
 use rootcause::option_ext::OptionExt;
@@ -71,10 +73,6 @@ struct Config {
     #[arg(long, env = "SUNTITLE_PROJECT_DIR", default_value = ".")]
     project_dir: PathBuf,
 
-    /// uv executable used to launch node processes.
-    #[arg(long, env = "SUNTITLE_UV_BIN", default_value = "uv")]
-    uv_bin: PathBuf,
-
     /// WebSocket data-plane base URL. Defaults to the registration URL without /register.
     #[arg(long, env = "SUNTITLE_DATA_PLANE_URL")]
     data_plane_url: Option<Url>,
@@ -82,6 +80,26 @@ struct Config {
     /// Seconds allowed for children to exit after SIGTERM.
     #[arg(long, env = "SUNTITLE_SHUTDOWN_GRACE_SECONDS", default_value_t = DEFAULT_SHUTDOWN_GRACE_SECONDS, value_parser = clap::value_parser!(u64).range(1..))]
     shutdown_grace_seconds: u64,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Invoke the embedded uv CLI.
+    Uv(UvArgs),
+}
+
+#[derive(Args, Debug)]
+struct UvArgs {
+    /// Everything after `uv` is forwarded verbatim.
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        num_args = 0..
+    )]
+    args: Vec<OsString>,
 }
 
 fn default_host_name() -> String {
@@ -93,12 +111,17 @@ fn default_host_name() -> String {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), MainReport> {
-    pretty_env_logger::init();
+async fn main() -> Result<ExitCode, MainReport> {
     let config = Config::parse();
+    if let Some(Command::Uv(UvArgs { args })) = &config.command {
+        let args = std::iter::once(std::ffi::OsString::from("uv")).chain(args.clone());
+        return Ok(unsafe { uv::main(args) });
+    }
+
+    pretty_env_logger::init();
     let host_id = load_or_create_host_id(&config.id_file)?;
     register(&config, host_id).await?;
-    Ok(())
+    Ok(ExitCode::default())
 }
 
 fn load_or_create_host_id(path: &Path) -> rootcause::Result<Uuid> {
@@ -160,7 +183,7 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
     };
     let mut manager = NodeProcessManager::new(
         config.project_dir.clone(),
-        config.uv_bin.clone(),
+        std::env::current_exe().context("unknown path for diamant command")?,
         data_plane_url,
         Duration::from_secs(config.shutdown_grace_seconds),
     )

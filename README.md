@@ -14,7 +14,7 @@ setups.
 
 ## Prerequisites
 
-- Python 3.10 and [uv](https://docs.astral.sh/uv/)
+- Python 3.10 and [uv](https://docs.astral.sh/uv/) for the standalone Python commands. Diamant embeds uv and does not need a uv executable.
 - Rust and Cargo
 - [just](https://just.systems/) command runner
 - A working microphone/input device
@@ -185,18 +185,23 @@ terminal.
    Diamant launches the audio listener immediately. Set `deviceName` to a device
    name when the system default is not the intended input.
 
-5. List the nodes, then use the created node's `id` to inspect or restart it:
+5. List the nodes, then use the created node's `id` to inspect it:
 
    ```bash
    just nodes
    just node <node-id>
-   just restart-node <node-id>
    ```
 
 Use `PUT /api/v1/nodes/{nodeId}` with the complete editable node document to
-change its name, enabled state, settings, or input. Updating a running node
-replaces its process. Stopping Diamant stops its node processes, marks the host
-offline, and removes all nodes assigned to that host from the process-local API.
+change its name, enabled state, settings, or input. Diamant now runs uv through
+its Rust library inside the host process. Stop, replacement, and restart of a
+live Python command are deferred; such requests report a lifecycle error and
+do not launch duplicates. A completed command can be restarted. Disconnecting
+Diamant marks the host offline and retains desired nodes in the database;
+Python child cleanup on shutdown is not yet implemented.
+
+See [embedded uv integration](ws-proxy/EMBEDDED_UV.md) for the Rust API, CLI usage,
+build requirements, and current limitations.
 
 ## Quick local end-to-end test
 
@@ -248,11 +253,11 @@ just node-e2e
 ```
 
 This starts the proxy/API and Diamant locally, registers audio-source and display
-nodes, verifies listing, restart and update behavior, adds another node, and
-then confirms that stopping Diamant retains its nodes with disconnected status. Node processes are
-replaced by a lightweight fixture, so the test does not use audio hardware,
-models, or a graphical session. The lifecycle test currently requires Unix
-process signals.
+nodes, verifies listing and concurrent launches, and checks service restart
+replay. Real embedded uv runs a dependency-free Python fixture, so the test
+does not use audio hardware, models, or a graphical session. Fixtures exit
+themselves before Diamant disconnects; this does not test deferred child
+cancellation. The check currently requires Unix and `/usr/bin/python3`.
 
 ## Run the proxy on AWS with Pulumi
 
