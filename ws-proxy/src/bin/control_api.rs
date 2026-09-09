@@ -10,7 +10,15 @@ use ws_proxy::kubernetes;
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
-    /// Optionally install CRDs before starting the existing PostgreSQL API.
+    #[arg(long, env = "SUNTITLE_API_KUBECONFIG")]
+    kubeconfig: Option<PathBuf>,
+    #[arg(
+        long,
+        default_value = "suntitle",
+        env = "SUNTITLE_KUBERNETES_NAMESPACE"
+    )]
+    namespace: String,
+    /// Optionally install CRDs before starting the API.
     #[arg(long, env = "SUNTITLE_BOOTSTRAP_KUBECONFIG")]
     bootstrap_kubeconfig: Option<PathBuf>,
 }
@@ -66,9 +74,14 @@ async fn main() -> std::io::Result<()> {
             .await
             .map_err(std::io::Error::other)?;
     }
-    let url = ws_proxy::storage::postgres::database_url()?;
-    let store: ws_proxy::storage::Store =
-        std::sync::Arc::new(ws_proxy::storage::PostgresStore::connect(&url).await?);
+    let path = args.kubeconfig.ok_or_else(|| {
+        std::io::Error::other("--kubeconfig or SUNTITLE_API_KUBECONFIG is required")
+    })?;
+    let client = kubernetes::client_from_kubeconfig(&path)
+        .await
+        .map_err(std::io::Error::other)?;
+    let store = kubernetes::store::ResourceStore::new(client, &args.namespace);
+    store.ready().await.map_err(std::io::Error::other)?;
     eprintln!("Suntitle REST API listening on 0.0.0.0:3031");
     HttpServer::new(move || {
         let store = store.clone();

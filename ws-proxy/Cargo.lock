@@ -9380,6 +9380,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "hostname",
+ "json-patch",
  "k8s-openapi",
  "kube",
  "nix 0.30.1",

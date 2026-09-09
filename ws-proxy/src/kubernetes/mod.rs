@@ -1,5 +1,6 @@
-//! Additive Kubernetes bootstrap. No legacy storage operations use this module.
+//! Kubernetes client, resource storage, and bootstrap.
 pub mod resources;
+pub mod store;
 
 use k8s_openapi::{
     api::core::v1::Namespace,
@@ -19,9 +20,12 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// Explicit credentials avoid accidentally installing resources in the current context.
 pub async fn client_from_kubeconfig(path: &Path) -> Result<Client, Error> {
-    let config =
+    let mut config =
         Config::from_custom_kubeconfig(Kubeconfig::read_from(path)?, &KubeConfigOptions::default())
             .await?;
+    config.default_retry = false;
+    config.connect_timeout = Some(Duration::from_secs(5));
+    config.read_timeout = Some(Duration::from_secs(10));
     Ok(Client::try_from(config)?)
 }
 
@@ -54,7 +58,13 @@ pub async fn bootstrap(client: Client, namespace: &str) -> Result<(), Error> {
         serde_yaml::Deserializer::from_str(include_str!("../../../kubernetes/rbac.yaml"))
     {
         let mut value = Value::deserialize(document)?;
-        value["metadata"]["namespace"] = Value::String(namespace.to_owned());
+        if !value["kind"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("Cluster")
+        {
+            value["metadata"]["namespace"] = Value::String(namespace.to_owned());
+        }
         let object: DynamicObject = serde_json::from_value(value)?;
         let kind = &object
             .types
@@ -66,7 +76,11 @@ pub async fn bootstrap(client: Client, namespace: &str) -> Result<(), Error> {
             "v1",
             kind,
         ));
-        let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &resource);
+        let api: Api<DynamicObject> = if kind.starts_with("Cluster") {
+            Api::all_with(client.clone(), &resource)
+        } else {
+            Api::namespaced_with(client.clone(), namespace, &resource)
+        };
         api.patch(&object.name_any(), &params, &Patch::Apply(&object))
             .await?;
     }

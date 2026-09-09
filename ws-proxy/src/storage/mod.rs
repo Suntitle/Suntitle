@@ -242,7 +242,6 @@ impl Snapshot {
                     .get(&host_id)
                     .cloned()
                     .ok_or_else(|| ApiError::not_found("host does not exist"))?;
-                crate::api::nodes::validate_input(id, &update, &self.nodes)?;
                 if self.nodes.contains_key(&id) {
                     return Err(ApiError::conflict("node already exists"));
                 }
@@ -260,7 +259,6 @@ impl Snapshot {
             }
             Mutation::Update(id, update) => {
                 update.validate().map_err(ApiError::validation)?;
-                crate::api::nodes::validate_input(id, &update, &self.nodes)?;
                 let desired = self
                     .nodes
                     .get_mut(&id)

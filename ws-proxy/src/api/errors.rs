@@ -39,26 +39,26 @@ pub struct ValidationProblem {
 
 /// The request is malformed.
 #[derive(ToResponse)]
-#[response(content_type = "application/problem+json")]
-pub struct BadRequest(pub Problem);
+#[response(content_type = "application/json")]
+pub struct BadRequest(pub ErrorEnvelope);
 
 /// A valid bearer token is required.
 #[derive(ToResponse)]
 #[response(
-    content_type = "application/problem+json",
+    content_type = "application/json",
     headers(("WWW-Authenticate" = String))
 )]
-pub struct Unauthorized(pub Problem);
+pub struct Unauthorized(pub ErrorEnvelope);
 
 /// The requested resource was not found.
 #[derive(ToResponse)]
-#[response(content_type = "application/problem+json")]
-pub struct NotFound(pub Problem);
+#[response(content_type = "application/json")]
+pub struct NotFound(pub ErrorEnvelope);
 
 /// One or more fields failed validation.
 #[derive(ToResponse)]
-#[response(content_type = "application/problem+json")]
-pub struct ValidationFailed(pub ValidationProblem);
+#[response(content_type = "application/json")]
+pub struct ValidationFailed(pub ErrorEnvelope);
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -66,9 +66,18 @@ pub struct ApiError {
     problem: Box<Problem>,
     authenticate: bool,
     errors: Vec<ValidationError>,
+    upstream_error: Option<ErrorDetail>,
 }
 
 impl ApiError {
+    pub fn unavailable() -> Self {
+        Self::problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unavailable",
+            "Kubernetes storage is unavailable.",
+        )
+    }
+
     pub fn unauthorized(instance: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
@@ -82,6 +91,7 @@ impl ApiError {
             }),
             authenticate: true,
             errors: Vec::new(),
+            upstream_error: None,
         }
     }
 
@@ -102,6 +112,7 @@ impl ApiError {
             }),
             authenticate: false,
             errors: Vec::new(),
+            upstream_error: None,
         }
     }
 
@@ -166,6 +177,8 @@ impl ApiError {
     }
 }
 
+impl std::error::Error for ApiError {}
+
 impl fmt::Display for ApiError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.problem.title)
@@ -179,19 +192,75 @@ impl ResponseError for ApiError {
 
     fn error_response(&self) -> HttpResponse {
         let mut response = HttpResponse::build(self.status);
-        response.content_type("application/problem+json");
         if self.authenticate {
             response.insert_header((header::WWW_AUTHENTICATE, "Bearer"));
         }
-        if self.errors.is_empty() {
-            response.json(&*self.problem)
-        } else {
-            response.json(ValidationProblem {
-                problem: (*self.problem).clone(),
-                errors: self.errors.clone(),
-            })
+        if let Some(error) = &self.upstream_error {
+            return response.json(serde_json::json!({"error": error}));
         }
+        let code = match self.status.as_u16() {
+            400 => "InvalidRequest",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "NotFound",
+            409 => "Conflict",
+            422 => "ValidationFailed",
+            503 => "Unavailable",
+            _ => "InternalError",
+        };
+        response.json(ErrorEnvelope {
+            error: ErrorDetail {
+                code: code.to_owned(),
+                message: self
+                    .problem
+                    .detail
+                    .clone()
+                    .unwrap_or_else(|| self.problem.title.clone()),
+                details: if self.errors.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::json!({"errors": self.errors}))
+                },
+            },
+        })
     }
 }
 
 pub type ApiResult<T> = Result<actix_web::web::Json<T>, ApiError>;
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ErrorEnvelope {
+    pub error: ErrorDetail,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ErrorDetail {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
+impl From<kube::Error> for ApiError {
+    fn from(error: kube::Error) -> Self {
+        match error {
+            kube::Error::Api(status) => {
+                let mut error = Self::problem(
+                    StatusCode::from_u16(status.code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                    &status.reason,
+                    &status.message,
+                );
+                error.upstream_error = Some(ErrorDetail {
+                    code: status.reason.clone(),
+                    message: status.message.clone(),
+                    details: status
+                        .details
+                        .as_ref()
+                        .map(|details| serde_json::json!(details)),
+                });
+                error
+            }
+            _ => Self::unavailable(),
+        }
+    }
+}

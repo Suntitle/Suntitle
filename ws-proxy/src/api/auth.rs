@@ -6,7 +6,7 @@ use actix_web::http::header;
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
 use uuid::Uuid;
 
-use super::errors::{ApiError, ApiResult, BadRequest, Problem, Unauthorized};
+use super::errors::{ApiError, ApiResult, BadRequest, ErrorEnvelope, Unauthorized};
 use super::models::{LoginRequest, LoginResponse, User};
 
 const TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
@@ -93,7 +93,7 @@ fn bearer_token(request: &HttpRequest) -> Result<&str, ApiError> {
     responses(
         (status = 200, description = "Login successful.", body = LoginResponse),
         (status = 400, response = BadRequest),
-        (status = 401, description = "Invalid username or password.", body = Problem, content_type = "application/problem+json")
+        (status = 401, description = "Invalid username or password.", body = ErrorEnvelope, content_type = "application/json")
     )
 )]
 #[post("/auth/login")]
@@ -281,7 +281,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
             assert_eq!(
                 response.headers().get(header::CONTENT_TYPE).unwrap(),
-                "application/problem+json"
+                "application/json"
             );
         }
     }

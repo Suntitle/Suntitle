@@ -208,3 +208,35 @@ fn variant_schemas_keep_models_and_defaults_independent() {
         assert_eq!(variants[variant]["properties"][field]["default"], default);
     }
 }
+
+#[test]
+fn phase_two_api_fixtures_use_resource_contracts() {
+    use ws_proxy::kubernetes::store::{HostList, NodeCreate, NodeList, NodeUpdate};
+    let hosts: HostList = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/hosts.json"
+    ))
+    .unwrap();
+    let nodes: NodeList = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/nodes.json"
+    ))
+    .unwrap();
+    assert_eq!(hosts.items.len(), 1);
+    assert_eq!(nodes.items.len(), 4);
+    for node in &nodes.items {
+        assert_eq!(
+            node.metadata.owner_references.as_ref().unwrap()[0].uid,
+            hosts.items[0].metadata.uid.as_ref().unwrap().as_str()
+        );
+        assert!(node.status.is_none());
+    }
+    let create: NodeCreate = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/create.json"
+    ))
+    .unwrap();
+    let update: NodeUpdate = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/update.json"
+    ))
+    .unwrap();
+    assert_eq!(create.name, nodes.items[0].metadata.name);
+    assert_eq!(update.spec.name, create.spec.name);
+}

@@ -9,12 +9,12 @@ pub mod validated_json;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-use crate::storage::Store;
+use crate::kubernetes::store::ResourceStore;
 
 use self::errors::{BadRequest, NotFound, Unauthorized, ValidationFailed};
 use self::models::*;
 
-const DESCRIPTION: &str = "API for authenticating operators and managing hosts and nodes in the live\nsubtitle pipeline. Connection topology is represented by the `connections`\nfield of each node; there is intentionally no separate routes resource.\n";
+const DESCRIPTION: &str = "Resource-oriented control API. Successful writes persist desired state; runtime application is asynchronous. Kubernetes schema/CEL validate specs; API-server errors preserve their HTTP status, reason, message, and details.";
 
 #[derive(OpenApi)]
 #[openapi(
@@ -40,14 +40,14 @@ const DESCRIPTION: &str = "API for authenticating operators and managing hosts a
             LoginRequest, LoginResponse, User,
             NodeType, NodeSettingValue, NodeSettingOption, NodeSettingDefinition,
             NodeTypeDefinition, NodeTypeDefinitionList,
-            NodeStatus, HostStatus, Host, HostList, ConnectionStatus, DataType,
-            NodeBase, NodeConnection, Node,
-            AudioSourceNode, TranscriberNode, TranslatorNode, DisplayNode,
-            NodeSettings,
-            NodeUpdateBase, NodeInputUpdate, NodeUpdate, NodeCreate,
             AudioSourceSettings, TranscriberSettings, TranslatorSettings, DisplaySettings,
-            LanguageTag, NodeList,
-            errors::Problem, errors::ValidationProblem
+            LanguageTag, errors::ErrorEnvelope,
+            crate::kubernetes::resources::SuntitleHost,
+            crate::kubernetes::resources::SuntitleNode,
+            crate::kubernetes::store::HostList,
+            crate::kubernetes::store::NodeList,
+            crate::kubernetes::store::NodeCreate,
+            crate::kubernetes::store::NodeUpdate
         ),
         responses(BadRequest, Unauthorized, NotFound, ValidationFailed)
     ),
@@ -73,6 +73,34 @@ impl Modify for SecurityAddon {
         {
             operation.security = Some(Vec::new());
         }
+        for (path, item) in &mut openapi.paths.paths {
+            if path == "/auth/login" {
+                continue;
+            }
+            for operation in [&mut item.get, &mut item.post, &mut item.put]
+                .into_iter()
+                .flatten()
+            {
+                for (status, description) in [("401", "Unauthorized"), ("403", "Forbidden")] {
+                    operation
+                        .responses
+                        .responses
+                        .entry(status.to_owned())
+                        .or_insert_with(|| {
+                            utoipa::openapi::ResponseBuilder::new()
+                                .description(description)
+                                .content(
+                                    "application/json",
+                                    utoipa::openapi::Content::new(Some(
+                                        utoipa::openapi::Ref::from_schema_name("ErrorEnvelope"),
+                                    )),
+                                )
+                                .build()
+                                .into()
+                        });
+                }
+            }
+        }
         if let Some(components) = openapi.components.as_mut() {
             components.add_security_scheme(
                 "bearerAuth",
@@ -89,10 +117,25 @@ impl Modify for SecurityAddon {
 
 pub fn configure_with_store(
     config: &mut utoipa_actix_web::service_config::ServiceConfig,
-    store: Store,
+    store: ResourceStore,
 ) {
     config.app_data(actix_web::web::Data::new(auth::AuthState::default()));
     config.app_data(actix_web::web::Data::new(store));
+    config.app_data(actix_web::web::JsonConfig::default().error_handler(|_, _| {
+        errors::ApiError::problem(
+            actix_web::http::StatusCode::BAD_REQUEST,
+            "InvalidRequest",
+            "Malformed JSON request body.",
+        )
+        .into()
+    }));
+    config.route(
+        "/readyz",
+        actix_web::web::get().to(|store: actix_web::web::Data<ResourceStore>| async move {
+            store.ready().await?;
+            Ok::<_, errors::ApiError>(actix_web::HttpResponse::Ok().finish())
+        }),
+    );
     config.service(
         utoipa_actix_web::scope::scope("/api/v1")
             .service(auth::login)
@@ -110,121 +153,16 @@ pub fn configure_with_store(
 
 #[cfg(test)]
 mod tests {
-    use actix_web::App;
-    use utoipa_actix_web::AppExt;
-
     use super::*;
-
     #[test]
-    fn generated_contract_contains_all_routes_and_named_schemas() {
-        let document = ApiDoc::openapi();
-        assert_eq!(document.paths.paths.len(), 9);
-
-        let components = document.components.expect("OpenAPI components");
-        for schema in [
-            "Node",
-            "AudioSourceNode",
-            "TranscriberNode",
-            "TranslatorNode",
-            "DisplayNode",
-            "NodeCreate",
-            "NodeUpdate",
-            "AudioSourceSettings",
-            "TranscriberSettings",
-            "TranslatorSettings",
-            "DisplaySettings",
-            "Problem",
-            "ValidationProblem",
-        ] {
-            assert!(components.schemas.contains_key(schema), "missing {schema}");
-        }
-        assert!(components.security_schemes.contains_key("bearerAuth"));
-    }
-
-    #[actix_web::test]
-    async fn rest_scope_registers_with_actix() {
-        let app = App::new()
-            .into_utoipa_app()
-            .configure(|c| {
-                configure_with_store(
-                    c,
-                    std::sync::Arc::new(crate::storage::MemoryStore::default()),
-                )
-            })
-            .into_app();
-        actix_web::test::init_service(app).await;
-    }
-
-    #[test]
-    fn node_contract_has_four_named_variants() {
+    fn generated_contract_matches_checked_in_document() {
         let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
-        let schemas = &document["components"]["schemas"];
-        let variants = schemas["Node"]["oneOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 4);
-        for (variant, (tag, node, settings)) in variants.iter().zip([
-            ("audio_source", "AudioSourceNode", "AudioSourceSettings"),
-            ("transcriber", "TranscriberNode", "TranscriberSettings"),
-            ("translator", "TranslatorNode", "TranslatorSettings"),
-            ("display", "DisplayNode", "DisplaySettings"),
-        ]) {
-            let parts = variant["allOf"].as_array().unwrap();
-            assert!(
-                parts
-                    .iter()
-                    .any(|part| part["$ref"] == format!("#/components/schemas/{node}"))
-            );
-            assert!(parts.iter().any(|part| {
-                part["properties"]["type"]["enum"] == serde_json::json!([tag])
-                    && part["required"] == serde_json::json!(["type"])
-            }));
-            let fields = schemas[node]["allOf"].as_array().unwrap();
-            assert!(
-                fields
-                    .iter()
-                    .any(|part| part["$ref"] == "#/components/schemas/NodeBase")
-            );
-            assert!(fields.iter().any(|part| {
-                part["properties"]["settings"]["$ref"] == format!("#/components/schemas/{settings}")
-                    && part["required"] == serde_json::json!(["settings"])
-            }));
-        }
-    }
-
-    #[test]
-    fn node_contract_composes_common_fields_with_tagged_settings() {
-        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
-        let schemas = &document["components"]["schemas"];
-        let create = schemas["NodeCreate"]["allOf"].as_array().unwrap();
-        assert_eq!(create.len(), 1);
-        assert_eq!(create[0]["$ref"], "#/components/schemas/NodeUpdate");
-        let parts = schemas["NodeUpdate"]["allOf"].as_array().unwrap();
-        assert!(
-            parts
-                .iter()
-                .any(|part| part["$ref"] == "#/components/schemas/NodeSettings")
-        );
-        let variants = schemas["NodeSettings"]["oneOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 4);
-        for (variant, (tag, settings)) in variants.iter().zip([
-            ("audio_source", "AudioSourceSettings"),
-            ("transcriber", "TranscriberSettings"),
-            ("translator", "TranslatorSettings"),
-            ("display", "DisplaySettings"),
-        ]) {
-            assert_eq!(
-                variant["properties"]["type"]["enum"],
-                serde_json::json!([tag])
-            );
-            assert_eq!(
-                variant["properties"]["settings"]["$ref"],
-                format!("#/components/schemas/{settings}")
-            );
-            let required = variant["required"].as_array().unwrap();
-            assert!(required.contains(&serde_json::json!("type")));
-            assert!(required.contains(&serde_json::json!("settings")));
-        }
         let committed: serde_yaml::Value =
             serde_yaml::from_str(include_str!("../../../specs/openapi.yaml")).unwrap();
         assert_eq!(serde_json::to_value(committed).unwrap(), document);
+        assert!(
+            document["components"]["schemas"]["SuntitleNode"]["properties"]["metadata"].is_object()
+        );
+        assert!(document["paths"]["/nodes/{name}/restart"]["post"]["responses"]["202"].is_object());
     }
 }

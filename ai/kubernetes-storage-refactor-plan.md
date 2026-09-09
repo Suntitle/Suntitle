@@ -1,6 +1,6 @@
 # Storage refactor: custom resources and Kubernetes watches
 
-Status: proposed implementation plan. No implementation changes made.
+Status: phases 1 and 2 completed and verified; awaiting review. Phase 5 Control API startup is complete; remaining work is pending.
 
 ## Pre-production scope
 
@@ -128,9 +128,8 @@ that domain specification, and separately observed status.
 ### Example host and node specifications
 
 These are proposed create/apply documents, not deployed CRDs. The API server adds
-UID, generation, resource version, and creation timestamp. The application adds
-its cleanup finalizer when creating a node; bootstrap fixtures must do the same
-before allowing runtime dispatch. Create the host first, then read its actual
+UID, generation, resource version, and creation timestamp. The controller adds
+cleanup finalizers before allowing runtime dispatch. Create the host first, then read its actual
 `metadata.uid` to populate both node owner references. The example UID below is
 a placeholder; it must be replaced with that server-assigned value.
 
@@ -258,7 +257,7 @@ timestamp. These semantics follow the standard Kubernetes
   same name must not silently adopt the previous host's nodes. Runtime messages
   include the target node's UID so old acknowledgements cannot affect a replacement.
 - `inputRef` and `hostRef` do not create foreign-key constraints. Missing or
-  incompatible references need API validation and reconciliation diagnostics.
+  incompatible references need controller reconciliation diagnostics.
 - Serde/Utoipa types and Rust validators do not automatically produce a valid
   Kubernetes structural schema. Generate and verify the CRD schema explicitly,
   including the discriminator/settings pairing, defaults, and nullable fields.
@@ -307,15 +306,11 @@ where they serve an actual UI/API need, not to emulate the old models.
 
 1. Reads use resource GET/LIST operations. API readiness requires reachable
    kube-apiserver and installed, established CRDs.
-2. Create validates the request and referenced resources, then creates one node
-   resource. The successful response means desired state was persisted; it does
-   not imply Diamant has started the node.
-3. Update reads the current resource, validates changes, and replaces or patches
-   its desired fields with a resource-version precondition. Status is preserved.
-   On conflict, re-read and revalidate before a bounded retry. This protects
-   backend read-modify-write operations. Include resource version in the new
-   edit contract so stale client submissions can receive a conflict rather than
-   silently overwriting newer desired state.
+2. Create fetches the path host, assigns hostRef and its controller owner reference,
+   then creates the node. The controller manages finalizers and references.
+3. Update patches the complete desired spec without reading the node or applying
+   resource-version preconditions. Kubernetes schema/CEL validate the write.
+   Metadata and status are preserved.
 4. Restart writes a new token into node spec. The proxy sends full desired state
    with that token, so a reconnect does not require historical commands. Proposed
    semantics: several unobserved restart requests may coalesce into one restart
@@ -323,12 +318,11 @@ where they serve an actual UI/API need, not to emulate the old models.
    durable operation model and is outside this simpler design.
 5. Add node deletion addressed by resource name, with asynchronous cleanup semantics. A
    terminating node remains visible until the runtime confirms removal.
-6. Define consistent not-found, conflict, validation, and availability errors in
-   the new API contract. Authentication is independent of storage identity.
+6. Propagate API-server HTTP status, reason, message, and details. Transport
+   failures without a server response return 503. Authentication is independent.
 
-Kubernetes does not replace the old multi-object transaction. Validate references
-at write time, then reconcile dangling host/input references into a clear degraded
-status if another resource changes concurrently. Do not claim atomic graph
+Kubernetes does not replace the old multi-object transaction. The controller reconciles
+dangling host/input references into a clear degraded status. Do not claim atomic graph
 validation across resources. Host resource deletion follows the ownership cleanup
 policy below, including deletion through kubectl; adding a REST host-delete
 endpoint is a separate API surface decision.
@@ -520,7 +514,7 @@ sessions after restart. Keep finalizers intact when cleanup is unfinished.
 
 ## Deletion and lifecycle recovery
 
-Create nodes with an application cleanup finalizer. When deletion sets
+The controller establishes an application cleanup finalizer before dispatch. When deletion sets
 `deletionTimestamp`, the proxy sends an idempotent remove/stop instruction to the
 host. Remove the finalizer only after a matching acknowledgement confirms the
 runtime is stopped and forgotten. A failed stop must leave deletion pending.
@@ -534,9 +528,9 @@ silently assumes cleanup succeeded.
 The standalone stack has no Kubernetes garbage-collection controller. The
 embedded ws-proxy controller must own this finalizer lifecycle explicitly;
 controller owner references alone do not provide automatic cascading deletion.
-Add a host cleanup finalizer before accepting owned nodes. On host deletion,
+The controller adds a host cleanup finalizer before dispatching owned nodes. On host deletion,
 explicitly request deletion of nodes owned by that host UID, wait for their runtime
-cleanup and resource removal, then release the host finalizer. Reject new nodes
+cleanup and resource removal, then release the host finalizer. The controller MUST NOT dispatch new nodes
 for a terminating host. Resume this work after controller restart, and allow an
 existing host's reconnect solely for outstanding cleanup while it is terminating.
 Use the application finalizers for this sequence, without depending on a built-in
@@ -588,8 +582,8 @@ deployment constraint, not an application lock to implement.
 
 ## Implementation phases
 
-All phases are pending. Complete them in order; each phase builds on the verified
-outputs of the preceding phase. Check off work only after its acceptance checks
+Complete phases in order; each phase builds on the verified outputs of the
+preceding phase. Phase 2 validation is recorded below. Check off work only after its acceptance checks
 pass. Phases are reviewable implementation units, not independent deployments:
 replace the application binaries and clients together once the final phase passes.
 No migration layer or temporary compatibility protocol is required.
@@ -598,13 +592,13 @@ No migration layer or temporary compatibility protocol is required.
 
 **Deliverables**
 
-- [ ] Confirm the API group/version and define shared host/node spec, status,
+- [x] Confirm the API group/version and define shared host/node spec, status,
   identity, conditions, and typed settings models with structural CRD schemas.
-- [ ] Add namespace, CRD, and separate API/proxy RBAC manifests;
+- [x] Add namespace, CRD, and separate API/proxy RBAC manifests;
   provide an idempotent bootstrap command that waits for established CRDs.
-- [ ] Specify REST resource shapes, resource-version edit preconditions, restart
+- [x] Specify REST resource shapes, imperative spec writes, restart
   and asynchronous delete behavior, and consistent error responses.
-- [ ] Specify registration, full desired-state apply, remove, and acknowledgement
+- [x] Specify registration, full desired-state apply, remove, and acknowledgement
   messages, including UID, generation, session, restart token, and operation
   identity. Record field ownership and duplicate-delivery semantics.
 
@@ -615,26 +609,43 @@ schema validation through direct kubectl writes, including all four node types,
 invalid settings, and immutable fields. Resolve infrastructure/schema blockers
 before building the application storage boundary.
 
+**Validation:** The live Kubernetes resource suite passed against the local
+Kine-backed API server, covering all four node types, schema/CEL validation,
+status isolation, LIST/WATCH recovery, owner admission, finalizers, and separate
+client permissions. Contracts are recorded in `ai/kubernetes-phase-1-contracts.md`.
+
 ### Phase 2 — Implement resource-oriented Control API storage
 
 **Deliverables**
 
-- [ ] Add the shared Kubernetes client and resource-oriented storage operations;
-  replace snapshot transactions in API handlers with individual resource writes.
-- [ ] Implement host listing and node create/read/update/restart using the new
-  models, names, resource versions, and restart tokens.
-- [ ] Validate host/input references and ownership; ensure the host cleanup
-  finalizer before accepting owned nodes, and create nodes with owner references
-  and cleanup finalizers. Reject nodes for terminating hosts.
-- [ ] Implement bounded conflict handling, stale-client conflicts, error mapping,
-  and readiness checks for reachable kube-apiserver and established CRDs.
-- [ ] Update the affected OpenAPI contracts and API fixtures alongside handlers.
+- [x] Shared Kubernetes client and resource-oriented API operations.
+- [x] Host/node listing and node create/read/update/restart with resource-shaped responses.
+- [x] Create fetches the host and assigns the controller owner reference. The path
+  selects hostRef. API writes do not manage finalizers or validate references,
+  ownership consistency, or deletion timestamps.
+- [x] PUT replaces only spec; restart patches only its token. Neither operation
+  reads the node first or requires a client resourceVersion.
+- [x] Kubernetes schema/CEL validation and API-server status/reason/message/details
+  propagation. Readiness requires reachable storage and established CRDs.
+- [x] Updated OpenAPI and resource fixtures.
 
-**Acceptance checks:** API writes persist across API restarts; updates preserve
-status; stale edits cannot overwrite newer desired state. Cover invalid and
-missing references, immutable fields, ownership conflicts, terminating hosts,
-not-found responses, and API-server unavailability. Verify that successful writes
-mean desired state was persisted without claiming runtime completion.
+**Acceptance checks:** Writes persist across fresh API state. Spec updates preserve
+metadata/status. Repeated restarts require no version and change only their token.
+Kubernetes rejects invalid/immutable specs. Input/ownership reconciliation and
+finalizers belong to the later controller. Upstream errors pass through without
+consistency checks or retries. Missing resources retain Kubernetes 404 responses.
+
+**Validation:** The 12 API unit tests, 10 schema/fixture tests, numeric-validation
+test, and local Kubernetes resource suite passed after cleanup. The four API
+acceptance/fault tests cover imperative writes and upstream error propagation.
+Client retries are disabled. Clippy passes with warnings denied.
+
+See `kubernetes/README.md` for startup and the live API test command.
+The suite uses unique resources and explicitly cleans up fixture finalizers.
+The previous bounded-conflict/stale-client acceptance checks were superseded by
+the imperative API cleanup. The existing UI/mock routes and proxy still use the
+previous contracts until their scheduled integration phases. REST deletion
+remains phase 4 work. No phase 2 commit has been created.
 
 ### Phase 3 — Implement the controller inside ws-proxy and Diamant apply protocol
 
@@ -688,8 +699,10 @@ without Kubernetes garbage collection or adoption of an old host's nodes.
 
 **Deliverables**
 
-- [ ] Switch both production binaries to explicit kubeconfig/namespace settings
-  and separate credentials; remove their database initialization requirements.
+- [x] Switch Control API to explicit kubeconfig/namespace settings and API
+  credentials; remove its database initialization requirement.
+- [ ] Switch ws-proxy to explicit kubeconfig/namespace settings and proxy
+  credentials; remove its database initialization requirement.
 - [ ] Document and verify one ws-proxy instance per managed namespace, with
   stop-before-start replacement and no leader-election or singleton-lock code.
 - [ ] Update `just api`, `just proxy`, `just ui`, `just local-stack`, E2E helpers,
@@ -704,7 +717,7 @@ without Kubernetes garbage collection or adoption of an old host's nodes.
 
 **Acceptance checks:** Start the full local stack from documented commands and
 exercise host registration and node create/edit/restart/delete through the updated
-clients. Verify pending/applied/error/deleting states and stale-edit handling.
+clients. Verify pending/applied/error/deleting states and imperative edits.
 Confirm API and proxy startup use their separate Kubernetes credentials and that
 PostgreSQL credentials remain confined to infrastructure configuration.
 
@@ -778,8 +791,8 @@ state. This document changes the plan only; it does not perform data cleanup.
   Its `lastTransitionTime` changes only on condition status transitions; repeated
   reconciles and reason/message changes preserve it. Stale acknowledgements
   cannot complete a newer generation's condition.
-- API CRUD persists through API/proxy restarts and concurrent writes produce
-  correct conflict behavior. New spec/resource contracts and validation are covered.
+- API CRUD persists through API/proxy restarts; concurrent writes follow
+  Kubernetes patch behavior. New spec/resource contracts and validation are covered.
 - A REST write and a direct kubectl spec update both reach the correct host over
   WebSocket. Other hosts receive no unrelated work.
 - Watch interruption, expired history, cache rebuild, slow consumers, and changes

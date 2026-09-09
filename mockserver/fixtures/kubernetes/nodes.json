@@ -1,0 +1,169 @@
+{
+  "items": [
+    {
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleNode",
+      "metadata": {
+        "namespace": "suntitle",
+        "name": "studio-audio-source",
+        "uid": "fixture-audio_source-uid",
+        "resourceVersion": "fixture-audio_source-version-1",
+        "generation": 1,
+        "creationTimestamp": "2026-09-09T12:00:00Z",
+        "ownerReferences": [
+          {
+            "apiVersion": "control.suntitle.io/v1alpha1",
+            "kind": "SuntitleHost",
+            "name": "studio-host",
+            "uid": "fixture-host-uid",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "name": "audio_source",
+        "description": null,
+        "hostRef": {
+          "name": "studio-host"
+        },
+        "enabled": true,
+        "inputRef": null,
+        "restartToken": null,
+        "settings": {
+          "audio_source": {
+            "sampleRateHz": 16000,
+            "channels": 1,
+            "encoding": "pcm_s16le",
+            "deviceName": null
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleNode",
+      "metadata": {
+        "namespace": "suntitle",
+        "name": "studio-transcriber",
+        "uid": "fixture-transcriber-uid",
+        "resourceVersion": "fixture-transcriber-version-1",
+        "generation": 1,
+        "creationTimestamp": "2026-09-09T12:00:00Z",
+        "ownerReferences": [
+          {
+            "apiVersion": "control.suntitle.io/v1alpha1",
+            "kind": "SuntitleHost",
+            "name": "studio-host",
+            "uid": "fixture-host-uid",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "name": "transcriber",
+        "description": null,
+        "hostRef": {
+          "name": "studio-host"
+        },
+        "enabled": true,
+        "inputRef": {
+          "name": "studio-audio-source"
+        },
+        "restartToken": null,
+        "settings": {
+          "transcriber": {
+            "model": "small",
+            "language": "en",
+            "task": "transcribe",
+            "beamSize": 5,
+            "vadEnabled": true
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleNode",
+      "metadata": {
+        "namespace": "suntitle",
+        "name": "studio-translator",
+        "uid": "fixture-translator-uid",
+        "resourceVersion": "fixture-translator-version-1",
+        "generation": 1,
+        "creationTimestamp": "2026-09-09T12:00:00Z",
+        "ownerReferences": [
+          {
+            "apiVersion": "control.suntitle.io/v1alpha1",
+            "kind": "SuntitleHost",
+            "name": "studio-host",
+            "uid": "fixture-host-uid",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "name": "translator",
+        "description": null,
+        "hostRef": {
+          "name": "studio-host"
+        },
+        "enabled": true,
+        "inputRef": {
+          "name": "studio-transcriber"
+        },
+        "restartToken": null,
+        "settings": {
+          "translator": {
+            "sourceLanguage": "en",
+            "targetLanguage": "cs",
+            "provider": "huggingface",
+            "model": null,
+            "preserveFormatting": true
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleNode",
+      "metadata": {
+        "namespace": "suntitle",
+        "name": "studio-display",
+        "uid": "fixture-display-uid",
+        "resourceVersion": "fixture-display-version-1",
+        "generation": 1,
+        "creationTimestamp": "2026-09-09T12:00:00Z",
+        "ownerReferences": [
+          {
+            "apiVersion": "control.suntitle.io/v1alpha1",
+            "kind": "SuntitleHost",
+            "name": "studio-host",
+            "uid": "fixture-host-uid",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "name": "display",
+        "description": null,
+        "hostRef": {
+          "name": "studio-host"
+        },
+        "enabled": true,
+        "inputRef": {
+          "name": "studio-translator"
+        },
+        "restartToken": null,
+        "settings": {
+          "display": {
+            "maxLines": 3,
+            "fontScale": 1.0,
+            "showOriginal": true,
+            "theme": "dark"
+          }
+        }
+      }
+    }
+  ],
+  "resourceVersion": "nodes-list-version-1"
+}

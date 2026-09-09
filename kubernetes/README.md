@@ -1,9 +1,8 @@
-# Phase 1 Kubernetes resources
+# Kubernetes resources and Control API
 
-This is an additive contract/bootstrap implementation. PostgreSQL storage, REST
-handlers, WebSocket messages and Diamant continue to work as before. No controller
-or new resource CRUD handlers run yet. The selected API is
-`control.suntitle.io/v1alpha1`, kinds `SuntitleHost` and `SuntitleNode`.
+Phase 2 switches Control API resource handlers to Kubernetes. The selected API is
+`control.suntitle.io/v1alpha1`, kinds `SuntitleHost` and `SuntitleNode`. The proxy,
+Diamant, and UI integration remain in later phases. Node deletion is phase 4.
 
 From the repository root, with the existing Compose Kine/API server running:
 
@@ -19,21 +18,50 @@ waiting up to 60 seconds per CRD for `Established`. It is repeatable and does no
 force server-side apply ownership conflicts. `--namespace` selects another
 namespace. Checked-in CRDs are generated from `src/kubernetes/resources.rs`.
 
-Optionally start the existing API with
-`--bootstrap-kubeconfig pki/admin.kubeconfig` (or
-`SUNTITLE_BOOTSTRAP_KUBECONFIG`) to apply and await CRDs before normal PostgreSQL
-initialization. This option requires bootstrap privileges and fails startup on
-installation failure. It does not install RBAC or switch storage. Default API
-startup has no Kubernetes dependency. Bootstrap credentials must remain separate
-from the API/proxy runtime credentials; startup installation is a local opt-in.
+Start the Control API with its own certificate identity:
+
+```sh
+cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- --kubeconfig pki/suntitle-api.kubeconfig
+```
+
+`SUNTITLE_API_KUBECONFIG` also selects the credentials; `--namespace` or
+`SUNTITLE_KUBERNETES_NAMESPACE` selects the managed namespace (default `suntitle`).
+The API does not initialize PostgreSQL. Startup and `GET /readyz` require both
+CRDs to be established and both resource collections to be readable. Bootstrap
+installs a ClusterRole allowing only GET on these two CRDs for readiness.
+`--bootstrap-kubeconfig` remains an optional, separate CRD installation identity.
+
+Host/node list responses contain `items` and an opaque `resourceVersion`.
+Node GET/create/update/restart responses contain Kubernetes resources. Create
+returns 201 and Location, using the path host for `hostRef` and ownership. PUT
+accepts `{spec: ...}` and replaces only the complete desired spec. Restart has no
+request body and patches only a fresh restart token, returning 202. Neither write
+uses a resource-version precondition or a preliminary resource read. Metadata and
+status are preserved by these patches.
+
+Kubernetes schemas and CEL validate desired fields and immutable changes. The
+API does not check input references, ownership consistency, or deletion timestamps.
+The controller owns reference reconciliation and all finalizer management.
+API-server errors retain their HTTP status and reason/message/details in the
+error envelope. The client retry layer is disabled so transient server errors
+also propagate immediately. Transport failures without an API-server response return 503.
+
+Run the phase 2 API suite after bootstrap:
+
+```sh
+cargo test --manifest-path ws-proxy/Cargo.toml --test control_api_resources -- --include-ignored
+```
+
+It uses unique resources, exercises actual API handlers with fresh in-memory API
+state for every request, and explicitly cleans up finalizers and resources.
+Fault-injection tests cover upstream error propagation and readiness failures.
 
 `pki/suntitle-api.kubeconfig` and `pki/suntitle-proxy.kubeconfig` use distinct
-certificate CNs. Neither identity can install CRDs or RBAC. API can read hosts,
-maintain host finalizers, and CRUD node specs, but cannot write status. Proxy can
-watch/manage resources and status and perform lifecycle cleanup. Owner finalizer
-permissions allow `blockOwnerDeletion: true`. Kubernetes RBAC cannot restrict
-host patch permission to one metadata field; host-spec ownership is a controller
-contract, not field-level authorization.
+certificate CNs. Neither identity can install CRDs or RBAC. API reads hosts and
+writes node desired state, but cannot write status or host finalizers. Proxy can
+watch/manage resources and status and perform lifecycle cleanup. API-created
+owner references set `controller: true`; finalizers and `blockOwnerDeletion`
+maintenance belong to the controller.
 
 Specs reuse the current typed Rust settings through an externally tagged enum:
 
