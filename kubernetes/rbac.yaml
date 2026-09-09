@@ -7,15 +7,10 @@ metadata:
 rules:
   - apiGroups: [control.suntitle.io]
     resources: [suntitlehosts]
-    verbs: [get, list, patch, update]
+    verbs: [get, list]
   - apiGroups: [control.suntitle.io]
     resources: [suntitlenodes]
     verbs: [get, list, create, update, patch, delete]
-  # OwnerReferencesPermissionEnforcement requires update on owner finalizers
-  # when setting blockOwnerDeletion; API also establishes host cleanup finalizers.
-  - apiGroups: [control.suntitle.io]
-    resources: [suntitlehosts/finalizers]
-    verbs: [update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -59,4 +54,27 @@ subjects:
 roleRef:
   kind: Role
   name: suntitle-proxy
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: suntitle-api-readiness
+rules:
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    resourceNames: [suntitlehosts.control.suntitle.io, suntitlenodes.control.suntitle.io]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: suntitle-api-readiness
+subjects:
+  - kind: User
+    name: suntitle-api
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: suntitle-api-readiness
   apiGroup: rbac.authorization.k8s.io

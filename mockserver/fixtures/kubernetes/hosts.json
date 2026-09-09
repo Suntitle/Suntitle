@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleHost",
+      "metadata": {
+        "namespace": "suntitle",
+        "name": "studio-host",
+        "uid": "fixture-host-uid",
+        "resourceVersion": "host-version-1",
+        "generation": 1,
+        "creationTimestamp": "2026-09-09T12:00:00Z"
+      },
+      "spec": {
+        "name": "Studio workstation"
+      }
+    }
+  ],
+  "resourceVersion": "hosts-list-version-1"
+}

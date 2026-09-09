@@ -1,0 +1,6 @@
+{
+  "audio_source": {"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null},
+  "transcriber": {"model":"small","language":"en","task":"transcribe","beamSize":5,"vadEnabled":true},
+  "translator": {"sourceLanguage":"en","targetLanguage":"cs","provider":"huggingface","model":null,"preserveFormatting":true},
+  "display": {"maxLines":3,"fontScale":1.0,"showOriginal":true,"theme":"dark"}
+}

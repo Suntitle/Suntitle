@@ -1,0 +1,20 @@
+{
+  "spec": {
+    "name": "audio_source",
+    "description": null,
+    "hostRef": {
+      "name": "studio-host"
+    },
+    "enabled": true,
+    "inputRef": null,
+    "restartToken": null,
+    "settings": {
+      "audio_source": {
+        "sampleRateHz": 16000,
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "deviceName": null
+      }
+    }
+  }
+}

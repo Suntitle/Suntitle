@@ -1,4 +1,4 @@
-//! New resource contracts; the legacy storage and REST models remain in use.
+//! Shared desired-state and runtime observation contracts.
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -207,3 +207,28 @@ pub fn crd_yaml() -> Result<String, serde_yaml::Error> {
     }
     Ok(yaml)
 }
+
+macro_rules! openapi_schema {
+    ($($ty:ty),+ $(,)?) => {$(
+        impl utoipa::PartialSchema for $ty {
+            fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+                let mut settings = schemars::generate::SchemaSettings::draft2020_12();
+                settings.inline_subschemas = true;
+                let schema = settings.clone().into_generator().into_root_schema_for::<Self>();
+                let mut value = serde_json::to_value(schema).expect("resource schema serialization");
+                if matches!(stringify!($ty), "SuntitleHost" | "SuntitleNode") {
+                    let metadata = settings.into_generator().into_root_schema_for::<k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta>();
+                    value["properties"]["metadata"] = serde_json::to_value(metadata).expect("metadata schema");
+                    value["properties"]["apiVersion"] = json!({"type":"string", "enum":["control.suntitle.io/v1alpha1"]});
+                    value["properties"]["kind"] = json!({"type":"string", "enum":[stringify!($ty)]});
+                    value["required"] = json!(["apiVersion", "kind", "metadata", "spec"]);
+                }
+                serde_json::from_value(value)
+                    .expect("resource OpenAPI schema")
+            }
+        }
+        impl utoipa::ToSchema for $ty {}
+    )+};
+}
+
+openapi_schema!(SuntitleHost, SuntitleNode, SuntitleNodeSpec);

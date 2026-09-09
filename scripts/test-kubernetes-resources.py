@@ -48,7 +48,7 @@ def main():
     host = create('suntitle-proxy', 'SuntitleHost', host_name, {'name': 'Phase 1 host'},
                   {'finalizers': [f'{GROUP}/host-cleanup']})
     owner = {'apiVersion': f'{GROUP}/v1alpha1', 'kind': 'SuntitleHost', 'name': host_name,
-             'uid': host['metadata']['uid'], 'controller': True, 'blockOwnerDeletion': True}
+             'uid': host['metadata']['uid'], 'controller': True}
     variants = {
         'audio_source': {'sampleRateHz': 16000, 'channels': 1, 'encoding': 'pcm_s16le', 'deviceName': None},
         'transcriber': {'model': 'small', 'language': 'en', 'task': 'transcribe', 'beamSize': 5, 'vadEnabled': True},
@@ -59,13 +59,15 @@ def main():
     for kind, settings in variants.items():
         nodes[kind] = create('suntitle-api', 'SuntitleNode', PREFIX + '-' + kind.replace('_', '-'),
             {'name': kind, 'hostRef': {'name': host_name}, 'settings': {kind: settings}, 'inputRef': None},
-            {'ownerReferences': [owner], 'finalizers': [f'{GROUP}/runtime-cleanup']})
+            {'ownerReferences': [owner]})
+        nodes[kind] = kubectl('suntitle-proxy', 'patch', NODES, nodes[kind]['metadata']['name'],
+            '--type=merge', '-p', json.dumps({'metadata': {'finalizers': [f'{GROUP}/runtime-cleanup']}}), '-o', 'json')
         assert nodes[kind]['spec']['enabled'] is True
     print('PASS all four settings types, default enabled, API owner admission')
 
     # Proxy also needs owner-reference admission permissions.
     proxy_node = create('suntitle-proxy', 'SuntitleNode', PREFIX + '-proxy', nodes['display']['spec'],
-                        {'ownerReferences': [owner]})
+                        {'ownerReferences': [{**owner, 'blockOwnerDeletion': True}]})
     assert proxy_node['metadata']['ownerReferences'][0]['blockOwnerDeletion']
 
     invalid = [
@@ -84,8 +86,9 @@ def main():
     replace_spec(nodes['display'], lambda spec: spec.__setitem__('settings', {'translator': variants['translator']}), fails='immutable')
     replace_spec(nodes['display'], lambda spec: spec['hostRef'].__setitem__('name', 'other'), fails='immutable')
     for settings in [{}, {'audio_source': variants['audio_source'], 'display': variants['display']},
-                     {'transcriber': variants['audio_source']}, {'transcriber': None}]:
+                     {'transcriber': None}]:
         replace_spec(nodes['display'], lambda spec: spec.__setitem__('settings', settings), fails='Invalid')
+    replace_spec(nodes['display'], lambda spec: spec.__setitem__('settings', {'transcriber': variants['audio_source']}), fails='unknown field')
     replace_spec(nodes['audio_source'],
                  lambda spec: spec['settings']['audio_source'].__setitem__('beamSize', 5),
                  fails='unknown field')

@@ -1,0 +1,11 @@
+{
+  "error": {
+    "code": "AlreadyExists",
+    "message": "suntitlenodes.control.suntitle.io \"studio-audio-source\" already exists",
+    "details": {
+      "name": "studio-audio-source",
+      "group": "control.suntitle.io",
+      "kind": "suntitlenodes"
+    }
+  }
+}
