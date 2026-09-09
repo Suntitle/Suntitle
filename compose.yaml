@@ -3,17 +3,68 @@ services:
   postgres:
     image: postgres:18
     environment:
-      POSTGRES_DB: suntitle
-      POSTGRES_USER: suntitle
-      POSTGRES_PASSWORD: suntitle-local
+      POSTGRES_DB: ${POSTGRES_DB:-suntitle}
+      POSTGRES_USER: ${POSTGRES_USER:-suntitle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-suntitle-local}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U suntitle -d suntitle"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 2s
       timeout: 3s
       retries: 30
+    networks:
+      - control-plane
+
+  kine:
+    image: ghcr.io/k3s-io/kine:v0.17.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      # The image entrypoint is /bin/kine; pass only flags here.
+      - --endpoint=postgres://${POSTGRES_USER:-suntitle}:${POSTGRES_PASSWORD:-suntitle-local}@postgres:5432/${POSTGRES_DB:-suntitle}?sslmode=disable
+      - --listen-address=tcp://0.0.0.0:2379
+    ports:
+      # Optional: expose Kine outside Docker.
+      - "2379:2379"
+    networks:
+      - control-plane
+
+  kube-apiserver:
+    image: registry.k8s.io/kube-apiserver:v1.37.0
+    restart: unless-stopped
+    depends_on:
+      - kine
+    command:
+      - kube-apiserver
+      - --secure-port=6443
+      - --bind-address=0.0.0.0
+      - --advertise-address=${APISERVER_ADVERTISE_ADDRESS:-127.0.0.1}
+      - --etcd-servers=http://kine:2379
+      - --tls-cert-file=/etc/kubernetes/pki/apiserver.crt
+      - --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
+      - --client-ca-file=/etc/kubernetes/pki/ca.crt
+      - --service-account-key-file=/etc/kubernetes/pki/sa.pub
+      - --service-account-signing-key-file=/etc/kubernetes/pki/sa.key
+      - --service-account-issuer=https://kubernetes.default.svc
+      - --service-cluster-ip-range=${SERVICE_CIDR:-10.96.0.0/12}
+      - --authorization-mode=Node,RBAC
+      - --enable-bootstrap-token-auth=true
+      - --endpoint-reconciler-type=none
+    volumes:
+      - ./pki:/etc/kubernetes/pki:ro
+    ports:
+      - "6443:6443"
+    networks:
+      - control-plane
+
 volumes:
   postgres-data:
+
+networks:
+  control-plane:
+    driver: bridge

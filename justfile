@@ -72,8 +72,25 @@ listener-device device host="localhost:3030":
 diamant-local:
     cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --id-file .suntitle/diamant.id --project-dir "{{ justfile_directory() }}"
 
-# Start PostgreSQL, API, proxy, Diamant and UI. Ctrl+C leaves PostgreSQL running.
-local-stack: _ui-dependencies db-up db-migrate
+# Run kubectl against the local Compose API server, forwarding all arguments.
+[positional-arguments]
+kubectl *args:
+    @kubectl --kubeconfig=/dev/null --server=https://127.0.0.1:6443 --certificate-authority=pki/ca.crt --client-certificate=pki/admin.crt --client-key=pki/admin.key "$@"
+
+# Start the Compose services after checking their required certificate files.
+_local-infra-up: db-env
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for file in ca.crt apiserver.crt apiserver.key sa.pub sa.key; do
+        if [[ ! -s "pki/$file" ]]; then
+            echo "Missing pki/$file. Run 'just generate-certs' before 'just local-stack'." >&2
+            exit 1
+        fi
+    done
+    docker compose --env-file .env.local up -d --wait --wait-timeout 90 postgres kine kube-apiserver
+
+# Start PostgreSQL, Kine, kube-apiserver, API, proxy, Diamant and UI. Ctrl+C leaves Compose services running.
+local-stack: _local-infra-up _ui-dependencies db-migrate
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -268,3 +285,23 @@ ui-test-server: _ui-dependencies
 # Open Cypress for interactive debugging.
 ui-test-open: _ui-dependencies
     npm --prefix ui run cypress:open
+
+generate-certs:
+    #!/usr/bin/env bash
+    ./scripts/generate-certs.sh
+
+# Generate the phase 1 Kubernetes custom-resource definitions without a server.
+generate-crds:
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- generate-crds > kubernetes/crds.yaml
+
+# Create separate local certificate kubeconfigs, retaining existing client keys.
+generate-kubeconfigs:
+    bash scripts/generate-kubeconfigs.sh
+
+# Install namespace, CRDs and runtime RBAC using explicit bootstrap credentials.
+kubernetes-bootstrap kubeconfig="pki/admin.kubeconfig" namespace="suntitle":
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- bootstrap-kubernetes --kubeconfig {{quote(kubeconfig)}} --namespace {{quote(namespace)}}
+
+# Exercise new resource contracts on the running standalone Kubernetes API.
+kubernetes-test:
+    python3 scripts/test-kubernetes-resources.py

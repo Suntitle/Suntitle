@@ -7,9 +7,13 @@ use validator::ValidationError;
 use super::require;
 
 /// BCP 47 language tag.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
-pub struct LanguageTag(pub String);
+pub struct LanguageTag(
+    /// Language code used to select speech or text processing languages.
+    #[schemars(regex(pattern = "^[a-z]{2,3}$"), length(max = 3))]
+    pub String,
+);
 
 impl utoipa::PartialSchema for LanguageTag {
     fn schema() -> RefOr<Schema> {

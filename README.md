@@ -32,7 +32,8 @@ just setup
 
 ## Local database and independent services
 
-Docker Compose runs PostgreSQL 18; the Rust binaries run on the host:
+Docker Compose provides PostgreSQL 18 and a standalone Kubernetes API server
+backed by Kine. The Rust binaries run on the host:
 
 ```bash
 cp .env.example .env.local  # first setup only; credentials are for local development
@@ -48,10 +49,15 @@ startup fails otherwise. Each uses a bounded pool of eight connections. Only the
 proxy listens for database notifications. Run one proxy instance per database;
 a database advisory lock rejects a second instance.
 
-`just local-stack` prepares the database and starts API, proxy, Diamant, and UI.
-It waits for the API and proxy before starting clients. Ctrl+C stops application
-children and leaves PostgreSQL running. `just db-stop` stops PostgreSQL while
-preserving its volume. `just ui` starts the database, API, and UI.
+`just local-stack` starts PostgreSQL, Kine, and kube-apiserver through Compose,
+prepares the database, and starts API, proxy, Diamant, and UI. Run
+`just generate-certs` once before the first launch (requires `mkcert` and OpenSSL).
+The command checks the required certificate files and loads Compose settings
+from `.env.local`. It waits for the API and proxy before starting clients.
+Ctrl+C stops application children and leaves the Compose services running.
+`docker compose stop` stops all Compose services while preserving the database
+volume; `just db-stop` stops only PostgreSQL. `just ui` starts the database, API,
+and UI.
 
 Commands are committed with desired state, delivered in revision order per node,
 and completed only by a matching terminal runtime acknowledgement. Duplicate
@@ -82,6 +88,46 @@ docker compose exec -T postgres pg_restore -U suntitle -d suntitle_restore < sun
 ```
 
 Set `DATABASE_URL` to the restored database before starting the applications.
+
+### Standalone Kubernetes API server
+
+Kine stores Kubernetes state in the existing PostgreSQL database. To start the
+API server, first generate the TLS, client CA, and service-account signing files
+in `pki/` using the local certificate script (requires `mkcert` and OpenSSL):
+
+```bash
+just generate-certs
+docker compose --env-file .env.local up -d kube-apiserver
+just kubectl get --raw=/readyz
+```
+
+`just kubectl` forwards all arguments to kubectl, targeting `https://127.0.0.1:6443`
+with the generated admin certificates. It does not use or modify your default
+kubeconfig. For example:
+
+```bash
+just kubectl get namespaces
+just kubectl get pods -A
+just kubectl apply -f manifest.yaml
+```
+
+Compose starts PostgreSQL, waits for its health check, then starts Kine and the
+API server. Kine exposes port `2379`; the HTTPS Kubernetes API exposes `6443`.
+The `pki/` directory is mounted read-only and excluded from Git. This standalone
+setup does not run a controller-manager, scheduler, or worker nodes.
+
+Compose defaults match the existing local database credentials. It reads
+`.env.local` only when passed `--env-file .env.local`; keep `DATABASE_URL` aligned
+with any PostgreSQL overrides. PostgreSQL initialization variables do not change
+credentials in an existing data volume. If you override `APISERVER_ADVERTISE_ADDRESS`
+or `SERVICE_CIDR`, ensure the server certificate covers the address clients use
+and the Kubernetes service IP in that range.
+
+Stop the Kubernetes services while retaining PostgreSQL and its data:
+
+```bash
+docker compose stop kube-apiserver kine
+```
 
 ## Run the web UI with the API backend
 

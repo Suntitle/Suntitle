@@ -10,23 +10,35 @@ use validator::{Validate, ValidationError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TranslatorNode {
+    /// Common node identity, configuration, and runtime state.
     #[serde(flatten)]
     pub base: NodeBase,
+    /// Configuration for this node type.
     pub settings: TranslatorSettings,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate, kube::KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslatorSettings {
+    /// Language code of the input text.
     #[validate(custom(function = "validate_language"))]
+    #[x_kube(validation = kube::core::Rule::new("self.matches('^[a-z]{2,3}$')").message("sourceLanguage must be a lowercase ISO 639 code"))]
     pub source_language: LanguageTag,
+    /// Language code requested for the translated text.
     #[validate(custom(function = "validate_language"))]
+    #[x_kube(validation = kube::core::Rule::new("self.matches('^[a-z]{2,3}$')").message("targetLanguage must be a lowercase ISO 639 code"))]
     pub target_language: LanguageTag,
+    /// Translation backend used to process text.
     #[schema(min_length = 1, examples("openai"))]
     #[validate(custom(function = "validate_provider"))]
+    #[schemars(extend("enum" = ["huggingface"]))]
+    #[x_kube(validation = kube::core::Rule::new("self == 'huggingface'").message("only huggingface is supported"))]
     pub provider: String,
+    /// Translation model override; null selects the provider default.
     #[schema(nullable)]
+    #[schemars(length(max = 256))]
     pub model: Option<String>,
+    /// Whether to retain input text formatting in translations.
     #[serde(default = "default_true")]
     #[schema(default = true)]
     pub preserve_formatting: bool,

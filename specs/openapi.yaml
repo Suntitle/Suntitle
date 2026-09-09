@@ -280,12 +280,14 @@ components:
     AudioSourceNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
+        description: Common node identity, configuration, and runtime state.
       - type: object
         required:
         - settings
         properties:
           settings:
             $ref: '#/components/schemas/AudioSourceSettings'
+            description: Configuration for this node type.
     AudioSourceSettings:
       type: object
       required:
@@ -296,19 +298,23 @@ components:
         channels:
           type: integer
           format: int32
+          description: Number of audio channels captured.
           maximum: 2
           minimum: 1
         deviceName:
           type:
           - string
           - 'null'
+          description: Audio capture device; null selects the runtime default.
           maxLength: 256
         encoding:
-          type: string
-          enum:
-          - pcm_s16le
-          - pcm_f32le
-          - opus
+          oneOf:
+          - type: string
+            enum:
+            - pcm_s16le
+            - pcm_f32le
+            - opus
+          description: Format used to encode captured audio.
         sampleRateHz:
           type: integer
           enum:
@@ -334,12 +340,14 @@ components:
     DisplayNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
+        description: Common node identity, configuration, and runtime state.
       - type: object
         required:
         - settings
         properties:
           settings:
             $ref: '#/components/schemas/DisplaySettings'
+            description: Configuration for this node type.
     DisplaySettings:
       type: object
       required:
@@ -350,15 +358,18 @@ components:
         fontScale:
           type: number
           format: double
+          description: Multiplier applied to the default subtitle font size.
           maximum: 4
           minimum: 0.5
         maxLines:
           type: integer
           format: int32
+          description: Maximum number of subtitle lines displayed at once.
           maximum: 10
           minimum: 1
         showOriginal:
           type: boolean
+          description: Whether to show source text alongside its translation.
         theme:
           oneOf:
           - type: string
@@ -366,6 +377,7 @@ components:
             - light
             - dark
             - transparent
+          description: Color and background style used for subtitles.
           default: dark
       additionalProperties: false
     Host:
@@ -381,25 +393,30 @@ components:
         id:
           type: string
           format: uuid
+          description: Stable identifier of the host.
         ip:
           type: string
           format: ip
+          description: IP address of the host.
           examples:
           - 192.0.2.10
           - 2001:db8::10
         lastSeenAt:
           type: string
           format: date-time
+          description: Time the host was last observed by the control plane.
         metadata:
           type: object
           description: Optional host capabilities or implementation-specific information.
           additionalProperties: true
         name:
           type: string
+          description: Display name shown for this host.
           maxLength: 128
           minLength: 1
         status:
           $ref: '#/components/schemas/HostStatus'
+          description: Current host availability and health.
         version:
           type: string
           description: Version of the Suntitle host agent or runtime.
@@ -417,9 +434,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Host'
+          description: Hosts returned by the query.
         total:
           type: integer
           format: int64
+          description: Total number of matching hosts.
           minimum: 0
       additionalProperties: false
     HostStatus:
@@ -531,32 +550,41 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/NodeConnection'
+          description: Observed data connections to peer nodes.
         createdAt:
           type: string
           format: date-time
+          description: Time the node was created.
           readOnly: true
         description:
           type:
           - string
           - 'null'
+          description: Optional description of the node’s purpose.
           maxLength: 1000
         enabled:
           type: boolean
+          description: Whether the node should run.
         host:
           $ref: '#/components/schemas/Host'
+          description: Host assigned to run this node.
         id:
           type: string
           format: uuid
+          description: Stable identifier of the node.
           readOnly: true
         name:
           type: string
+          description: Display name shown to users.
           maxLength: 128
           minLength: 1
         status:
           $ref: '#/components/schemas/NodeStatus'
+          description: Current node connectivity and health.
         updatedAt:
           type: string
           format: date-time
+          description: Time the node record was last updated.
           readOnly: true
     NodeConnection:
       type: object
@@ -574,17 +602,22 @@ components:
         bytesTransferred:
           type: integer
           format: int64
+          description: Reported number of bytes transferred over the connection.
           minimum: 0
         connectedAt:
           type: string
           format: date-time
+          description: Time the connection was established.
         dataType:
           $ref: '#/components/schemas/DataType'
+          description: Kind of payload carried by the connection.
         direction:
-          type: string
-          enum:
-          - incoming
-          - outgoing
+          oneOf:
+          - type: string
+            enum:
+            - incoming
+            - outgoing
+          description: Direction of data flow relative to this node.
         id:
           type: string
           format: uuid
@@ -592,29 +625,37 @@ components:
         lastActivityAt:
           type: string
           format: date-time
+          description: Time data was last observed on the connection.
         metadata:
           type: object
           description: Optional implementation-specific connection information.
           additionalProperties: true
         peerName:
           type: string
+          description: Display name of the peer node, when known.
         peerNodeId:
           type: string
           format: uuid
+          description: Identifier of the node at the other end of the connection.
         peerNodeType:
           $ref: '#/components/schemas/NodeType'
+          description: Processing role of the peer node.
         protocol:
-          type: string
-          enum:
-          - websocket
-          - http
-          - https
+          oneOf:
+          - type: string
+            enum:
+            - websocket
+            - http
+            - https
+          description: Transport protocol used by the connection.
         status:
           $ref: '#/components/schemas/ConnectionStatus'
+          description: Current connection health.
       additionalProperties: false
     NodeCreate:
       allOf:
       - $ref: '#/components/schemas/NodeUpdate'
+        description: Initial node configuration and upstream input.
     NodeInputUpdate:
       type: object
       required:
@@ -638,9 +679,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Node'
+          description: Nodes returned by the query.
         total:
           type: integer
           format: int64
+          description: Total number of matching nodes.
           minimum: 0
       additionalProperties: false
     NodeSettingDefinition:
@@ -654,42 +697,54 @@ components:
       properties:
         defaultValue:
           $ref: '#/components/schemas/NodeSettingValue'
+          description: Initial value suggested for the setting.
         description:
           type: string
+          description: Help text explaining the setting.
         input:
-          type: string
-          enum:
-          - text
-          - number
-          - select
-          - checkbox
+          oneOf:
+          - type: string
+            enum:
+            - text
+            - number
+            - select
+            - checkbox
+          description: Form control used to edit the setting.
         key:
           type: string
           description: Property name used in the node's settings object.
           pattern: ^[A-Za-z][A-Za-z0-9]*$
         label:
           type: string
+          description: Display label for the setting.
         maximum:
           type: number
           format: double
+          description: Inclusive upper bound for a numeric value.
         minimum:
           type: number
           format: double
+          description: Inclusive lower bound for a numeric value.
         options:
           type: array
           items:
             $ref: '#/components/schemas/NodeSettingOption'
+          description: Available choices for a selection control.
         placeholder:
           type: string
+          description: Hint shown when the setting has no value.
         required:
           type: boolean
+          description: Whether a value is required for this setting.
         valueType:
-          type: string
-          enum:
-          - string
-          - integer
-          - number
-          - boolean
+          oneOf:
+          - type: string
+            enum:
+            - string
+            - integer
+            - number
+            - boolean
+          description: Data type accepted by the setting.
       additionalProperties: false
     NodeSettingOption:
       type: object
@@ -699,8 +754,10 @@ components:
       properties:
         label:
           type: string
+          description: Display text for this option.
         value:
           $ref: '#/components/schemas/NodeSettingValue'
+          description: Setting value submitted when this option is selected.
       additionalProperties: false
     NodeSettingValue:
       oneOf:
@@ -782,6 +839,7 @@ components:
       properties:
         description:
           type: string
+          description: Purpose of this node type.
         inputTypes:
           type: array
           items:
@@ -789,12 +847,15 @@ components:
           description: Node types that may be selected as this node's upstream input.
         name:
           type: string
+          description: Display name of the node type.
         settings:
           type: array
           items:
             $ref: '#/components/schemas/NodeSettingDefinition'
+          description: Editable settings supported by this node type.
         type:
           $ref: '#/components/schemas/NodeType'
+          description: Node type described by this definition.
       additionalProperties: false
     NodeTypeDefinitionList:
       type: object
@@ -806,16 +867,21 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/NodeTypeDefinition'
+          description: Node type definitions returned by the query.
         total:
           type: integer
           format: int64
+          description: Total number of matching node type definitions.
           minimum: 0
       additionalProperties: false
     NodeUpdate:
       allOf:
       - $ref: '#/components/schemas/NodeUpdateBase'
+        description: Editable name, description, and enabled state.
       - $ref: '#/components/schemas/NodeSettings'
+        description: Node type discriminator and its matching settings.
       - $ref: '#/components/schemas/NodeInputUpdate'
+        description: Upstream input selection for the node.
     NodeUpdateBase:
       type: object
       required:
@@ -826,11 +892,14 @@ components:
           type:
           - string
           - 'null'
+          description: Optional description of the node’s purpose.
           maxLength: 1000
         enabled:
           type: boolean
+          description: Whether the node should run.
         name:
           type: string
+          description: Display name shown to users.
           maxLength: 128
           minLength: 1
     Problem:
@@ -861,12 +930,14 @@ components:
     TranscriberNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
+        description: Common node identity, configuration, and runtime state.
       - type: object
         required:
         - settings
         properties:
           settings:
             $ref: '#/components/schemas/TranscriberSettings'
+            description: Configuration for this node type.
     TranscriberSettings:
       type: object
       required:
@@ -876,13 +947,16 @@ components:
         beamSize:
           type: integer
           format: int32
+          description: Number of candidate sequences retained during decoding.
           default: 5
           maximum: 20
           minimum: 1
         language:
           $ref: '#/components/schemas/LanguageTag'
+          description: Language code of the incoming speech.
         model:
           type: string
+          description: Speech recognition model used to decode audio.
           examples:
           - large-v3
           minLength: 1
@@ -892,20 +966,24 @@ components:
             enum:
             - transcribe
             - translate
+          description: Whether to transcribe speech or translate it into English.
           default: transcribe
         vadEnabled:
           type: boolean
+          description: Whether voice activity detection filters out non-speech audio.
           default: true
       additionalProperties: false
     TranslatorNode:
       allOf:
       - $ref: '#/components/schemas/NodeBase'
+        description: Common node identity, configuration, and runtime state.
       - type: object
         required:
         - settings
         properties:
           settings:
             $ref: '#/components/schemas/TranslatorSettings'
+            description: Configuration for this node type.
     TranslatorSettings:
       type: object
       required:
@@ -917,18 +995,23 @@ components:
           type:
           - string
           - 'null'
+          description: Translation model override; null selects the provider default.
         preserveFormatting:
           type: boolean
+          description: Whether to retain input text formatting in translations.
           default: true
         provider:
           type: string
+          description: Translation backend used to process text.
           examples:
           - openai
           minLength: 1
         sourceLanguage:
           $ref: '#/components/schemas/LanguageTag'
+          description: Language code of the input text.
         targetLanguage:
           $ref: '#/components/schemas/LanguageTag'
+          description: Language code requested for the translated text.
       additionalProperties: false
     User:
       type: object

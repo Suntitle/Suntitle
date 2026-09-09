@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 pub mod api;
 pub mod diamant;
+pub mod kubernetes;
 pub mod registration;
 
 use api::models::{Node, NodeUpdate};

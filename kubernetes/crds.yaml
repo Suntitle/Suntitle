@@ -1,0 +1,442 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: suntitlehosts.control.suntitle.io
+spec:
+  group: control.suntitle.io
+  names:
+    kind: SuntitleHost
+    plural: suntitlehosts
+    singular: suntitlehost
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for SuntitleHostSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              name:
+                description: Display name shown for this host.
+                maxLength: 128
+                minLength: 1
+                type: string
+            required:
+            - name
+            type: object
+          status:
+            nullable: true
+            properties:
+              agentVersion:
+                description: Version of the reporting host agent.
+                nullable: true
+                type: string
+              conditions:
+                description: Host health observations keyed by condition type.
+                items:
+                  description: Condition contains details for one aspect of the current state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable message indicating details about the transition. This may be an empty string.
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date with respect to the current state of the instance.
+                      format: int64
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of specific condition types may define expected values and meanings for this field, and whether the values are considered a guaranteed API. The value should be a CamelCase string. This field may not be empty.
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              ip:
+                description: IP address reported by the host agent.
+                nullable: true
+                type: string
+              lastHeartbeat:
+                description: Time of the latest host heartbeat.
+                format: date-time
+                nullable: true
+                type: string
+              presence:
+                description: Observed host availability.
+                enum:
+                - Online
+                - Offline
+                - null
+                nullable: true
+                type: string
+              reportedMetadata:
+                description: Capabilities and implementation-specific data reported by the host.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              sessionId:
+                description: Current agent session identifier used to reject stale reports.
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: SuntitleHost
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: suntitlenodes.control.suntitle.io
+spec:
+  group: control.suntitle.io
+  names:
+    kind: SuntitleNode
+    plural: suntitlenodes
+    singular: suntitlenode
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for SuntitleNodeSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              description:
+                description: Optional description of the node’s purpose.
+                maxLength: 1000
+                nullable: true
+                type: string
+              enabled:
+                default: true
+                description: Whether the node should run.
+                type: boolean
+              hostRef:
+                description: Host assigned to run this node. MUST remain unchanged.
+                properties:
+                  name:
+                    description: Name of the referenced resource in the same namespace.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                type: object
+                x-kubernetes-validations:
+                - message: host reference is immutable
+                  rule: self == oldSelf
+              inputRef:
+                description: Upstream node supplying input, when configured.
+                nullable: true
+                properties:
+                  name:
+                    description: Name of the referenced resource in the same namespace.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                type: object
+              name:
+                description: Display name shown to users.
+                maxLength: 128
+                minLength: 1
+                type: string
+              restartToken:
+                description: Opaque token whose change requests a node restart.
+                maxLength: 128
+                minLength: 1
+                nullable: true
+                type: string
+              settings:
+                description: Configuration for exactly one node type. The selected type MUST remain unchanged.
+                oneOf:
+                - required:
+                  - audio_source
+                - required:
+                  - transcriber
+                - required:
+                  - translator
+                - required:
+                  - display
+                properties:
+                  audio_source:
+                    description: Audio capture and encoding configuration.
+                    properties:
+                      channels:
+                        description: Number of audio channels captured.
+                        format: uint8
+                        maximum: 2.0
+                        minimum: 1.0
+                        type: integer
+                        x-kubernetes-validations:
+                        - message: channels must be between 1 and 2
+                          rule: self >= 1 && self <= 2
+                      deviceName:
+                        description: Audio capture device; null selects the runtime default.
+                        maxLength: 256
+                        nullable: true
+                        type: string
+                      encoding:
+                        description: Format used to encode captured audio.
+                        enum:
+                        - pcm_s16le
+                        type: string
+                        x-kubernetes-validations:
+                        - message: only pcm_s16le is supported
+                          rule: self == 'pcm_s16le'
+                      sampleRateHz:
+                        description: Number of audio samples captured per second.
+                        enum:
+                        - 8000
+                        - 16000
+                        - 22050
+                        - 44100
+                        - 48000
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                        x-kubernetes-validations:
+                        - message: unsupported sample rate
+                          rule: self in [8000, 16000, 22050, 44100, 48000]
+                    required:
+                    - channels
+                    - encoding
+                    - sampleRateHz
+                    type: object
+                  display:
+                    description: Subtitle presentation configuration.
+                    properties:
+                      fontScale:
+                        description: Multiplier applied to the default subtitle font size.
+                        format: double
+                        maximum: 4.0
+                        minimum: 0.5
+                        type: number
+                        x-kubernetes-validations:
+                        - message: fontScale must be between 0.5 and 4.0
+                          rule: self >= 0.5 && self <= 4.0
+                      maxLines:
+                        description: Maximum number of subtitle lines displayed at once.
+                        format: uint8
+                        maximum: 10.0
+                        minimum: 1.0
+                        type: integer
+                        x-kubernetes-validations:
+                        - message: maxLines must be between 1 and 10
+                          rule: self >= 1 && self <= 10
+                      showOriginal:
+                        description: Whether to show source text alongside its translation.
+                        type: boolean
+                      theme:
+                        default: dark
+                        description: Color and background style used for subtitles.
+                        enum:
+                        - light
+                        - dark
+                        - transparent
+                        type: string
+                        x-kubernetes-validations:
+                        - message: unsupported display theme
+                          rule: self in ['light', 'dark', 'transparent']
+                    required:
+                    - fontScale
+                    - maxLines
+                    - showOriginal
+                    type: object
+                  transcriber:
+                    description: Speech recognition configuration.
+                    properties:
+                      beamSize:
+                        default: 5
+                        description: Number of candidate sequences retained during decoding.
+                        format: uint8
+                        maximum: 20.0
+                        minimum: 1.0
+                        type: integer
+                        x-kubernetes-validations:
+                        - message: beamSize must be between 1 and 20
+                          rule: self >= 1 && self <= 20
+                      language:
+                        description: Language code of the incoming speech.
+                        maxLength: 3
+                        pattern: ^[a-z]{2,3}$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: language must be a lowercase ISO 639 code
+                          rule: self.matches('^[a-z]{2,3}$')
+                      model:
+                        description: Speech recognition model used to decode audio.
+                        maxLength: 256
+                        type: string
+                        x-kubernetes-validations:
+                        - message: unsupported transcriber model
+                          rule: self in ['tiny.en','tiny','base.en','base','small.en','small','medium.en','medium','large-v1','large-v2','large-v3','large','large-v3-turbo']
+                      task:
+                        default: transcribe
+                        description: Whether to transcribe speech or translate it into English.
+                        enum:
+                        - transcribe
+                        - translate
+                        type: string
+                        x-kubernetes-validations:
+                        - message: unsupported transcriber task
+                          rule: self in ['transcribe', 'translate']
+                      vadEnabled:
+                        default: true
+                        description: Whether voice activity detection filters out non-speech audio.
+                        type: boolean
+                    required:
+                    - language
+                    - model
+                    type: object
+                  translator:
+                    description: Text translation configuration.
+                    properties:
+                      model:
+                        description: Translation model override; null selects the provider default.
+                        maxLength: 256
+                        nullable: true
+                        type: string
+                      preserveFormatting:
+                        default: true
+                        description: Whether to retain input text formatting in translations.
+                        type: boolean
+                      provider:
+                        description: Translation backend used to process text.
+                        enum:
+                        - huggingface
+                        type: string
+                        x-kubernetes-validations:
+                        - message: only huggingface is supported
+                          rule: self == 'huggingface'
+                      sourceLanguage:
+                        description: Language code of the input text.
+                        maxLength: 3
+                        pattern: ^[a-z]{2,3}$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: sourceLanguage must be a lowercase ISO 639 code
+                          rule: self.matches('^[a-z]{2,3}$')
+                      targetLanguage:
+                        description: Language code requested for the translated text.
+                        maxLength: 3
+                        pattern: ^[a-z]{2,3}$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: targetLanguage must be a lowercase ISO 639 code
+                          rule: self.matches('^[a-z]{2,3}$')
+                    required:
+                    - provider
+                    - sourceLanguage
+                    - targetLanguage
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: node type is immutable
+                  rule: has(self.audio_source) == has(oldSelf.audio_source) && has(self.transcriber) == has(oldSelf.transcriber) && has(self.translator) == has(oldSelf.translator) && has(self.display) == has(oldSelf.display)
+            required:
+            - hostRef
+            - name
+            - settings
+            type: object
+          status:
+            nullable: true
+            properties:
+              acknowledgedRestartToken:
+                description: Latest restart token acknowledged by the runtime.
+                nullable: true
+                type: string
+              conditions:
+                description: Node health observations keyed by condition type.
+                items:
+                  description: Condition contains details for one aspect of the current state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable message indicating details about the transition. This may be an empty string.
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date with respect to the current state of the instance.
+                      format: int64
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of specific condition types may define expected values and meanings for this field, and whether the values are considered a guaranteed API. The value should be a CamelCase string. This field may not be empty.
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              message:
+                description: Human-readable explanation of the current node state.
+                nullable: true
+                type: string
+              observedGeneration:
+                description: Spec generation reflected in this status.
+                format: int64
+                nullable: true
+                type: integer
+              phase:
+                description: Observed stage of the node lifecycle.
+                enum:
+                - Pending
+                - Running
+                - Disabled
+                - Failed
+                - Disconnected
+                - Terminating
+                - null
+                nullable: true
+                type: string
+              reportingSession:
+                description: Host agent session that produced this status.
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: SuntitleNode
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

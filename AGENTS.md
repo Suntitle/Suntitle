@@ -28,3 +28,7 @@ Move the Trello ticket to the `Finished` list only after the user explicitly app
 After finishing a task, present the completed solution to the user and wait for their explicit approval before creating a commit.
 
 After the user approves the solution, create a commit containing the task's completed changes. Do not include unrelated user changes in the commit.
+
+## Commenting in the code
+
+Short sentences. RFC 2119 keywords for obligations. Commit = imperative subject; body only for a fact the diff cannot show. Comments only where code needs clarification — never narration.
