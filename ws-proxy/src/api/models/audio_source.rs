@@ -11,29 +11,42 @@ use validator::{Validate, ValidationError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AudioSourceNode {
+    /// Common node identity, configuration, and runtime state.
     #[serde(flatten)]
     pub base: NodeBase,
+    /// Configuration for this node type.
     pub settings: AudioSourceSettings,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate, kube::KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioSourceSettings {
+    /// Number of audio samples captured per second.
     #[schema(schema_with = sample_rate_schema)]
     #[validate(custom(function = "validate_sample_rate"))]
+    #[schemars(extend("enum" = [8000, 16000, 22050, 44100, 48000]))]
+    #[x_kube(validation = kube::core::Rule::new("self in [8000, 16000, 22050, 44100, 48000]").message("unsupported sample rate"))]
     pub sample_rate_hz: u32,
+    /// Number of audio channels captured.
     #[schema(minimum = 1, maximum = 2)]
     #[validate(range(min = 1, max = 2))]
+    #[x_kube(validation = kube::core::Rule::new("self >= 1 && self <= 2").message("channels must be between 1 and 2"))]
     pub channels: u8,
+    /// Format used to encode captured audio.
     #[schema(inline)]
     #[validate(custom(function = "validate_encoding"))]
+    #[schemars(extend("enum" = ["pcm_s16le"]))]
+    #[x_kube(validation = kube::core::Rule::new("self == 'pcm_s16le'").message("only pcm_s16le is supported"))]
     pub encoding: AudioEncoding,
+    /// Audio capture device; null selects the runtime default.
     #[schema(nullable, max_length = 256)]
     #[validate(length(max = 256))]
     pub device_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioEncoding {
     PcmS16le,

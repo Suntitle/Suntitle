@@ -9,12 +9,25 @@ use validator::{Validate, ValidationError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DisplayNode {
+    /// Common node identity, configuration, and runtime state.
     #[serde(flatten)]
     pub base: NodeBase,
+    /// Configuration for this node type.
     pub settings: DisplaySettings,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    ToSchema,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum DisplayTheme {
     Light,
@@ -23,19 +36,26 @@ pub enum DisplayTheme {
     Transparent,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate, kube::KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisplaySettings {
+    /// Maximum number of subtitle lines displayed at once.
     #[schema(minimum = 1, maximum = 10)]
     #[validate(range(min = 1, max = 10))]
+    #[x_kube(validation = kube::core::Rule::new("self >= 1 && self <= 10").message("maxLines must be between 1 and 10"))]
     pub max_lines: u8,
+    /// Multiplier applied to the default subtitle font size.
     #[schema(minimum = 0.5, maximum = 4.0)]
     #[validate(range(min = 0.5, max = 4.0), custom(function = "validate_finite"))]
+    #[x_kube(validation = kube::core::Rule::new("self >= 0.5 && self <= 4.0").message("fontScale must be between 0.5 and 4.0"))]
     pub font_scale: f64,
+    /// Whether to show source text alongside its translation.
     pub show_original: bool,
+    /// Color and background style used for subtitles.
     #[serde(default)]
     #[schema(default = "dark")]
     #[schema(inline)]
+    #[x_kube(validation = kube::core::Rule::new("self in ['light', 'dark', 'transparent']").message("unsupported display theme"))]
     pub theme: DisplayTheme,
 }
 

@@ -31,4 +31,7 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Local Kubernetes certificates and private keys
+/pki/
+
 target

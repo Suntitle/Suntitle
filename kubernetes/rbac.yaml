@@ -1,0 +1,62 @@
+# Certificate CNs (users), not service accounts: no token controller required.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: suntitle-api
+  namespace: suntitle
+rules:
+  - apiGroups: [control.suntitle.io]
+    resources: [suntitlehosts]
+    verbs: [get, list, patch, update]
+  - apiGroups: [control.suntitle.io]
+    resources: [suntitlenodes]
+    verbs: [get, list, create, update, patch, delete]
+  # OwnerReferencesPermissionEnforcement requires update on owner finalizers
+  # when setting blockOwnerDeletion; API also establishes host cleanup finalizers.
+  - apiGroups: [control.suntitle.io]
+    resources: [suntitlehosts/finalizers]
+    verbs: [update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: suntitle-proxy
+  namespace: suntitle
+rules:
+  - apiGroups: [control.suntitle.io]
+    resources: [suntitlehosts, suntitlenodes]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [control.suntitle.io]
+    resources: [suntitlehosts/status, suntitlenodes/status]
+    verbs: [get, update, patch]
+  - apiGroups: [control.suntitle.io]
+    resources: [suntitlehosts/finalizers, suntitlenodes/finalizers]
+    verbs: [update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: suntitle-api
+  namespace: suntitle
+subjects:
+  - kind: User
+    name: suntitle-api
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: suntitle-api
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: suntitle-proxy
+  namespace: suntitle
+subjects:
+  - kind: User
+    name: suntitle-proxy
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: suntitle-proxy
+  apiGroup: rbac.authorization.k8s.io

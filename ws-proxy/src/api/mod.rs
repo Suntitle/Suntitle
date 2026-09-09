@@ -194,10 +194,9 @@ mod tests {
     fn node_contract_composes_common_fields_with_tagged_settings() {
         let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
         let schemas = &document["components"]["schemas"];
-        assert_eq!(
-            schemas["NodeCreate"]["allOf"],
-            serde_json::json!([{ "$ref": "#/components/schemas/NodeUpdate" }])
-        );
+        let create = schemas["NodeCreate"]["allOf"].as_array().unwrap();
+        assert_eq!(create.len(), 1);
+        assert_eq!(create[0]["$ref"], "#/components/schemas/NodeUpdate");
         let parts = schemas["NodeUpdate"]["allOf"].as_array().unwrap();
         assert!(
             parts

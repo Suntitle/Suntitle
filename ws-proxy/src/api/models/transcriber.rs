@@ -10,12 +10,25 @@ use validator::{Validate, ValidationError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TranscriberNode {
+    /// Common node identity, configuration, and runtime state.
     #[serde(flatten)]
     pub base: NodeBase,
+    /// Configuration for this node type.
     pub settings: TranscriberSettings,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    ToSchema,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriberTask {
     #[default]
@@ -23,22 +36,35 @@ pub enum TranscriberTask {
     Translate,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate, kube::KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranscriberSettings {
+    /// Speech recognition model used to decode audio.
     #[schema(min_length = 1, examples("large-v3"))]
     #[validate(custom(function = "validate_model"))]
+    #[schemars(length(max = 256))]
+    #[x_kube(validation = kube::core::Rule::new(concat!(
+        "self in ['tiny.en','tiny','base.en','base','small.en','small',",
+        "'medium.en','medium','large-v1','large-v2','large-v3','large','large-v3-turbo']",
+    )).message("unsupported transcriber model"))]
     pub model: String,
+    /// Language code of the incoming speech.
     #[validate(custom(function = "validate_language"))]
+    #[x_kube(validation = kube::core::Rule::new("self.matches('^[a-z]{2,3}$')").message("language must be a lowercase ISO 639 code"))]
     pub language: LanguageTag,
+    /// Whether to transcribe speech or translate it into English.
     #[serde(default)]
     #[schema(default = "transcribe")]
     #[schema(inline)]
+    #[x_kube(validation = kube::core::Rule::new("self in ['transcribe', 'translate']").message("unsupported transcriber task"))]
     pub task: TranscriberTask,
+    /// Number of candidate sequences retained during decoding.
     #[serde(default = "default_beam_size")]
     #[schema(minimum = 1, maximum = 20, default = 5)]
     #[validate(range(min = 1, max = 20))]
+    #[x_kube(validation = kube::core::Rule::new("self >= 1 && self <= 20").message("beamSize must be between 1 and 20"))]
     pub beam_size: u8,
+    /// Whether voice activity detection filters out non-speech audio.
     #[serde(default = "default_true")]
     #[schema(default = true)]
     pub vad_enabled: bool,
