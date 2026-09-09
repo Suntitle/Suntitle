@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
 import { Boxes } from "lucide-react"
 import { observer } from "mobx-react-lite"
 
@@ -64,16 +64,24 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
   const { nodesStore } = useStores()
   const [selectedType, setSelectedType] = useState<NodeType | null>(null)
   const [nodeName, setNodeName] = useState("")
+  const [inputNodeId, setInputNodeId] = useState<string | null>(null)
   const [settings, setSettings] = useState<Record<string, NodeSettingValue>>({})
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const selectedDefinition = nodesStore.nodeTypes.find((definition) => definition.type === selectedType) ?? null
+  const allowedInputNodes = useMemo(() => {
+    if (!selectedDefinition) return []
+    return nodesStore.items.filter((node) => selectedDefinition.inputTypes.includes(node.type))
+  }, [nodesStore.items, selectedDefinition])
+  const requiresInput = (selectedDefinition?.inputTypes.length ?? 0) > 0
+  const canInstall = Boolean(selectedDefinition && nodeName.trim() && (!requiresInput || inputNodeId))
 
   const nodes = host ? nodesStore.nodesForHost(host.id) : []
 
   const selectDefinition = useCallback((definition: NodeTypeDefinition) => {
     setSelectedType(definition.type)
     setNodeName(getDefaultNodeName(definition.type))
+    setInputNodeId(null)
     setSettings(getDefaultSettings(definition))
     setSuccessMessage(null)
     nodesStore.clearInstallError()
@@ -84,6 +92,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
 
     setSelectedType(null)
     setNodeName("")
+    setInputNodeId(null)
     setSettings({})
     setSuccessMessage(null)
     nodesStore.clearInstallError()
@@ -100,6 +109,13 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
     selectDefinition(definition)
   }, [nodesStore.nodeTypes, nodesStore.nodeTypes.length, open, selectedType, selectDefinition])
 
+  useEffect(() => {
+    if (!open || !requiresInput) return
+    if (inputNodeId && allowedInputNodes.some((node) => node.id === inputNodeId)) return
+
+    setInputNodeId(allowedInputNodes[0]?.id ?? null)
+  }, [allowedInputNodes, inputNodeId, open, requiresInput])
+
   function updateSetting(key: string, value: NodeSettingValue) {
     setSettings((current) => ({ ...current, [key]: value }))
     setSuccessMessage(null)
@@ -111,7 +127,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
     if (!host || !selectedDefinition) return
 
     const create: NodeCreate = {
-      inputNodeId: null,
+      inputNodeId,
       type: selectedDefinition.type,
       name: nodeName,
       enabled: true,
@@ -178,7 +194,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
               <section aria-labelledby="install-node-title" className="space-y-4 px-1 py-1">
                 <div>
                   <h3 id="install-node-title" className="text-sm font-semibold">Install a node</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">Choose a node type, then configure the settings required for that node.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Choose a node type and compatible input, then configure the settings required for that node.</p>
                 </div>
 
                 <div className="grid gap-2">
@@ -204,6 +220,28 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
                     </Select>
                   )}
                 </div>
+
+                {requiresInput && (
+                  <div className="grid gap-2">
+                    <Label htmlFor="node-input">Input</Label>
+                    <Select
+                      id="node-input"
+                      required
+                      items={Object.fromEntries(allowedInputNodes.map((node) => [node.id, `${node.name} · ${node.host.name}`]))}
+                      value={inputNodeId}
+                      onValueChange={(value) => {
+                        setInputNodeId(value)
+                        setSuccessMessage(null)
+                        nodesStore.clearInstallError()
+                      }}
+                    >
+                      <SelectTrigger aria-label="Input"><SelectValue placeholder="Select an input node" /></SelectTrigger>
+                      <SelectContent>
+                        {allowedInputNodes.map((node) => <SelectItem key={node.id} value={node.id}>{node.name} · {node.host.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
                 {selectedDefinition && (
                   <div className="space-y-4">
@@ -234,7 +272,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
               <p className="text-xs text-muted-foreground">Installation starts immediately on {host.name}.</p>
               <div className="flex items-center gap-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                <Button type="submit" className="bg-violet-600 hover:bg-violet-500" disabled={!selectedDefinition || nodesStore.isInstalling || host.status === "offline"}>
+                <Button type="submit" className="bg-violet-600 hover:bg-violet-500" disabled={!canInstall || nodesStore.isInstalling || host.status === "offline"}>
                   {nodesStore.isInstalling ? "Installing…" : "Install node"}
                 </Button>
               </div>

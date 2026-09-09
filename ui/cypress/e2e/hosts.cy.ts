@@ -108,9 +108,24 @@ describe("Hosts page", () => {
     cy.get('[data-slot="select-item"]').contains("Translator").click()
     cy.contains("label", "Source language").should("be.visible")
     cy.contains("label", "Target language").should("be.visible")
+    cy.get('button[aria-label="Input"]').should("contain.text", "Live transcriber · studio-host").click()
+    cy.get('[data-slot="select-content"]').filter(":visible").within(() => {
+      cy.contains('[data-slot="select-item"]', "Live transcriber · studio-host").should("be.visible")
+      cy.contains('[data-slot="select-item"]', "Lobby transcriber · studio-host").should("be.visible")
+      cy.contains("Studio microphone").should("not.exist")
+    })
+    cy.get('[data-slot="select-item"]').contains("Live transcriber · studio-host").click()
 
     cy.get('button[aria-label="Node type"]').click()
     cy.get('[data-slot="select-item"]').contains("Transcriber").click()
+    cy.get('button[aria-label="Input"]').should("contain.text", "Studio microphone · studio-host").click()
+    cy.get('[data-slot="select-content"]').filter(":visible").within(() => {
+      cy.contains('[data-slot="select-item"]', "Studio microphone · studio-host").should("be.visible")
+      cy.contains('[data-slot="select-item"]', "Lobby microphone · studio-host").should("be.visible")
+      cy.contains("Live transcriber").should("not.exist")
+      cy.contains("English → Spanish").should("not.exist")
+    })
+    cy.get('[data-slot="select-item"]').contains("Lobby microphone · studio-host").click()
     cy.get("#node-name").should("have.value", "live-transcriber")
     cy.get("#node-setting-model").should("have.value", "large-v3")
     cy.get("#node-setting-language").should("have.value", "en")
@@ -120,7 +135,7 @@ describe("Hosts page", () => {
     cy.wait("@installNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
       expect(request.body).to.deep.equal({
-        inputNodeId: null,
+        inputNodeId: "30000000-0000-4000-8000-000000000006",
         type: "transcriber",
         name: "live-transcriber",
         enabled: true,
