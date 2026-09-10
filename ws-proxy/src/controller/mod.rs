@@ -40,13 +40,6 @@ pub struct Controller {
     stop: watch::Sender<bool>,
     ready: watch::Receiver<bool>,
 }
-#[derive(Clone)]
-struct Pending {
-    identity: ApplyIdentity,
-    next: Instant,
-    delay: Duration,
-    applied: bool,
-}
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum Key {
     Host(String, String),
@@ -106,10 +99,7 @@ async fn reconcile_host(
     if !state.synced() {
         return Ok(Action::requeue(Duration::from_secs(1)));
     }
-    state
-        .reconcile_host(&host.name_any(), &host.uid().unwrap_or_default())
-        .await
-        .map_err(ReconcileError)?;
+    state.reconcile_host(&host).await.map_err(ReconcileError)?;
     Ok(Action::await_change())
 }
 
@@ -121,17 +111,8 @@ async fn reconcile_node(
     if !state.synced() {
         return Ok(Action::requeue(Duration::from_secs(1)));
     }
-    let uid = node.uid().unwrap_or_default();
-    state
-        .reconcile_node(&node.name_any(), &uid)
-        .await
-        .map_err(ReconcileError)?;
-    Ok(state
-        .pending
-        .get(&uid)
-        .filter(|p| !p.applied)
-        .map(|p| Action::requeue(p.next.saturating_duration_since(Instant::now())))
-        .unwrap_or_else(Action::await_change))
+    state.reconcile_node(&node).await.map_err(ReconcileError)?;
+    Ok(Action::await_change())
 }
 
 fn predicate<K: Resource>(resource: &K) -> Option<u64> {
@@ -148,8 +129,6 @@ struct State {
     nodes_synced: bool,
     triggers: Triggers,
     connections: Connections,
-    // TODO: DROP IT ENTIRELY!!! this is unnecessary for controller
-    pending: HashMap<String, Pending>,
 }
 impl Controller {
     pub fn start(client: Client, namespace: &str) -> (Self, JoinHandle<()>) {
@@ -174,7 +153,6 @@ impl Controller {
                     nodes: node_tx,
                 },
                 connections: Connections::default(),
-                pending: HashMap::new(),
             }),
         });
         let (hosts, host_writer) = reflector::store();
@@ -302,10 +280,7 @@ impl Controller {
                 }
             };
             for host in hosts {
-                if let Err(error) = state
-                    .reconcile_host(&host.name_any(), &host.uid().unwrap_or_default())
-                    .await
-                {
+                if let Err(error) = state.reconcile_host(&host).await {
                     eprintln!("host shutdown: {error}");
                 }
             }
@@ -394,11 +369,6 @@ impl State {
                 self.close(&connection.uid);
             }
         }
-        self.pending.retain(|uid, pending| {
-            nodes.iter().any(|node| {
-                node.name_any() == pending.identity.target.name && node.uid().as_ref() == Some(uid)
-            })
-        });
         self.triggers.extend(
             hosts
                 .iter()
@@ -446,7 +416,6 @@ impl State {
                 self.resync = true;
             }
             watcher::Event::Delete(node) => {
-                self.pending.remove(&node.uid().unwrap_or_default());
                 self.dependents(&node.name_any()).await?;
             }
             watcher::Event::Apply(_) | watcher::Event::InitApply(_) => {}
@@ -470,7 +439,6 @@ impl State {
     fn close(&mut self, uid: &str) {
         if let Some(host) = self.connections.close(uid) {
             self.triggers.insert(Key::Host(host.name, uid.into()));
-            self.pending.retain(|_, p| p.identity.host_uid != uid);
             self.resync = true;
         }
     }
@@ -484,7 +452,7 @@ impl State {
         let host = self.hosts_api.get_opt(&identity.name).await;
         self.close(uid);
         if let Some(host) = host?.filter(|host| current_session(host, uid, session)) {
-            self.reconcile_host(&host.name_any(), uid).await?;
+            self.reconcile_host(&host).await?;
         }
         Ok(())
     }
@@ -609,28 +577,24 @@ impl State {
         }
         Ok(())
     }
-    // TODO: host can be passed as resource to the method directly, achieving simplification. It is guaranteed
-    async fn reconcile_host(&mut self, name: &str, uid: &str) -> Result<(), Error> {
-        let Some(mut host) = self
-            .hosts_api
-            .get_opt(name)
-            .await?
-            .filter(|h| h.uid().as_deref() == Some(uid))
-        else {
-            self.close(uid);
-            return Ok(());
-        };
+    async fn reconcile_host(&mut self, host: &SuntitleHost) -> Result<(), Error> {
+        let name = host.name_any();
+        let uid = host.uid().ok_or("host UID missing")?;
+        let mut host = host.clone();
         if host.metadata.deletion_timestamp.is_some() {
-            self.close(uid);
+            self.close(&uid);
             return Ok(());
         }
         if !host.finalizers().iter().any(|f| f == HOST_FINALIZER) {
             let mut finalizers = host.finalizers().to_vec();
             finalizers.push(HOST_FINALIZER.into());
-            host = self.hosts_api.patch(name, &PatchParams::default(), &Patch::Merge(json!({"metadata":{"resourceVersion":host.resource_version(),"finalizers":finalizers}}))).await?;
+            host = self.hosts_api.patch(&name, &PatchParams::default(), &Patch::Merge(json!({"metadata":{"resourceVersion":host.resource_version(),"finalizers":finalizers}}))).await?;
+            if host.metadata.deletion_timestamp.is_some() {
+                return Ok(());
+            }
         }
         let generation = host.metadata.generation.unwrap_or(1);
-        let mut previous = host.status.clone();
+        let previous = host.status.clone();
         let status = host.status.get_or_insert_default();
         let updated = status.conditions.iter().any(|c| {
             c.type_ == "Updated" && c.status == "True" && c.observed_generation == Some(generation)
@@ -644,13 +608,6 @@ impl State {
                 reason: "Reconciling".into(),
                 message: "Applying host configuration.".into(),
             });
-            self.host_status(&mut host, &previous).await?;
-            host = self.hosts_api.get(name).await?;
-            if host.uid().as_deref() != Some(uid) || host.metadata.generation != Some(generation) {
-                return Err("host changed during reconciliation".into());
-            }
-            previous = host.status.clone();
-            let status = host.status.get_or_insert_default();
             status.conditions.push(Condition {
                 last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
                 observed_generation: Some(generation),
@@ -663,7 +620,7 @@ impl State {
         let presence = if self.active_session(&host).is_some() {
             Presence::Online
         } else {
-            self.close(uid);
+            self.close(&uid);
             Presence::Offline
         };
         let status = host.status.get_or_insert_default();
@@ -677,7 +634,6 @@ impl State {
         reason: &str,
         message: &str,
     ) -> Result<(), Error> {
-        self.pending.remove(&node.uid().unwrap_or_default());
         let previous = node.status.clone();
         let status = node.status.get_or_insert_default();
         status.phase = Some(NodePhase::Failed);
@@ -700,19 +656,10 @@ impl State {
         });
         self.node_status(node, &previous).await
     }
-    // TODO: node can be passed as resource to the method directly, achieving simplification. It is guaranteed
-    async fn reconcile_node(&mut self, name: &str, uid: &str) -> Result<(), Error> {
-        let Some(mut node) = self
-            .nodes_api
-            .get_opt(name)
-            .await?
-            .filter(|n| n.uid().as_deref() == Some(uid))
-        else {
-            self.pending.remove(uid);
-            return Ok(());
-        };
+    async fn reconcile_node(&mut self, node: &SuntitleNode) -> Result<(), Error> {
+        let name = node.name_any();
+        let mut node = node.clone();
         if node.metadata.deletion_timestamp.is_some() {
-            self.pending.remove(uid);
             return Ok(());
         }
         let Some(host) = self.hosts_api.get_opt(&node.spec.host_ref.name).await? else {
@@ -724,15 +671,6 @@ impl State {
                 )
                 .await;
         };
-        if host.metadata.deletion_timestamp.is_some() {
-            return self
-                .invalid(
-                    &mut node,
-                    "HostTerminating",
-                    "Referenced host is terminating.",
-                )
-                .await;
-        }
         let host_uid = host.uid().ok_or("host UID missing")?;
         let owner = host
             .controller_owner_ref(&())
@@ -758,7 +696,7 @@ impl State {
                 )
                 .await;
         }
-        self.reconcile_host(&host.name_any(), &host_uid).await?;
+        self.reconcile_host(&host).await?;
         let mut owners = node.owner_references().to_vec();
         if controllers.is_empty() {
             owners.push(owner);
@@ -768,7 +706,7 @@ impl State {
             finalizers.push(NODE_FINALIZER.into());
         }
         if owners != node.owner_references() || finalizers != node.finalizers() {
-            node = self.nodes_api.patch(name, &PatchParams::default(), &Patch::Merge(json!({"metadata":{"resourceVersion":node.resource_version(),"ownerReferences":owners,"finalizers":finalizers}}))).await?;
+            node = self.nodes_api.patch(&name, &PatchParams::default(), &Patch::Merge(json!({"metadata":{"resourceVersion":node.resource_version(),"ownerReferences":owners,"finalizers":finalizers}}))).await?;
             if node.metadata.deletion_timestamp.is_some() {
                 return Ok(());
             }
@@ -794,7 +732,6 @@ impl State {
         let previous = node.status.clone();
         let status = node.status.get_or_insert_default();
         let Some(session_id) = self.active_session(&host) else {
-            self.pending.remove(uid);
             status.phase = Some(NodePhase::Disconnected);
             status.conditions.push(Condition {
                 last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
@@ -814,15 +751,9 @@ impl State {
             });
             return self.node_status(&mut node, &previous).await;
         };
-        let matches = self.pending.get(uid).is_some_and(|p| {
-            p.identity.generation == generation
-                && p.identity.session_id == session_id
-                && p.identity.restart_token == node.spec.restart_token
-        });
-        if matches && self.pending[uid].applied {
-            return Ok(());
-        }
-        if matches && self.pending[uid].next > Instant::now() {
+        let already_applied = status.observed_generation == Some(generation)
+            && status.acknowledged_restart_token == node.spec.restart_token;
+        if already_applied {
             return Ok(());
         }
         status.phase = Some(NodePhase::Pending);
@@ -844,34 +775,17 @@ impl State {
             message: "Waiting for runtime acknowledgement.".into(),
         });
         self.node_status(&mut node, &previous).await?;
-        let pending = if matches {
-            self.pending.get_mut(uid).unwrap()
-        } else {
-            self.pending.insert(
-                uid.into(),
-                Pending {
-                    identity: ApplyIdentity {
-                        target: identity(&node.metadata)?,
-                        host_uid: host_uid.clone(),
-                        session_id,
-                        generation,
-                        restart_token: node.spec.restart_token.clone(),
-                        operation_id: uuid::Uuid::new_v4().to_string(),
-                    },
-                    next: Instant::now(),
-                    delay: Duration::from_secs(1),
-                    applied: false,
-                },
-            );
-            self.pending.get_mut(uid).unwrap()
-        };
         let message = RegistrationServerMessage::Apply {
-            identity: pending.identity.clone(),
+            identity: ApplyIdentity {
+                target: identity(&node.metadata)?,
+                host_uid: host_uid.clone(),
+                session_id: session_id.clone(),
+                generation,
+                restart_token: node.spec.restart_token.clone(),
+                operation_id: uuid::Uuid::new_v4().to_string(),
+            },
             spec: Box::new(node.spec),
         };
-        pending.next = Instant::now() + pending.delay;
-        pending.delay = (pending.delay * 2).min(Duration::from_secs(30));
-        let session_id = pending.identity.session_id.clone();
         self.dispatch(&host_uid, &session_id, message);
         Ok(())
     }
@@ -919,10 +833,6 @@ impl State {
             } => {
                 if identity.host_uid != host_uid
                     || identity.session_id != session_id
-                    || self
-                        .pending
-                        .get(&identity.target.uid)
-                        .is_none_or(|p| p.identity != identity)
                 {
                     return Ok(());
                 }
@@ -1000,11 +910,8 @@ impl State {
                     .into(),
                 });
                 self.node_status(&mut node, &previous).await?;
-                let pending = self.pending.get_mut(&identity.target.uid).unwrap();
-                pending.applied = success;
                 if !success {
                     // A new attempt MUST remain distinct from a duplicate delivery.
-                    pending.identity.operation_id = uuid::Uuid::new_v4().to_string();
                     self.triggers
                         .insert(Key::Node(identity.target.name, identity.target.uid));
                 }
@@ -1090,7 +997,6 @@ mod tests {
                 nodes: mpsc::unbounded_channel().0,
             },
             connections: Connections::default(),
-            pending: HashMap::new(),
         }
     }
     fn node() -> SuntitleNode {
