@@ -406,6 +406,31 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dispatch:
+                description: Desired dispatch and its latest runtime acknowledgement.
+                nullable: true
+                properties:
+                  generation:
+                    format: int64
+                    type: integer
+                  operation:
+                    enum:
+                    - apply
+                    - remove
+                    type: string
+                  operationId:
+                    type: string
+                  sessionId:
+                    nullable: true
+                    type: string
+                  success:
+                    nullable: true
+                    type: boolean
+                required:
+                - generation
+                - operation
+                - operationId
+                type: object
               message:
                 description: Human-readable explanation of the current node state.
                 nullable: true

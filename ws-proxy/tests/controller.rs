@@ -29,6 +29,7 @@ async fn connect(controller: &Controller, name: &str) -> Connection {
         .await
         .unwrap()
 }
+
 async fn apply(connection: &mut Connection) -> ApplyIdentity {
     let message = tokio::time::timeout(Duration::from_secs(15), connection.outbound.recv())
         .await
@@ -39,7 +40,9 @@ async fn apply(connection: &mut Connection) -> ApplyIdentity {
     };
     identity
 }
+
 async fn ack(
+    nodes: &Api<SuntitleNode>,
     controller: &Controller,
     connection: &Connection,
     identity: ApplyIdentity,
@@ -50,14 +53,46 @@ async fn ack(
             &connection.host.uid,
             &connection.session_id,
             wire(RegistrationClientMessage::Acknowledgement {
-                identity,
+                identity: identity.clone(),
                 operation: Operation::Apply,
                 success,
                 message: None,
             }),
         )
         .await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let Some(node) = nodes.get_opt(&identity.target.name).await.unwrap() else {
+                break;
+            };
+            let Some(dispatch) = node
+                .status
+                .as_ref()
+                .and_then(|status| status.dispatch.as_ref())
+            else {
+                break;
+            };
+            if dispatch.operation_id != identity.operation_id
+                || dispatch.operation != Operation::Apply
+                || dispatch.success != Some(success)
+            {
+                break;
+            }
+            let status = node.status.unwrap();
+            if (!success && matches!(status.phase, Some(NodePhase::Failed)))
+                || (success
+                    && status.observed_generation == Some(identity.generation)
+                    && status.reporting_session.as_deref() == Some(&identity.session_id))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
 }
+
 async fn quiet(connection: &mut Connection) {
     assert!(
         tokio::time::timeout(Duration::from_millis(1500), connection.outbound.recv())
@@ -90,16 +125,33 @@ async fn controller_apply_recovery_acceptance() {
         .unwrap();
     let (mut controller, mut task) = Controller::start(client.clone(), "suntitle");
     let result = AssertUnwindSafe(async {
-        tokio::time::timeout(Duration::from_secs(15), controller.synchronized())
-            .await
-            .unwrap()
-            .unwrap();
         let mut connection = connect(&controller, &name).await;
         let first = apply(&mut connection).await;
-        let retry = apply(&mut connection).await;
+        controller
+            .report(
+                &connection.host.uid,
+                &connection.session_id,
+                RegistrationClientMessage::Heartbeat {
+                    host_uid: connection.host.uid.clone(),
+                    session_id: connection.session_id.clone(),
+                },
+            )
+            .await;
+        quiet(&mut connection).await;
+        for _ in 0..4 {
+            quiet(&mut connection).await;
+        }
         assert_eq!(
-            first, retry,
-            "lost acknowledgements MUST retain operation identity"
+            nodes
+                .get(&name)
+                .await
+                .unwrap()
+                .status
+                .unwrap()
+                .dispatch
+                .unwrap()
+                .operation_id,
+            first.operation_id
         );
         let node = nodes.get(&name).await.unwrap();
         assert!(node.finalizers().iter().any(|f| f == NODE_FINALIZER));
@@ -114,6 +166,10 @@ async fn controller_apply_recovery_acceptance() {
                 .any(|f| f == HOST_FINALIZER)
         );
         for stale in [
+            ApplyIdentity {
+                operation_id: "unknown".into(),
+                ..first.clone()
+            },
             ApplyIdentity {
                 generation: first.generation + 1,
                 ..first.clone()
@@ -130,7 +186,7 @@ async fn controller_apply_recovery_acceptance() {
                 ..first.clone()
             },
         ] {
-            ack(&controller, &connection, stale, true).await;
+            ack(&nodes, &controller, &connection, stale, true).await;
             assert!(
                 nodes
                     .get(&name)
@@ -142,13 +198,13 @@ async fn controller_apply_recovery_acceptance() {
                     .is_none()
             );
         }
-        ack(&controller, &connection, first.clone(), true).await;
+        ack(&nodes, &controller, &connection, first.clone(), true).await;
         let applied = nodes.get(&name).await.unwrap();
         assert_eq!(
             applied.status.as_ref().unwrap().observed_generation,
             Some(first.generation)
         );
-        ack(&controller, &connection, first.clone(), true).await;
+        ack(&nodes, &controller, &connection, first.clone(), true).await;
         assert_eq!(
             applied.resource_version(),
             nodes.get(&name).await.unwrap().resource_version()
@@ -176,7 +232,7 @@ async fn controller_apply_recovery_acceptance() {
         let restarted = apply(&mut connection).await;
         assert_eq!(restarted.restart_token.as_deref(), Some("latest-restart"));
         assert!(restarted.generation > first.generation);
-        ack(&controller, &connection, first.clone(), true).await;
+        ack(&nodes, &controller, &connection, first.clone(), true).await;
         assert_eq!(
             nodes
                 .get(&name)
@@ -187,10 +243,19 @@ async fn controller_apply_recovery_acceptance() {
                 .observed_generation,
             Some(first.generation)
         );
-        ack(&controller, &connection, restarted.clone(), false).await;
+        ack(&nodes, &controller, &connection, restarted.clone(), false).await;
+        quiet(&mut connection).await;
+        nodes
+            .patch(
+                &name,
+                &PatchParams::default(),
+                &Patch::Merge(json!({"spec":{"restartToken":"retry-restart"}})),
+            )
+            .await
+            .unwrap();
         let retry = apply(&mut connection).await;
         assert_ne!(retry.operation_id, restarted.operation_id);
-        ack(&controller, &connection, retry.clone(), true).await;
+        ack(&nodes, &controller, &connection, retry.clone(), true).await;
         quiet(&mut connection).await;
 
         let store = ws_proxy::kubernetes::store::ResourceStore::new(client.clone(), "suntitle");
@@ -209,7 +274,14 @@ async fn controller_apply_recovery_acceptance() {
         let response = actix_web::test::call_service(&app, request).await;
         assert!(response.status().is_success());
         let disabled_identity = apply(&mut connection).await;
-        ack(&controller, &connection, disabled_identity.clone(), true).await;
+        ack(
+            &nodes,
+            &controller,
+            &connection,
+            disabled_identity.clone(),
+            true,
+        )
+        .await;
         assert!(matches!(
             nodes.get(&name).await.unwrap().status.unwrap().phase,
             Some(NodePhase::Disabled)
@@ -228,8 +300,8 @@ async fn controller_apply_recovery_acceptance() {
         let resent = apply(&mut replacement).await;
         assert_ne!(resent.session_id, retry.session_id);
         assert_eq!(resent.generation, disabled_identity.generation);
-        ack(&controller, &connection, retry, true).await;
-        ack(&controller, &replacement, resent, true).await;
+        ack(&nodes, &controller, &connection, retry, true).await;
+        ack(&nodes, &controller, &replacement, resent, true).await;
         quiet(&mut replacement).await;
         controller
             .disconnect(&replacement.host.uid, &replacement.session_id)
@@ -240,10 +312,9 @@ async fn controller_apply_recovery_acceptance() {
         let (new_controller, new_task) = Controller::start(client.clone(), "suntitle");
         controller = new_controller;
         task = new_task;
-        controller.synchronized().await.unwrap();
         let mut fresh = connect(&controller, &name).await;
         let identity = apply(&mut fresh).await;
-        ack(&controller, &fresh, identity, true).await;
+        ack(&nodes, &controller, &fresh, identity, true).await;
         quiet(&mut fresh).await;
 
         hosts
@@ -299,7 +370,7 @@ async fn controller_apply_recovery_acceptance() {
                 },
             )
             .await;
-        ack(&controller, &renewed, identity, true).await;
+        ack(&nodes, &controller, &renewed, identity, true).await;
         let status = hosts.get(&name).await.unwrap().status.unwrap();
         assert_eq!(status.session_id.as_deref(), Some("externally-replaced"));
         assert_eq!(
@@ -324,7 +395,7 @@ async fn controller_apply_recovery_acceptance() {
     if !task.is_finished() {
         task.await.unwrap();
     }
-    // Test resources MUST be removed explicitly; deletion cleanup belongs to phase 4.
+    // Failed-test cleanup MUST also work after the controller stops.
     nodes
         .patch(
             &name,
@@ -343,6 +414,174 @@ async fn controller_apply_recovery_acceptance() {
         .await
         .unwrap();
     hosts.delete(&name, &DeleteParams::default()).await.unwrap();
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn remove(connection: &mut Connection) -> ApplyIdentity {
+    let message = tokio::time::timeout(Duration::from_secs(15), connection.outbound.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let RegistrationServerMessage::Remove { identity } = wire(message) else {
+        panic!("expected remove")
+    };
+    identity
+}
+
+async fn cleanup_ack(
+    nodes: &Api<SuntitleNode>,
+    controller: &Controller,
+    connection: &Connection,
+    identity: ApplyIdentity,
+    success: bool,
+) {
+    controller
+        .report(
+            &connection.host.uid,
+            &connection.session_id,
+            wire(RegistrationClientMessage::Acknowledgement {
+                identity: identity.clone(),
+                operation: Operation::Remove,
+                success,
+                message: None,
+            }),
+        )
+        .await;
+    if success {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let Some(node) = nodes.get_opt(&identity.target.name).await.unwrap() else {
+                    break;
+                };
+                if !node.finalizers().iter().any(|f| f == NODE_FINALIZER) {
+                    break;
+                }
+                let dispatch = node.status.as_ref().unwrap().dispatch.as_ref().unwrap();
+                if dispatch.operation_id != identity.operation_id || dispatch.success != Some(true)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires bootstrapped local Kine-backed Kubernetes and proxy kubeconfig"]
+async fn controller_deletion_acceptance() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let client = client_from_kubeconfig(&root.join("pki/suntitle-proxy.kubeconfig"))
+        .await
+        .unwrap();
+    let hosts: Api<SuntitleHost> = Api::namespaced(client.clone(), "suntitle");
+    let nodes: Api<SuntitleNode> = Api::namespaced(client.clone(), "suntitle");
+    let name = format!("cleanup-test-{}", uuid::Uuid::new_v4());
+    let node_names = [format!("{name}-online"), format!("{name}-offline")];
+    let (mut controller, mut task) = Controller::start(client.clone(), "suntitle");
+    let result = AssertUnwindSafe(async {
+        let mut connection = connect(&controller, &name).await;
+        let spec: SuntitleNodeSpec = serde_json::from_value(json!({"hostRef":{"name":name},"name":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}})).unwrap();
+        nodes.create(&PostParams::default(), &SuntitleNode::new(&node_names[0], spec.clone())).await.unwrap();
+        let applied = apply(&mut connection).await;
+        ack(&nodes, &controller, &connection, applied.clone(), true).await;
+        let store = ws_proxy::kubernetes::store::ResourceStore::new(client.clone(), "suntitle");
+        let app = actix_web::test::init_service(actix_web::App::new()
+            .app_data(actix_web::web::Data::new(store))
+            .service(ws_proxy::api::nodes::delete_node)).await;
+        nodes.patch(&node_names[0], &PatchParams::default(), &Patch::Merge(json!({"metadata":{"finalizers":[NODE_FINALIZER,"test.suntitle.io/hold"]}}))).await.unwrap();
+        let response = actix_web::test::call_service(&app, actix_web::test::TestRequest::delete()
+            .uri(&format!("/nodes/{}", node_names[0])).to_request()).await;
+        assert_eq!(response.status(), actix_web::http::StatusCode::ACCEPTED);
+        let first = remove(&mut connection).await;
+        quiet(&mut connection).await;
+        ack(&nodes, &controller, &connection, first.clone(), true).await;
+        cleanup_ack(&nodes, &controller, &connection, ApplyIdentity { operation_id: "wrong".into(), ..first.clone() }, true).await;
+        assert!(nodes.get(&node_names[0]).await.unwrap().finalizers().iter().any(|f| f == NODE_FINALIZER));
+        cleanup_ack(&nodes, &controller, &connection, first.clone(), false).await;
+        assert!(nodes.get_opt(&node_names[0]).await.unwrap().is_some());
+        quiet(&mut connection).await;
+        connection = connect(&controller, &name).await;
+        let retry = remove(&mut connection).await;
+        assert_ne!(retry.operation_id, first.operation_id);
+        cleanup_ack(&nodes, &controller, &connection, retry.clone(), true).await;
+        cleanup_ack(&nodes, &controller, &connection, retry, true).await;
+        assert_eq!(nodes.get(&node_names[0]).await.unwrap().finalizers(), &["test.suntitle.io/hold"]);
+        nodes.patch(&node_names[0], &PatchParams::default(), &Patch::Merge(json!({"metadata":{"finalizers":[]}}))).await.unwrap();
+        assert!(nodes.get_opt(&node_names[0]).await.unwrap().is_none());
+
+        nodes.create(&PostParams::default(), &SuntitleNode::new(&node_names[1], spec)).await.unwrap();
+        let applied = apply(&mut connection).await;
+        ack(&nodes, &controller, &connection, applied, true).await;
+        controller.disconnect(&connection.host.uid, &connection.session_id).await;
+        hosts.delete(&name, &DeleteParams::default()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if nodes.get(&node_names[1]).await.unwrap().metadata.deletion_timestamp.is_some() { break; }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await.unwrap();
+        assert!(hosts.get(&name).await.unwrap().finalizers().iter().any(|f| f == HOST_FINALIZER));
+        assert!(nodes.get(&node_names[1]).await.unwrap().finalizers().iter().any(|f| f == NODE_FINALIZER));
+        controller.shutdown().await;
+        (&mut task).await.unwrap();
+        let (replacement, replacement_task) = Controller::start(client.clone(), "suntitle");
+        controller = replacement;
+        task = replacement_task;
+        let mut cleanup = connect(&controller, &name).await;
+        let removal = remove(&mut cleanup).await;
+        assert_eq!(removal.host_uid, connection.host.uid);
+        cleanup_ack(&nodes, &controller, &cleanup, removal, true).await;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if hosts.get_opt(&name).await.unwrap().is_none() { break; }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await.unwrap();
+        assert!(nodes.get_opt(&node_names[1]).await.unwrap().is_none());
+        assert!(*cleanup.closed.borrow());
+        let recreated = connect(&controller, &name).await;
+        assert_ne!(recreated.host.uid, connection.host.uid);
+    }).catch_unwind().await;
+    controller.shutdown().await;
+    if !task.is_finished() {
+        task.await.unwrap();
+    }
+    for node_name in &node_names {
+        if nodes.get_opt(node_name).await.unwrap().is_some() {
+            nodes
+                .patch(
+                    node_name,
+                    &PatchParams::default(),
+                    &Patch::Merge(json!({"metadata":{"finalizers":[]}})),
+                )
+                .await
+                .unwrap();
+            if nodes.get_opt(node_name).await.unwrap().is_some() {
+                nodes
+                    .delete(node_name, &DeleteParams::default())
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+    if hosts.get_opt(&name).await.unwrap().is_some() {
+        hosts
+            .patch(
+                &name,
+                &PatchParams::default(),
+                &Patch::Merge(json!({"metadata":{"finalizers":[]}})),
+            )
+            .await
+            .unwrap();
+        if hosts.get_opt(&name).await.unwrap().is_some() {
+            hosts.delete(&name, &DeleteParams::default()).await.unwrap();
+        }
+    }
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }

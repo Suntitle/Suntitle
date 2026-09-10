@@ -267,6 +267,18 @@ async fn register(config: &Config) -> rootcause::Result<bool> {
                                 if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace || spec.host_ref.name != host.name || identity.restart_token != spec.restart_token { break; }
                                 manager.apply(identity, *spec).await
                             },
+                            RegistrationServerMessage::Remove { identity } => {
+                                if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace { break; }
+                                let result = manager.remove(&identity).await;
+                                let acknowledgement = RegistrationClientMessage::Acknowledgement {
+                                    identity, operation: Operation::Remove, success: result.is_ok(), message: result.err(),
+                                };
+                                if let Err(error) = send_client_message(&mut write, &acknowledgement).await {
+                                    failure = Some(format!("failed to report cleanup: {error}"));
+                                    break;
+                                }
+                                Vec::new()
+                            },
                             RegistrationServerMessage::Error { message } => {
                                 failure = Some(format!("proxy error: {message}"));
                                 break;

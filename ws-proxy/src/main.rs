@@ -43,14 +43,7 @@ async fn main() -> std::io::Result<()> {
     let client = ws_proxy::kubernetes::client_from_kubeconfig(&args.kubeconfig)
         .await
         .map_err(std::io::Error::other)?;
-    let (mut controller, task) = Controller::start(client, &args.namespace);
-    tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        controller.synchronized(),
-    )
-    .await
-    .map_err(std::io::Error::other)?
-    .map_err(std::io::Error::other)?;
+    let (controller, task) = Controller::start(client, &args.namespace);
     let routes = proxy_with_controller(Some(controller.clone())).await;
     eprintln!("Suntitle WebSocket proxy listening on 0.0.0.0:3030");
     tokio::select! {
