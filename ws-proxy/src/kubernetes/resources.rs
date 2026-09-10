@@ -98,6 +98,7 @@ fn enabled_default() -> bool {
 }
 
 impl SuntitleHost {
+
     pub fn conditions(&self) -> &[Condition] {
         self.status
             .as_ref()
@@ -107,6 +108,7 @@ impl SuntitleHost {
 }
 
 impl SuntitleNode {
+
     pub fn conditions(&self) -> &[Condition] {
         self.status
             .as_ref()
@@ -150,6 +152,7 @@ pub enum Presence {
 }
 
 impl Presence {
+
     pub fn ready_condition(&self, generation: i64) -> Condition {
         Condition {
             last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
@@ -181,9 +184,92 @@ pub enum NodePhase {
     Terminating,
 }
 
+impl NodePhase {
+
+    pub fn from_acknowledgement(success: bool, enabled: bool) -> Self {
+        match (success, enabled) {
+            (true, true) => Self::Running,
+            (true, false) => Self::Disabled,
+            (false, _) => Self::Failed,
+        }
+    }
+
+    pub fn ready_condition(&self, generation: i64, message: Option<&str>) -> Condition {
+        self.condition("Ready", generation, message)
+    }
+
+    pub fn updated_condition(&self, generation: i64, message: Option<&str>) -> Condition {
+        self.condition("Updated", generation, message)
+    }
+
+    fn condition(&self, type_: &str, generation: i64, message: Option<&str>) -> Condition {
+        let updated = type_ == "Updated";
+        let (status, reason, default_message) = match self {
+            Self::Running | Self::Disabled => (
+                if updated || matches!(self, Self::Running) {
+                    "True"
+                } else {
+                    "False"
+                },
+                "DesiredStateApplied",
+                if updated {
+                    "Runtime acknowledged the desired specification."
+                } else {
+                    "Runtime reported its current state."
+                },
+            ),
+            Self::Failed => (
+                "False",
+                "RuntimeFailed",
+                if updated {
+                    "Runtime could not apply the desired specification."
+                } else {
+                    "Runtime reported its current state."
+                },
+            ),
+            Self::Pending => (
+                "False",
+                "Reconciling",
+                "Waiting for runtime acknowledgement.",
+            ),
+            Self::Disconnected => (
+                "False",
+                if updated {
+                    "Reconciling"
+                } else {
+                    "HostOffline"
+                },
+                "Waiting for host registration.",
+            ),
+            Self::Terminating => ("False", "Terminating", "Node is terminating."),
+        };
+        Condition {
+            last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
+            observed_generation: Some(generation),
+            type_: type_.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: message.unwrap_or(default_message).into(),
+        }
+    }
+}
+
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchStatus {
+    pub generation: i64,
+    pub operation: crate::registration::Operation,
+    pub operation_id: String,
+    pub session_id: Option<String>,
+    pub success: Option<bool>,
+}
+
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeStatus {
+    /// Desired dispatch and its latest runtime acknowledgement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<DispatchStatus>,
     /// Observed stage of the node lifecycle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phase: Option<NodePhase>,
@@ -251,6 +337,7 @@ pub fn crd_yaml() -> Result<String, serde_yaml::Error> {
 macro_rules! openapi_schema {
     ($($ty:ty),+ $(,)?) => {$(
         impl utoipa::PartialSchema for $ty {
+
             fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
                 let mut settings = schemars::generate::SchemaSettings::draft2020_12();
                 settings.inline_subschemas = true;

@@ -22,6 +22,7 @@ pub struct Envelope<T> {
     pub message: T,
 }
 impl<T> Envelope<T> {
+
     pub fn new(message: T) -> Self {
         Self {
             protocol_version: 1,
@@ -55,10 +56,11 @@ pub enum RegistrationClientMessage {
         message: Option<String>,
     },
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
     Apply,
+    Remove,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,10 @@ pub enum RegistrationServerMessage {
         identity: ApplyIdentity,
         spec: Box<SuntitleNodeSpec>,
     },
+    Remove {
+        #[serde(flatten)]
+        identity: ApplyIdentity,
+    },
     Error {
         message: String,
     },
@@ -85,6 +91,7 @@ pub enum RegistrationServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn apply_acknowledgement_round_trip_preserves_complete_identity() {
         let identity = ApplyIdentity {

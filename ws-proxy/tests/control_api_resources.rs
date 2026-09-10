@@ -164,7 +164,9 @@ async fn resource_api_acceptance() {
         expect(&store, Method::POST, "/api/v1/nodes/missing-node/restart", None, 404).await;
         let mut owners = initial["metadata"]["ownerReferences"].clone(); owners[0]["uid"] = json!("old-host-uid");
         nodes.patch(name, &PatchParams::default(), &Patch::Merge(&json!({"metadata":{"ownerReferences":owners,"finalizers":[NODE_FINALIZER]}}))).await.unwrap();
-        nodes.delete(name, &DeleteParams::default()).await.unwrap();
+        expect(&store, Method::DELETE, &uri, None, 202).await;
+        expect(&store, Method::DELETE, &uri, None, 202).await;
+        expect(&store, Method::DELETE, "/api/v1/nodes/missing-node", None, 404).await;
         let terminating = expect(&store, Method::POST, &restart_uri, None, 202).await;
         assert!(terminating["metadata"]["deletionTimestamp"].is_string());
         assert_eq!(terminating["metadata"]["ownerReferences"], owners);

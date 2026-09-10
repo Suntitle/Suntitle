@@ -3,7 +3,7 @@ use crate::kubernetes::{
     resources::SuntitleNode,
     store::{NodeList, NodeUpdate, ResourceStore},
 };
-use actix_web::{HttpResponse, get, post, put, web};
+use actix_web::{HttpResponse, delete, get, post, put, web};
 
 #[utoipa::path(get, path = "/nodes", tag = "Nodes", operation_id = "listNodes",
     responses((status = 200, body = NodeList), (status = 503, body = ErrorEnvelope)))]
@@ -46,4 +46,17 @@ pub async fn restart_node(
     name: web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
     Ok(HttpResponse::Accepted().json(store.restart(&name).await?))
+}
+
+#[utoipa::path(delete, path = "/nodes/{name}", tag = "Nodes", operation_id = "deleteNode",
+    description = "Request asynchronous removal. Terminating resources remain visible until runtime cleanup is acknowledged, including while the host is offline.",
+    params(("name" = String, Path)),
+    responses((status = 202, description = "Deletion requested"), (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)))]
+#[delete("/nodes/{name}")]
+pub async fn delete_node(
+    store: web::Data<ResourceStore>,
+    name: web::Path<String>,
+) -> Result<HttpResponse, ApiError> {
+    store.delete(&name).await?;
+    Ok(HttpResponse::Accepted().finish())
 }

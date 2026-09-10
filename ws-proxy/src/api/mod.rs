@@ -33,7 +33,8 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
         nodes::list_nodes,
         nodes::get_node,
         nodes::update_node,
-        nodes::restart_node
+        nodes::restart_node,
+        nodes::delete_node
     ),
     components(
         schemas(
@@ -66,6 +67,7 @@ pub struct ApiDoc;
 struct SecurityAddon;
 
 impl Modify for SecurityAddon {
+
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         openapi.info.license = None;
         if let Some(login) = openapi.paths.paths.get_mut("/auth/login")
@@ -77,9 +79,14 @@ impl Modify for SecurityAddon {
             if path == "/auth/login" {
                 continue;
             }
-            for operation in [&mut item.get, &mut item.post, &mut item.put]
-                .into_iter()
-                .flatten()
+            for operation in [
+                &mut item.get,
+                &mut item.post,
+                &mut item.put,
+                &mut item.delete,
+            ]
+            .into_iter()
+            .flatten()
             {
                 for (status, description) in [("401", "Unauthorized"), ("403", "Forbidden")] {
                     operation
@@ -147,13 +154,15 @@ pub fn configure_with_store(
             .service(nodes::list_nodes)
             .service(nodes::get_node)
             .service(nodes::update_node)
-            .service(nodes::restart_node),
+            .service(nodes::restart_node)
+            .service(nodes::delete_node),
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn generated_contract_matches_checked_in_document() {
         let document = serde_json::to_value(ApiDoc::openapi()).unwrap();

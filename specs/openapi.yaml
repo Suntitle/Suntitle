@@ -338,6 +338,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      tags:
+      - Nodes
+      description: Request asynchronous removal. Terminating resources remain visible until runtime cleanup is acknowledged, including while the host is offline.
+      operationId: deleteNode
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Deletion requested
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /nodes/{name}/restart:
     post:
       tags:
@@ -915,9 +959,9 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Host health observations keyed by condition type.
-              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
+              x-kubernetes-list-type: map
             ip:
               type:
               - string
@@ -1402,9 +1446,37 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Node health observations keyed by condition type.
+              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
-              x-kubernetes-list-type: map
+            dispatch:
+              type:
+              - object
+              - 'null'
+              description: Desired dispatch and its latest runtime acknowledgement.
+              required:
+              - generation
+              - operation
+              - operationId
+              properties:
+                generation:
+                  type: integer
+                  format: int64
+                operation:
+                  type: string
+                  enum:
+                  - apply
+                  - remove
+                operationId:
+                  type: string
+                sessionId:
+                  type:
+                  - string
+                  - 'null'
+                success:
+                  type:
+                  - boolean
+                  - 'null'
             message:
               type:
               - string

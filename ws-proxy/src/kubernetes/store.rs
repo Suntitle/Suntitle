@@ -1,7 +1,7 @@
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
     Api, Client, Resource,
-    api::{ListParams, Patch, PatchParams, PostParams},
+    api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -46,6 +46,7 @@ pub struct NodeUpdate {
 }
 
 impl ResourceStore {
+
     pub fn new(client: Client, namespace: &str) -> Self {
         Self {
             hosts: Api::namespaced(client.clone(), namespace),
@@ -128,6 +129,12 @@ impl ResourceStore {
             .nodes
             .patch(name, &PatchParams::default(), &Patch::<()>::Json(patch))
             .await?)
+    }
+
+    /// Cleanup completes asynchronously through the node finalizer.
+    pub async fn delete(&self, name: &str) -> Result<(), ApiError> {
+        self.nodes.delete(name, &DeleteParams::default()).await?;
+        Ok(())
     }
 
     pub async fn restart(&self, name: &str) -> Result<SuntitleNode, ApiError> {

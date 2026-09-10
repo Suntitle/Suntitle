@@ -48,6 +48,7 @@ struct ChildProcess {
 }
 
 impl ChildProcess {
+
     fn spawn(spec: &CommandSpec) -> io::Result<Self> {
         let mut command = Command::new(&spec.executable);
         command
@@ -116,6 +117,10 @@ impl ChildProcess {
     }
 
     async fn stop(mut self, grace: Duration) -> io::Result<ExitStatus> {
+        self.stop_in_place(grace).await
+    }
+
+    async fn stop_in_place(&mut self, grace: Duration) -> io::Result<ExitStatus> {
         if let Some(status) = self.child.try_wait()? {
             return Ok(status);
         }
@@ -131,6 +136,7 @@ impl ChildProcess {
 }
 
 impl Drop for ChildProcess {
+
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
             let _ = self.force_kill();
@@ -156,6 +162,7 @@ pub struct NodeProcessManager {
     nodes: HashMap<String, ManagedNode>,
 }
 impl NodeProcessManager {
+
     pub fn new(
         project_dir: PathBuf,
         uv_bin: PathBuf,
@@ -176,6 +183,7 @@ impl NodeProcessManager {
             nodes: HashMap::new(),
         })
     }
+
     pub async fn apply(
         &mut self,
         identity: ApplyIdentity,
@@ -236,6 +244,30 @@ impl NodeProcessManager {
         self.nodes.insert(key, node);
         vec![event]
     }
+
+    /// Stop failures retain the managed process for later cleanup.
+    pub async fn remove(&mut self, identity: &ApplyIdentity) -> Result<(), String> {
+        let key = format!("{}/{}", identity.target.namespace, identity.target.name);
+        let Some(node) = self.nodes.get_mut(&key) else {
+            return Ok(());
+        };
+        // A stale remove MUST NOT stop a replacement resource.
+        if node.identity.target.uid != identity.target.uid {
+            return Ok(());
+        }
+        if node.identity.generation > identity.generation {
+            return Err("stale cleanup generation".into());
+        }
+        if let Some(child) = node.child.as_mut() {
+            child
+                .stop_in_place(self.shutdown_grace)
+                .await
+                .map_err(|error| format!("failed to stop node: {error}"))?;
+        }
+        self.nodes.remove(&key);
+        Ok(())
+    }
+
     pub fn reap_exited(&mut self) -> Vec<NodeEvent> {
         let mut events = Vec::new();
         for node in self.nodes.values_mut() {
@@ -259,6 +291,7 @@ impl NodeProcessManager {
         }
         events
     }
+
     pub async fn shutdown_all(&mut self) -> Vec<NodeEvent> {
         for node in self.nodes.values_mut() {
             if let Some(child) = node.child.as_mut() {
@@ -289,6 +322,7 @@ impl NodeProcessManager {
     }
 }
 impl ManagedNode {
+
     fn event(&self) -> NodeEvent {
         NodeEvent {
             identity: self.identity.clone(),
@@ -297,6 +331,7 @@ impl ManagedNode {
         }
     }
 }
+
 fn runtime_spec(spec: &SuntitleNodeSpec) -> serde_json::Value {
     serde_json::json!([
         spec.enabled,
@@ -360,6 +395,7 @@ pub struct NodeEndpoints {
 }
 
 impl NodeEndpoints {
+
     pub fn new(base: &Url) -> Result<Self, String> {
         validate_data_plane_url(base)?;
         Ok(Self {
@@ -402,6 +438,7 @@ mod tests {
         json["hostRef"] = serde_json::json!({"name":"host"});
         serde_json::from_value(json).unwrap()
     }
+
     fn test_identity() -> ApplyIdentity {
         ApplyIdentity {
             target: crate::kubernetes::resources::ResourceIdentity {
@@ -416,6 +453,7 @@ mod tests {
             operation_id: "apply-1".into(),
         }
     }
+
     fn spec(json: serde_json::Value) -> CommandSpec {
         let update = test_spec(json);
         command_spec(
@@ -536,7 +574,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_apply_does_not_spawn_twice_and_shutdown_reaps_child() {
+    async fn duplicate_apply_and_remove_preserve_identity_and_reap_child() {
         let directory = std::env::temp_dir().join(format!("diamant-nodes-{}", Uuid::new_v4()));
         std::fs::create_dir(&directory).unwrap();
         let executable = directory.join("fake-uv");
@@ -593,7 +631,7 @@ mod tests {
             NodeRuntimeStatus::Running
         );
         assert_eq!(
-            manager.apply(restart, restarted_spec).await[0].status,
+            manager.apply(restart.clone(), restarted_spec).await[0].status,
             NodeRuntimeStatus::Running
         );
         for _ in 0..40 {
@@ -607,9 +645,26 @@ mod tests {
             2
         );
 
-        let events = manager.shutdown_all().await;
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].status, NodeRuntimeStatus::Stopped);
+        let mut stale = restart.clone();
+        stale.target.uid = "old-incarnation".into();
+        manager.remove(&stale).await.unwrap();
+        assert_eq!(manager.nodes.len(), 1);
+        let pid = manager
+            .nodes
+            .values()
+            .next()
+            .unwrap()
+            .child
+            .as_ref()
+            .unwrap()
+            .child
+            .id()
+            .unwrap();
+        manager.remove(&restart).await.unwrap();
+        manager.remove(&restart).await.unwrap();
+        assert!(manager.nodes.is_empty());
+        assert!(nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_err());
+        assert!(manager.shutdown_all().await.is_empty());
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
