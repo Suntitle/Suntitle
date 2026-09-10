@@ -305,3 +305,9 @@ kubernetes-bootstrap kubeconfig="pki/admin.kubeconfig" namespace="suntitle":
 # Exercise new resource contracts on the running standalone Kubernetes API.
 kubernetes-test:
     python3 scripts/test-kubernetes-resources.py
+
+fmt:
+    cargo fmt --manifest-path ws-proxy/Cargo.toml
+
+clippy:
+    cargo clippy --manifest-path ws-proxy/Cargo.toml --fix --allow-dirty

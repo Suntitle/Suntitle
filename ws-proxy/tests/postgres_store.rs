@@ -5,7 +5,7 @@ use sqlx::types::Json;
 use uuid::Uuid;
 use ws_proxy::{
     api::models::*,
-    registration::{NodeRuntimeStatus, RegistrationServerMessage},
+    storage::legacy_protocol::{NodeRuntimeStatus, RegistrationServerMessage},
     storage::{ControlStore, Mutation, PostgresStore},
 };
 

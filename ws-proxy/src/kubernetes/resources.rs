@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{CustomResource, CustomResourceExt, KubeSchema};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -97,6 +97,24 @@ fn enabled_default() -> bool {
     true
 }
 
+impl SuntitleHost {
+    pub fn conditions(&self) -> &[Condition] {
+        self.status
+            .as_ref()
+            .map(|status| status.conditions.as_slice())
+            .unwrap_or_default()
+    }
+}
+
+impl SuntitleNode {
+    pub fn conditions(&self) -> &[Condition] {
+        self.status
+            .as_ref()
+            .map(|status| status.conditions.as_slice())
+            .unwrap_or_default()
+    }
+}
+
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct HostStatus {
@@ -129,6 +147,28 @@ pub struct HostStatus {
 pub enum Presence {
     Online,
     Offline,
+}
+
+impl Presence {
+    pub fn ready_condition(&self, generation: i64) -> Condition {
+        Condition {
+            last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
+            observed_generation: Some(generation),
+            type_: "Ready".into(),
+            status: match self {
+                Self::Online => "True".into(),
+                Self::Offline => "False".into(),
+            },
+            reason: match self {
+                Self::Online => "Connected".into(),
+                Self::Offline => "Disconnected".into(),
+            },
+            message: match self {
+                Self::Online => "Host session is active.".into(),
+                Self::Offline => "Fresh host registration is required.".into(),
+            },
+        }
+    }
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]

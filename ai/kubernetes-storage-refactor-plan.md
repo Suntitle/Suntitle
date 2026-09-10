@@ -651,18 +651,18 @@ remains phase 4 work. No phase 2 commit has been created.
 
 **Deliverables**
 
-- [ ] Add the controller subsystem inside ws-proxy, shared watches/cache, initial
+- [x] Add the controller subsystem inside ws-proxy, shared watches/cache, initial
   synchronization,
   generation filtering, ownership/dependency indexes, and per-resource serialized
   work with bounded concurrency and per-host outbound queues.
-- [ ] Implement registration sessions, heartbeat expiry, disconnect recovery, and
+- [x] Implement registration sessions, heartbeat expiry, disconnect recovery, and
   shutdown. Enable dispatch only after initial watch synchronization; control_api
   handles resource CRUD and runs no controller.
-- [ ] Update ws-proxy and Diamant together for full desired-state delivery,
+- [x] Update ws-proxy and Diamant together for full desired-state delivery,
   idempotent apply/restart handling, and identity-checked acknowledgements.
-- [ ] Implement pending/applied conditions, status writes with conflict checks,
+- [x] Implement pending/applied conditions, status writes with conflict checks,
   acknowledgement deadlines, bounded retries, and no-op status suppression.
-- [ ] Handle reconnect, ownership/dependency changes, retry, and watch recovery
+- [x] Handle reconnect, ownership/dependency changes, retry, and watch recovery
   independently of generation changes; establish missing ownership/finalizers
   before dispatch and reject conflicting or stale owners.
 

@@ -13,10 +13,18 @@ use std::time::Duration;
 
 use tokio::process::{Child, Command};
 use url::Url;
+#[cfg(test)]
 use uuid::Uuid;
 
-use crate::api::models::{NodeSettings, NodeUpdate};
-use crate::registration::NodeRuntimeStatus;
+use crate::kubernetes::resources::{NodeSettings, SuntitleNodeSpec};
+use crate::registration::ApplyIdentity;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRuntimeStatus {
+    Running,
+    Stopped,
+    Failed,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -27,8 +35,7 @@ pub struct CommandSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeEvent {
-    pub node_id: Uuid,
-    pub revision: u64,
+    pub identity: ApplyIdentity,
     pub status: NodeRuntimeStatus,
     pub message: Option<String>,
 }
@@ -133,9 +140,11 @@ impl Drop for ChildProcess {
 
 #[derive(Debug)]
 struct ManagedNode {
-    revision: u64,
-    update: NodeUpdate,
+    identity: ApplyIdentity,
+    spec: SuntitleNodeSpec,
     child: Option<ChildProcess>,
+    status: NodeRuntimeStatus,
+    message: Option<String>,
 }
 
 #[derive(Debug)]
@@ -144,9 +153,8 @@ pub struct NodeProcessManager {
     uv_bin: PathBuf,
     endpoints: NodeEndpoints,
     shutdown_grace: Duration,
-    nodes: HashMap<Uuid, ManagedNode>,
+    nodes: HashMap<String, ManagedNode>,
 }
-
 impl NodeProcessManager {
     pub fn new(
         project_dir: PathBuf,
@@ -168,111 +176,69 @@ impl NodeProcessManager {
             nodes: HashMap::new(),
         })
     }
-
     pub async fn apply(
         &mut self,
-        node_id: Uuid,
-        revision: u64,
-        update: NodeUpdate,
+        identity: ApplyIdentity,
+        spec: SuntitleNodeSpec,
     ) -> Vec<NodeEvent> {
-        if self
-            .nodes
-            .get(&node_id)
-            .is_some_and(|node| revision <= node.revision)
-        {
-            return Vec::new();
-        }
-        if let Some(node) = self.nodes.get_mut(&node_id)
-            && node.update == update
-        {
-            node.revision = revision;
-            return vec![event(
-                node_id,
-                revision,
-                if node.child.is_some() {
-                    NodeRuntimeStatus::Running
-                } else {
-                    NodeRuntimeStatus::Stopped
-                },
-                None,
-            )];
-        }
-
-        if let Some(old) = self.nodes.remove(&node_id)
-            && let Some(child) = old.child
-        {
-            let _ = child.stop(self.shutdown_grace).await;
-        }
-
-        if !update.enabled() {
-            self.nodes.insert(
-                node_id,
-                ManagedNode {
-                    revision,
-                    update,
-                    child: None,
-                },
-            );
-            return vec![event(node_id, revision, NodeRuntimeStatus::Stopped, None)];
-        }
-
-        let spec = command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &update);
-        let mut events = vec![event(node_id, revision, NodeRuntimeStatus::Starting, None)];
-        match ChildProcess::spawn(&spec) {
-            Ok(child) => {
-                self.nodes.insert(
-                    node_id,
-                    ManagedNode {
-                        revision,
-                        update,
-                        child: Some(child),
-                    },
-                );
-                events.push(event(node_id, revision, NodeRuntimeStatus::Running, None));
+        let key = format!("{}/{}", identity.target.namespace, identity.target.name);
+        if let Some(node) = self.nodes.get_mut(&key) {
+            if node.identity == identity {
+                return vec![node.event()];
             }
-            Err(error) => {
-                self.nodes.insert(
-                    node_id,
-                    ManagedNode {
-                        revision,
-                        update,
-                        child: None,
-                    },
-                );
-                events.push(event(
-                    node_id,
-                    revision,
+            if node.identity.target.uid == identity.target.uid
+                && node.identity.generation > identity.generation
+            {
+                return Vec::new();
+            }
+            if node.identity.target.uid == identity.target.uid
+                && node.status != NodeRuntimeStatus::Failed
+                && runtime_spec(&node.spec) == runtime_spec(&spec)
+            {
+                node.identity = identity;
+                node.spec = spec;
+                return vec![node.event()];
+            }
+            if let Some(child) = node.child.take()
+                && let Err(error) = child.stop(self.shutdown_grace).await
+            {
+                node.identity = identity;
+                node.status = NodeRuntimeStatus::Failed;
+                node.message = Some(format!("failed to stop previous process: {error}"));
+                return vec![node.event()];
+            }
+        }
+        let (child, status, message) = if spec.enabled {
+            match ChildProcess::spawn(&command_spec(
+                &self.uv_bin,
+                &self.project_dir,
+                &self.endpoints,
+                &spec,
+            )) {
+                Ok(child) => (Some(child), NodeRuntimeStatus::Running, None),
+                Err(error) => (
+                    None,
                     NodeRuntimeStatus::Failed,
                     Some(format!("failed to spawn node: {error}")),
-                ));
+                ),
             }
-        }
-        events
-    }
-
-    pub async fn restart(&mut self, node_id: Uuid, revision: u64) -> Vec<NodeEvent> {
-        let Some(node) = self.nodes.remove(&node_id) else {
-            return vec![event(
-                node_id,
-                revision,
-                NodeRuntimeStatus::Failed,
-                Some("cannot restart unknown node".to_owned()),
-            )];
+        } else {
+            (None, NodeRuntimeStatus::Stopped, None)
         };
-        if revision <= node.revision {
-            self.nodes.insert(node_id, node);
-            return Vec::new();
-        }
-        let update = node.update;
-        if let Some(child) = node.child {
-            let _ = child.stop(self.shutdown_grace).await;
-        }
-        self.apply(node_id, revision, update).await
+        let node = ManagedNode {
+            identity,
+            spec,
+            child,
+            status,
+            message,
+        };
+        let event = node.event();
+        self.nodes.insert(key, node);
+        vec![event]
     }
-
     pub fn reap_exited(&mut self) -> Vec<NodeEvent> {
         let mut events = Vec::new();
-        for (node_id, node) in &mut self.nodes {
+        for node in self.nodes.values_mut() {
             let result = node
                 .child
                 .as_mut()
@@ -283,68 +249,61 @@ impl NodeProcessManager {
                 });
             if let Some(result) = result {
                 node.child = None;
-                let message = match result {
+                node.status = NodeRuntimeStatus::Failed;
+                node.message = Some(match result {
                     Ok(status) => format!("node process exited unexpectedly: {status}"),
                     Err(error) => format!("failed to reap node process: {error}"),
-                };
-                events.push(event(
-                    *node_id,
-                    node.revision,
-                    NodeRuntimeStatus::Failed,
-                    Some(message),
-                ));
+                });
+                events.push(node.event());
             }
         }
         events
     }
-
     pub async fn shutdown_all(&mut self) -> Vec<NodeEvent> {
-        let mut children = Vec::new();
-        for (node_id, node) in &mut self.nodes {
-            if let Some(child) = node.child.take() {
-                children.push((*node_id, node.revision, child));
+        for node in self.nodes.values_mut() {
+            if let Some(child) = node.child.as_mut() {
+                let _ = child.terminate();
             }
         }
-        for (_, _, child) in &mut children {
-            let _ = child.terminate();
-        }
-        let mut events = Vec::with_capacity(children.len());
         let deadline = tokio::time::Instant::now() + self.shutdown_grace;
-        for (node_id, revision, mut child) in children {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let result = match tokio::time::timeout(remaining, child.child.wait()).await {
-                Ok(result) => result,
-                Err(_) => {
-                    let _ = child.force_kill();
-                    child.child.wait().await
+        let mut events = Vec::new();
+        for node in self.nodes.values_mut() {
+            if let Some(child) = node.child.take() {
+                match child
+                    .stop(deadline.saturating_duration_since(tokio::time::Instant::now()))
+                    .await
+                {
+                    Ok(_) => {
+                        node.status = NodeRuntimeStatus::Stopped;
+                        node.message = None;
+                    }
+                    Err(error) => {
+                        node.status = NodeRuntimeStatus::Failed;
+                        node.message = Some(format!("failed to stop node: {error}"));
+                    }
                 }
-            };
-            events.push(match result {
-                Ok(_) => event(node_id, revision, NodeRuntimeStatus::Stopped, None),
-                Err(error) => event(
-                    node_id,
-                    revision,
-                    NodeRuntimeStatus::Failed,
-                    Some(format!("failed to stop node: {error}")),
-                ),
-            });
+                events.push(node.event());
+            }
         }
         events
     }
 }
-
-fn event(
-    node_id: Uuid,
-    revision: u64,
-    status: NodeRuntimeStatus,
-    message: Option<String>,
-) -> NodeEvent {
-    NodeEvent {
-        node_id,
-        revision,
-        status,
-        message,
+impl ManagedNode {
+    fn event(&self) -> NodeEvent {
+        NodeEvent {
+            identity: self.identity.clone(),
+            status: self.status,
+            message: self.message.clone(),
+        }
     }
+}
+fn runtime_spec(spec: &SuntitleNodeSpec) -> serde_json::Value {
+    serde_json::json!([
+        spec.enabled,
+        spec.settings,
+        spec.input_ref,
+        spec.restart_token
+    ])
 }
 
 pub fn data_plane_url_from_registration(registration: &Url) -> Result<Url, String> {
@@ -416,7 +375,7 @@ pub fn command_spec(
     uv_bin: &Path,
     project_dir: &Path,
     endpoints: &NodeEndpoints,
-    update: &NodeUpdate,
+    update: &SuntitleNodeSpec,
 ) -> CommandSpec {
     let mut args: Vec<OsString> = vec!["uv".into(), "run".into(), "python".into()];
     args.extend(match &update.settings {
@@ -437,8 +396,28 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn test_spec(mut json: serde_json::Value) -> SuntitleNodeSpec {
+        let kind = json["type"].as_str().unwrap().to_owned();
+        json["settings"] = serde_json::json!({kind: json["settings"].clone()});
+        json["hostRef"] = serde_json::json!({"name":"host"});
+        serde_json::from_value(json).unwrap()
+    }
+    fn test_identity() -> ApplyIdentity {
+        ApplyIdentity {
+            target: crate::kubernetes::resources::ResourceIdentity {
+                namespace: "suntitle".into(),
+                name: "screen".into(),
+                uid: Uuid::new_v4().to_string(),
+            },
+            host_uid: "host-uid".into(),
+            session_id: "session".into(),
+            generation: 1,
+            restart_token: None,
+            operation_id: "apply-1".into(),
+        }
+    }
     fn spec(json: serde_json::Value) -> CommandSpec {
-        let update: NodeUpdate = serde_json::from_value(json).unwrap();
+        let update = test_spec(json);
         command_spec(
             Path::new("fake uv"),
             Path::new("/project with spaces"),
@@ -475,6 +454,7 @@ mod tests {
         assert_eq!(
             result.args,
             vec![
+                "uv",
                 "run",
                 "python",
                 "suntitle-listener.py",
@@ -497,6 +477,7 @@ mod tests {
         assert_eq!(
             result.args,
             vec![
+                "uv",
                 "run",
                 "python",
                 "whisper_online_client.py",
@@ -520,6 +501,7 @@ mod tests {
         assert_eq!(
             translator.args,
             vec![
+                "uv",
                 "run",
                 "python",
                 "suntitle-translator.py",
@@ -540,6 +522,7 @@ mod tests {
         assert_eq!(
             display.args,
             vec![
+                "uv",
                 "run",
                 "python",
                 "suntitle.py",
@@ -573,15 +556,15 @@ mod tests {
             Duration::from_secs(2),
         )
         .unwrap();
-        let update: NodeUpdate = serde_json::from_value(serde_json::json!({
+        let update = test_spec(serde_json::json!({
             "type":"display", "name":"screen", "enabled":true, "description":null,
             "settings":{"maxLines":3,"fontScale":1.0,"showOriginal":false,"theme":"dark"}, "inputNodeId":null
-        })).unwrap();
-        let node_id = Uuid::new_v4();
+        }));
+        let identity = test_identity();
 
-        let started = manager.apply(node_id, 1, update.clone()).await;
-        assert_eq!(started.len(), 2);
-        assert_eq!(started[1].status, NodeRuntimeStatus::Running, "{started:?}");
+        let started = manager.apply(identity.clone(), update.clone()).await;
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].status, NodeRuntimeStatus::Running, "{started:?}");
         let pid_file = directory.join("pids.txt");
         for _ in 0..40 {
             if pid_file.exists() {
@@ -589,11 +572,39 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        assert_eq!(manager.apply(node_id, 2, update).await.len(), 1);
+        assert_eq!(
+            manager.apply(identity.clone(), update.clone()).await.len(),
+            1
+        );
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(
-            std::fs::read_to_string(pid_file).unwrap().lines().count(),
+            std::fs::read_to_string(&pid_file).unwrap().lines().count(),
             1
+        );
+
+        let mut restart = identity;
+        restart.generation += 2;
+        restart.restart_token = Some("latest-coalesced-token".into());
+        restart.operation_id = "restart".into();
+        let mut restarted_spec = update;
+        restarted_spec.restart_token = restart.restart_token.clone();
+        assert_eq!(
+            manager.apply(restart.clone(), restarted_spec.clone()).await[0].status,
+            NodeRuntimeStatus::Running
+        );
+        assert_eq!(
+            manager.apply(restart, restarted_spec).await[0].status,
+            NodeRuntimeStatus::Running
+        );
+        for _ in 0..40 {
+            if std::fs::read_to_string(&pid_file).unwrap().lines().count() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(
+            std::fs::read_to_string(&pid_file).unwrap().lines().count(),
+            2
         );
 
         let events = manager.shutdown_all().await;
