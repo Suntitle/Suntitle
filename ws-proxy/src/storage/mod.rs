@@ -2,7 +2,7 @@
 use crate::{
     DesiredNode,
     api::{errors::ApiError, models::*},
-    registration::{NodeRuntimeStatus, RegistrationServerMessage},
+    storage::legacy_protocol::{NodeRuntimeStatus, RegistrationServerMessage},
 };
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::IpAddr, sync::Arc};
 use uuid::Uuid;
 use validator::Validate;
+pub mod legacy_protocol;
 pub mod postgres;
 pub use postgres::PostgresStore;
 

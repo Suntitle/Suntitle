@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::fs;
 use std::io;
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -17,13 +16,14 @@ use tokio_tungstenite::{
     tungstenite::{Error as WebSocketError, Message},
 };
 use url::Url;
-use uuid::Uuid;
+use ws_proxy::diamant::nodes::NodeRuntimeStatus;
 use ws_proxy::diamant::nodes::{NodeEvent, NodeProcessManager, data_plane_url_from_registration};
-use ws_proxy::registration::{RegistrationClientMessage, RegistrationServerMessage};
+use ws_proxy::registration::{
+    Envelope, Operation, RegistrationClientMessage, RegistrationServerMessage,
+};
 
 const DEFAULT_PROXY_URL: &str = "ws://127.0.0.1:3030/register";
 const DEFAULT_HEALTH_INTERVAL_SECONDS: u64 = 30;
-const DEFAULT_ID_FILE: &str = "diamant.id";
 const DEFAULT_SHUTDOWN_GRACE_SECONDS: u64 = 5;
 
 /// Registers this host with a Suntitle VS Proxy.
@@ -51,14 +51,6 @@ struct Config {
     /// Host IP reported to VS Proxy. By default, Diamant detects the routed IPv4 address.
     #[arg(long, env = "SUNTITLE_HOST_IP")]
     host_ip: Option<IpAddr>,
-
-    /// File used to preserve this host's UUID across restarts.
-    #[arg(
-        long,
-        env = "SUNTITLE_ID_FILE",
-        default_value = DEFAULT_ID_FILE
-    )]
-    id_file: PathBuf,
 
     /// Seconds between health OK reports.
     #[arg(
@@ -119,33 +111,18 @@ async fn main() -> Result<ExitCode, MainReport> {
     }
 
     pretty_env_logger::init();
-    let host_id = load_or_create_host_id(&config.id_file)?;
-    register(&config, host_id).await?;
-    Ok(ExitCode::default())
-}
-
-fn load_or_create_host_id(path: &Path) -> rootcause::Result<Uuid> {
-    match fs::read_to_string(path) {
-        Ok(contents) => Ok(Uuid::parse_str(contents.trim())
-            .context_with(|| format!("invalid host UUID in {}", path.display()))?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if let Some(parent) = path.parent()
-                && !parent.as_os_str().is_empty()
-            {
-                fs::create_dir_all(parent).context_with(|| {
-                    format!("failed to create identity directory {}", parent.display())
-                })?;
-            }
-
-            let host_id = Uuid::new_v4();
-            fs::write(path, format!("{host_id}\n"))
-                .context_with(|| format!("failed to write host UUID to {}", path.display()))?;
-            Ok(host_id)
+    loop {
+        match register(&config).await {
+            Ok(false) => break,
+            Ok(true) => {}
+            Err(error) => eprintln!("registration disconnected: {error}"),
         }
-        Err(error) => Err(rootcause::report!(error)
-            .context(format!("failed to read identity file {}", path.display()))
-            .into_dynamic()),
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+            _ = tokio::signal::ctrl_c() => break,
+        }
     }
+    Ok(ExitCode::default())
 }
 
 fn connection_ip(stream: &MaybeTlsStream<tokio::net::TcpStream>) -> rootcause::Result<IpAddr> {
@@ -173,7 +150,7 @@ fn host_metadata() -> BTreeMap<String, serde_json::Value> {
     ])
 }
 
-async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
+async fn register(config: &Config) -> rootcause::Result<bool> {
     let registration_url = Url::parse(&config.proxy_url).context("invalid proxy URL")?;
     let data_plane_url = match &config.data_plane_url {
         Some(url) => url.clone(),
@@ -196,14 +173,13 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
         None => connection_ip(socket.get_ref())?,
     };
     let (mut write, mut read) = socket.split();
-    let metadata = Some(host_metadata());
-    let request = RegistrationClientMessage::RegisterHost {
-        id: host_id,
-        name: config.host_name.clone(),
-        ip: host_ip,
-        version: env!("CARGO_PKG_VERSION").to_owned(),
-        metadata: metadata.clone(),
-    };
+    let metadata = host_metadata();
+    let request = Envelope::new(RegistrationClientMessage::Register {
+        host_name: config.host_name.clone(),
+        agent_version: env!("CARGO_PKG_VERSION").into(),
+        ip: Some(host_ip.to_string()),
+        reported_metadata: metadata,
+    });
     write
         .send(Message::Text(
             serde_json::to_string(&request)
@@ -218,25 +194,28 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
         .await
         .context("proxy closed before acknowledging registration")?
         .context("failed to receive registration acknowledgment")?;
-    let response: RegistrationServerMessage = serde_json::from_slice(&response.into_data())
-        .context("proxy returned an invalid registration acknowledgment")?;
-    match response {
-        RegistrationServerMessage::Registered { host } => {
+    let response: Envelope<RegistrationServerMessage> =
+        serde_json::from_slice(&response.into_data())
+            .context("proxy returned an invalid registration acknowledgment")?;
+    if response.protocol_version != 1 {
+        rootcause::bail!("unsupported protocol version");
+    }
+    let (host, session_id) = match response.message {
+        RegistrationServerMessage::Registered { host, session_id } => {
             println!(
-                "registered host {} as {} at {} (status: {:?})",
-                host.name, host.id, host.ip, host.status
+                "registered host {}/{} ({})",
+                host.namespace, host.name, host.uid
             );
+            (host, session_id)
         }
         RegistrationServerMessage::Error { message } => {
             rootcause::bail!("proxy rejected host registration: {message}")
         }
-        _ => rootcause::bail!("proxy sent a node command before acknowledging registration"),
-    }
-
-    let health = RegistrationClientMessage::HealthOk {
-        host_id,
-        ip: host_ip,
-        metadata,
+        _ => rootcause::bail!("proxy sent a command before registration"),
+    };
+    let health = RegistrationClientMessage::Heartbeat {
+        host_uid: host.uid.clone(),
+        session_id: session_id.clone(),
     };
     let mut health_interval =
         tokio::time::interval(Duration::from_secs(config.health_interval_seconds));
@@ -248,6 +227,7 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
     let mut failure = None;
+    let mut reconnect = true;
 
     loop {
         tokio::select! {
@@ -258,12 +238,12 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
                 }
             }
             _ = reap_interval.tick() => {
-                if let Err(error) = send_events(&mut write, host_id, manager.reap_exited()).await {
+                if let Err(error) = send_events(&mut write, manager.reap_exited()).await {
                     failure = Some(format!("failed to report node exit: {error}"));
                     break;
                 }
             }
-            _ = &mut shutdown => break,
+            _ = &mut shutdown => { reconnect = false; break; },
             incoming = read.next() => {
                 match incoming {
                     Some(Ok(message)) if message.is_close() => break,
@@ -274,23 +254,26 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
                         }
                     }
                     Some(Ok(message)) if message.is_text() || message.is_binary() => {
-                        let command = match serde_json::from_slice::<RegistrationServerMessage>(&message.into_data()) {
+                        let command = match serde_json::from_slice::<Envelope<RegistrationServerMessage>>(&message.into_data()) {
                             Ok(command) => command,
                             Err(error) => {
                                 failure = Some(format!("proxy sent an invalid node command: {error}"));
                                 break;
                             }
                         };
-                        let events = match command {
-                            RegistrationServerMessage::ApplyNode { node_id, revision, update } => manager.apply(node_id, revision, update).await,
-                            RegistrationServerMessage::RestartNode { node_id, revision } => manager.restart(node_id, revision).await,
+                        if command.protocol_version != 1 { break; }
+                        let events = match command.message {
+                            RegistrationServerMessage::Apply { identity, spec } => {
+                                if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace || spec.host_ref.name != host.name || identity.restart_token != spec.restart_token { break; }
+                                manager.apply(identity, *spec).await
+                            },
                             RegistrationServerMessage::Error { message } => {
                                 failure = Some(format!("proxy error: {message}"));
                                 break;
                             }
                             RegistrationServerMessage::Registered { .. } => Vec::new(),
                         };
-                        if let Err(error) = send_events(&mut write, host_id, events).await {
+                        if let Err(error) = send_events(&mut write, events).await {
                             failure = Some(format!("failed to report node lifecycle: {error}"));
                             break;
                         }
@@ -306,12 +289,12 @@ async fn register(config: &Config, host_id: Uuid) -> rootcause::Result<()> {
         }
     }
 
-    let _ = send_events(&mut write, host_id, manager.shutdown_all().await).await;
+    let _ = send_events(&mut write, manager.shutdown_all().await).await;
     let _ = write.send(Message::Close(None)).await;
     if let Some(message) = failure {
         rootcause::bail!(message);
     }
-    Ok(())
+    Ok(reconnect)
 }
 
 type RegistrationWriter = futures_util::stream::SplitSink<
@@ -323,7 +306,7 @@ async fn send_client_message(
     write: &mut RegistrationWriter,
     message: &RegistrationClientMessage,
 ) -> Result<(), Box<WebSocketError>> {
-    let json = serde_json::to_string(message)
+    let json = serde_json::to_string(&Envelope::new(message))
         .map_err(|error| Box::new(WebSocketError::Io(io::Error::other(error))))?;
     write
         .send(Message::Text(json.into()))
@@ -333,15 +316,13 @@ async fn send_client_message(
 
 async fn send_events(
     write: &mut RegistrationWriter,
-    host_id: Uuid,
     events: Vec<NodeEvent>,
 ) -> Result<(), Box<WebSocketError>> {
     for event in events {
-        let message = RegistrationClientMessage::NodeStatus {
-            host_id,
-            node_id: event.node_id,
-            revision: event.revision,
-            status: event.status,
+        let message = RegistrationClientMessage::Acknowledgement {
+            identity: event.identity,
+            operation: Operation::Apply,
+            success: event.status != NodeRuntimeStatus::Failed,
             message: event.message,
         };
         send_client_message(write, &message).await?;
@@ -350,28 +331,5 @@ async fn send_events(
 }
 
 async fn shutdown_signal() {
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    ctrlc::set_handler(move || {
-        let _ = sender.send(());
-    })
-    .expect("shutdown signal handler installs");
-    let _ = receiver.recv().await;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn host_id_is_reused_from_the_identity_file() {
-        let directory = std::env::temp_dir().join(format!("diamant-test-{}", Uuid::new_v4()));
-        let identity_file = directory.join("host.id");
-
-        let first = load_or_create_host_id(&identity_file).expect("create host identity");
-        let second = load_or_create_host_id(&identity_file).expect("read host identity");
-
-        assert_eq!(first, second);
-        fs::remove_file(identity_file).expect("remove identity file");
-        fs::remove_dir(directory).expect("remove test directory");
-    }
+    let _ = tokio::signal::ctrl_c().await;
 }

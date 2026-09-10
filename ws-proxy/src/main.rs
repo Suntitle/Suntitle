@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use chrono::Utc;
+use clap::Parser;
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use tokio::sync::{RwLock, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -13,9 +13,20 @@ use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::reply::Reply;
 use warp::ws::{Message, WebSocket};
-use ws_proxy::api::models::{Host, HostStatus};
-use ws_proxy::registration::{RegistrationClientMessage, RegistrationServerMessage};
-use ws_proxy::storage::{Mutation, PostgresStore, Store};
+use ws_proxy::controller::Controller;
+use ws_proxy::registration::{Envelope, RegistrationClientMessage, RegistrationServerMessage};
+
+#[derive(Parser)]
+struct Args {
+    #[arg(long, env = "SUNTITLE_PROXY_KUBECONFIG")]
+    kubeconfig: std::path::PathBuf,
+    #[arg(
+        long,
+        env = "SUNTITLE_KUBERNETES_NAMESPACE",
+        default_value = "suntitle"
+    )]
+    namespace: String,
+}
 
 /// Our global unique user id counter.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -28,36 +39,35 @@ type Displays = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     pretty_env_logger::init();
-    let url = ws_proxy::storage::postgres::database_url()?;
-    let postgres = PostgresStore::connect(&url).await?;
-    let events = postgres.proxy_events(&url).await?;
-    let store: Store = Arc::new(postgres);
-    let routes = proxy_with_store(store, events.receiver).await;
+    let args = Args::parse();
+    let client = ws_proxy::kubernetes::client_from_kubeconfig(&args.kubeconfig)
+        .await
+        .map_err(std::io::Error::other)?;
+    let (mut controller, task) = Controller::start(client, &args.namespace);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        controller.synchronized(),
+    )
+    .await
+    .map_err(std::io::Error::other)?
+    .map_err(std::io::Error::other)?;
+    let routes = proxy_with_controller(Some(controller.clone())).await;
     eprintln!("Suntitle WebSocket proxy listening on 0.0.0.0:3030");
     tokio::select! {
         _ = warp::serve(routes).run(([0, 0, 0, 0], 3030)) => {},
-        result = events.task => {
-            result.map_err(std::io::Error::other)??;
-            return Err(std::io::Error::other("control listener stopped"));
-        }
+        _ = tokio::signal::ctrl_c() => {},
     }
+    controller.shutdown().await;
+    task.await.map_err(std::io::Error::other)?;
     Ok(())
 }
 
 #[cfg(test)]
 async fn proxy() -> BoxedFilter<(impl Reply,)> {
-    let (_, receiver) = tokio::sync::watch::channel(0);
-    proxy_with_store(
-        Arc::new(ws_proxy::storage::MemoryStore::default()),
-        receiver,
-    )
-    .await
+    proxy_with_controller(None).await
 }
 
-async fn proxy_with_store(
-    store: Store,
-    changes: tokio::sync::watch::Receiver<u64>,
-) -> BoxedFilter<(impl Reply,)> {
+async fn proxy_with_controller(controller: Option<Controller>) -> BoxedFilter<(impl Reply,)> {
     let state = Transcribers::default();
     let transcribers = warp::any().map(move || state.clone());
 
@@ -67,8 +77,7 @@ async fn proxy_with_store(
     let state = Displays::default();
     let displays = warp::any().map(move || state.clone());
 
-    let storage = warp::any().map(move || store.clone());
-    let notifications = warp::any().map(move || changes.clone());
+    let controller = warp::any().map(move || controller.clone());
 
     // GET /transcribe -> transcriber serving
     let transcribe = warp::path("transcribe")
@@ -105,10 +114,9 @@ async fn proxy_with_store(
     let register = warp::path("register")
         .and(warp::path::end())
         .and(warp::ws())
-        .and(storage)
-        .and(notifications)
-        .map(|ws: warp::ws::Ws, store, changes| {
-            ws.on_upgrade(move |socket| registration_connected(socket, store, changes))
+        .and(controller)
+        .map(|ws: warp::ws::Ws, controller| {
+            ws.on_upgrade(move |socket| registration_connected(socket, controller))
         });
 
     // GET / -> audio data stream
@@ -134,111 +142,74 @@ async fn proxy_with_store(
         .boxed()
 }
 
-async fn registration_connected(
-    ws: WebSocket,
-    store: Store,
-    mut changes: tokio::sync::watch::Receiver<u64>,
-) {
+async fn registration_connected(ws: WebSocket, controller: Option<Controller>) {
+    let Some(controller) = controller else {
+        return;
+    };
     let (mut write, mut read) = ws.split();
     let Ok(Some(Ok(message))) =
         tokio::time::timeout(std::time::Duration::from_secs(10), read.next()).await
     else {
         return;
     };
-    let Ok(RegistrationClientMessage::RegisterHost {
-        id,
-        name,
-        ip,
-        version,
-        metadata,
-    }) = serde_json::from_slice(message.as_bytes())
+    let Ok(envelope) =
+        serde_json::from_slice::<Envelope<RegistrationClientMessage>>(message.as_bytes())
     else {
         return;
     };
-    if name.trim().is_empty() || version.trim().is_empty() {
+    if envelope.protocol_version != 1 {
         return;
     }
-    let session = uuid::Uuid::new_v4();
-    let host = Host {
-        id,
-        name,
-        ip,
-        version,
-        metadata,
-        status: HostStatus::Online,
-        last_seen_at: Utc::now(),
+    let mut connection = match controller.register(envelope.message).await {
+        Ok(connection) => connection,
+        Err(message) => {
+            let _ = write
+                .send(Message::text(
+                    serde_json::to_string(&Envelope::new(RegistrationServerMessage::Error {
+                        message,
+                    }))
+                    .unwrap(),
+                ))
+                .await;
+            return;
+        }
     };
-    if store
-        .mutate(Mutation::Register(host.clone(), session))
-        .await
-        .is_err()
-    {
-        return;
-    }
-    let reply = RegistrationServerMessage::Registered { host };
-    if write
-        .send(Message::text(serde_json::to_string(&reply).unwrap()))
-        .await
-        .is_err()
-    {
-        let _ = store.mutate(Mutation::Disconnect(id, session)).await;
-        return;
-    }
-    // The receiver is subscribed before this initial scan. Timer scans recover
-    // notifications lost during listener reconnects and retry unacknowledged work.
-    let mut retry = tokio::time::interval(std::time::Duration::from_secs(2));
-    loop {
-        tokio::select! {
-            result = read.next() => {
-                match result {
-                    Some(Ok(message)) if message.is_ping() => {
-                        if write.send(Message::pong(message.as_bytes().to_vec())).await.is_err() { break; }
+    let registered = RegistrationServerMessage::Registered {
+        host: connection.host.clone(),
+        session_id: connection.session_id.clone(),
+    };
+    let result = async {
+        write.send(Message::text(serde_json::to_string(&Envelope::new(registered)).unwrap())).await?;
+        loop {
+            tokio::select! {
+                _ = connection.closed.changed() => break,
+                outgoing = connection.outbound.recv() => {
+                    let Some(outgoing) = outgoing else { break; };
+                    tokio::select! {
+                        _ = connection.closed.changed() => break,
+                        result = tokio::time::timeout(std::time::Duration::from_secs(10), write.send(Message::text(serde_json::to_string(&Envelope::new(outgoing)).unwrap()))) => match result { Ok(result) => result?, Err(_) => break },
                     }
+                },
+                incoming = read.next() => match incoming {
                     Some(Ok(message)) if message.is_text() => {
-                        let mutation = match serde_json::from_slice(message.as_bytes()) {
-                            Ok(RegistrationClientMessage::HealthOk { host_id, ip, metadata }) if host_id == id => Mutation::Health(id, session, ip, metadata),
-                            Ok(RegistrationClientMessage::NodeStatus { host_id, node_id, revision, status, .. }) if host_id == id => Mutation::Status(id, session, node_id, revision, status),
-                            _ => break,
-                        };
-                        if store.mutate(mutation).await.is_err() { break; }
-                    }
+                        let Ok(envelope) = serde_json::from_slice::<Envelope<RegistrationClientMessage>>(message.as_bytes()) else { break; };
+                        if envelope.protocol_version != 1 { break; }
+                        controller.report(&connection.host.uid, &connection.session_id, envelope.message).await;
+                    },
+                    Some(Ok(message)) if message.is_ping() => { write.send(Message::pong(message.as_bytes().to_vec())).await?; },
                     Some(Ok(message)) if !message.is_close() => {},
                     _ => break,
                 }
             }
-            _ = retry.tick() => {
-                if !dispatch(&store, id, session, &mut write).await { break; }
-            }
-            result = changes.changed() => {
-                if result.is_err() { break; }
-                if !dispatch(&store, id, session, &mut write).await { break; }
-            }
         }
+        Ok::<(), warp::Error>(())
+    }.await;
+    if let Err(e) = result {
+        eprintln!("registration socket: {e}");
     }
-    let _ = store.mutate(Mutation::Disconnect(id, session)).await;
-}
-
-async fn dispatch(
-    store: &Store,
-    host: uuid::Uuid,
-    session: uuid::Uuid,
-    write: &mut futures_util::stream::SplitSink<WebSocket, Message>,
-) -> bool {
-    let Ok(commands) = store.pending(host, session).await else {
-        return false;
-    };
-    for command in commands {
-        if write
-            .send(Message::text(
-                serde_json::to_string(&command.message).unwrap(),
-            ))
-            .await
-            .is_err()
-        {
-            return false;
-        }
-    }
-    true
+    controller
+        .disconnect(&connection.host.uid, &connection.session_id)
+        .await;
 }
 
 async fn translator_connected(ws: WebSocket, translators: Translators, displays: Displays) {
@@ -456,96 +427,6 @@ mod tests {
             .handshake(proxy().await)
             .await
             .expect("handshake");
-    }
-
-    #[tokio::test]
-    async fn registration_recovers_missed_notifications_and_retains_nodes() {
-        use ws_proxy::api::models::{HostStatus, NodeUpdate};
-        use ws_proxy::registration::{
-            NodeRuntimeStatus, RegistrationClientMessage as Client,
-            RegistrationServerMessage as Server,
-        };
-        use ws_proxy::storage::{MemoryStore, Mutation, Store};
-        let store: Store = std::sync::Arc::new(MemoryStore::default());
-        // Never publish a notification: dispatch must recover through its timer.
-        let (_sender, receiver) = tokio::sync::watch::channel(0);
-        let routes = super::proxy_with_store(store.clone(), receiver).await;
-        let host_id = uuid::Uuid::new_v4();
-        let register = Client::RegisterHost {
-            id: host_id,
-            name: "host".into(),
-            ip: "192.0.2.10".parse().unwrap(),
-            version: "test".into(),
-            metadata: None,
-        };
-        let mut socket = warp::test::ws()
-            .path("/register")
-            .handshake(routes.clone())
-            .await
-            .unwrap();
-        socket
-            .send(Message::text(serde_json::to_string(&register).unwrap()))
-            .await;
-        assert!(matches!(
-            serde_json::from_slice::<Server>(socket.recv().await.unwrap().as_bytes()).unwrap(),
-            Server::Registered { .. }
-        ));
-        let node_id = uuid::Uuid::new_v4();
-        let update: NodeUpdate = serde_json::from_value(serde_json::json!({"type":"display", "name":"screen", "enabled":true, "inputNodeId":null, "settings":{"maxLines":3,"fontScale":1.0,"showOriginal":false}})).unwrap();
-        store.create_node(host_id, node_id, update).await.unwrap();
-        for _ in 0..2 {
-            let message = tokio::time::timeout(std::time::Duration::from_secs(4), socket.recv())
-                .await
-                .unwrap()
-                .unwrap();
-            assert!(matches!(
-                serde_json::from_slice::<Server>(message.as_bytes()).unwrap(),
-                Server::ApplyNode { revision: 1, .. }
-            ));
-        }
-        let status = Client::NodeStatus {
-            host_id,
-            node_id,
-            revision: 1,
-            status: NodeRuntimeStatus::Running,
-            message: None,
-        };
-        socket
-            .send(Message::text(serde_json::to_string(&status).unwrap()))
-            .await;
-        socket.send(Message::close()).await;
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                if store.snapshot().await.unwrap().hosts[&host_id].status == HostStatus::Offline {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(store.nodes().await.unwrap().len(), 1);
-        let mut socket = warp::test::ws()
-            .path("/register")
-            .handshake(routes)
-            .await
-            .unwrap();
-        socket
-            .send(Message::text(serde_json::to_string(&register).unwrap()))
-            .await;
-        socket.recv().await.unwrap();
-        let message = socket.recv().await.unwrap();
-        assert!(matches!(
-            serde_json::from_slice::<Server>(message.as_bytes()).unwrap(),
-            Server::ApplyNode { revision: 2, .. }
-        ));
-        // Replaced sessions cannot mutate the host or the node.
-        assert!(
-            store
-                .mutate(Mutation::Disconnect(host_id, uuid::Uuid::new_v4()))
-                .await
-                .is_err()
-        );
     }
 
     #[tokio::test]
