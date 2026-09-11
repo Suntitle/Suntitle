@@ -1,5 +1,6 @@
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 
+/// Deduplicate conditions while preserving unchanged transition times.
 pub fn merge(previous: &[Condition], desired: &mut Vec<Condition>) {
     let mut merged: Vec<Condition> = Vec::with_capacity(desired.len());
     for mut condition in desired.drain(..) {
@@ -27,6 +28,7 @@ mod tests {
     use super::*;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 
+    /// Build a condition fixture.
     fn condition(status: &str, generation: i64, time: &str) -> Condition {
         Condition {
             type_: "Updated".into(),
@@ -38,6 +40,7 @@ mod tests {
         }
     }
 
+    /// Verify condition uniqueness and transition timestamps.
     #[test]
     fn status_changes_preserve_map_semantics_and_transition_times() {
         let initial = condition("False", 1, "2020-01-01T00:00:00Z");

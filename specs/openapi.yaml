@@ -106,14 +106,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /hosts/{hostName}/nodes:
+  /hosts/{hostUid}/nodes:
     post:
       tags:
       - Nodes
-      description: Persist desired state with host ownership. The path selects the host. Success does not imply runtime execution.
+      description: Persist desired state with host ownership. The path selects the host by metadata.uid. Hosts are listed on each request to resolve its name. Success does not imply runtime execution.
       operationId: installNodeOnHost
       parameters:
-      - name: hostName
+      - name: hostUid
         in: path
         required: true
         schema:
@@ -990,7 +990,7 @@ components:
               type:
               - string
               - 'null'
-              description: Current agent session identifier used to reject stale reports.
+              description: Registered host UID.
     SuntitleNode:
       type: object
       title: SuntitleNode
@@ -1446,9 +1446,9 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Node health observations keyed by condition type.
-              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
+              x-kubernetes-list-type: map
             dispatch:
               type:
               - object
@@ -1505,7 +1505,7 @@ components:
               type:
               - string
               - 'null'
-              description: Host agent session that produced this status.
+              description: Host UID that produced this status.
     SuntitleNodeSpec:
       type: object
       title: SuntitleNodeSpec

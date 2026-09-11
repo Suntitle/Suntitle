@@ -9,16 +9,7 @@
         "uid": "fixture-audio_source-uid",
         "resourceVersion": "fixture-audio_source-version-1",
         "generation": 1,
-        "creationTimestamp": "2026-09-09T12:00:00Z",
-        "ownerReferences": [
-          {
-            "apiVersion": "control.suntitle.io/v1alpha1",
-            "kind": "SuntitleHost",
-            "name": "studio-host",
-            "uid": "fixture-host-uid",
-            "controller": true
-          }
-        ]
+        "creationTimestamp": "2026-09-09T12:00:00Z"
       },
       "spec": {
         "name": "audio_source",
@@ -48,16 +39,7 @@
         "uid": "fixture-transcriber-uid",
         "resourceVersion": "fixture-transcriber-version-1",
         "generation": 1,
-        "creationTimestamp": "2026-09-09T12:00:00Z",
-        "ownerReferences": [
-          {
-            "apiVersion": "control.suntitle.io/v1alpha1",
-            "kind": "SuntitleHost",
-            "name": "studio-host",
-            "uid": "fixture-host-uid",
-            "controller": true
-          }
-        ]
+        "creationTimestamp": "2026-09-09T12:00:00Z"
       },
       "spec": {
         "name": "transcriber",
@@ -90,16 +72,7 @@
         "uid": "fixture-translator-uid",
         "resourceVersion": "fixture-translator-version-1",
         "generation": 1,
-        "creationTimestamp": "2026-09-09T12:00:00Z",
-        "ownerReferences": [
-          {
-            "apiVersion": "control.suntitle.io/v1alpha1",
-            "kind": "SuntitleHost",
-            "name": "studio-host",
-            "uid": "fixture-host-uid",
-            "controller": true
-          }
-        ]
+        "creationTimestamp": "2026-09-09T12:00:00Z"
       },
       "spec": {
         "name": "translator",
@@ -132,16 +105,7 @@
         "uid": "fixture-display-uid",
         "resourceVersion": "fixture-display-version-1",
         "generation": 1,
-        "creationTimestamp": "2026-09-09T12:00:00Z",
-        "ownerReferences": [
-          {
-            "apiVersion": "control.suntitle.io/v1alpha1",
-            "kind": "SuntitleHost",
-            "name": "studio-host",
-            "uid": "fixture-host-uid",
-            "controller": true
-          }
-        ]
+        "creationTimestamp": "2026-09-09T12:00:00Z"
       },
       "spec": {
         "name": "display",

@@ -13,12 +13,12 @@ pub async fn list_hosts(store: web::Data<ResourceStore>) -> ApiResult<HostList> 
     Ok(web::Json(store.list_hosts().await?))
 }
 
-#[utoipa::path(post, path = "/hosts/{hostName}/nodes", tag = "Nodes", operation_id = "installNodeOnHost",
-    description = "Persist desired state with host ownership. The path selects the host. Success does not imply runtime execution.",
-    params(("hostName" = String, Path)), request_body = NodeCreate,
+#[utoipa::path(post, path = "/hosts/{hostUid}/nodes", tag = "Nodes", operation_id = "installNodeOnHost",
+    description = "Persist desired state with host ownership. The path selects the host by metadata.uid. Hosts are listed on each request to resolve its name. Success does not imply runtime execution.",
+    params(("hostUid" = String, Path)), request_body = NodeCreate,
     responses((status = 201, body = SuntitleNode, headers(("Location" = String, description = "Created resource URL"))),
         (status = 400, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)))]
-#[post("/hosts/{hostName}/nodes")]
+#[post("/hosts/{hostUid}/nodes")]
 pub async fn install_node_on_host(
     store: web::Data<ResourceStore>,
     host: web::Path<String>,

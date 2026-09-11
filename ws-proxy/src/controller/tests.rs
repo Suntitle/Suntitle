@@ -4,6 +4,7 @@ use crate::{kubernetes::resources::*, registration::*};
 use chrono::Utc;
 use serde_json::{Value, json};
 
+/// Build controller state with an unreachable API endpoint.
 fn state() -> State {
     let client =
         Client::try_from(kube::Config::new("http://127.0.0.1:9".parse().unwrap())).unwrap();
@@ -14,10 +15,12 @@ fn state() -> State {
     }
 }
 
+/// Build a display node fixture.
 pub(super) fn node() -> SuntitleNode {
     serde_json::from_value(json!({"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleNode","metadata":{"namespace":"test","name":"screen","uid":"node-uid","generation":1,"resourceVersion":"opaque"},"spec":{"hostRef":{"name":"host"},"name":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}}})).unwrap()
 }
 
+/// Verify offline status is persisted only when changed.
 #[tokio::test]
 async fn expiry_persists_offline_status_once_for_resource_watches() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,7 +37,7 @@ async fn expiry_persists_offline_status_once_for_resource_watches() {
     host.metadata.resource_version = Some("1".into());
     let status = host.status.get_or_insert_default();
     status.presence = Some(Presence::Online);
-    status.session_id = Some("session".into());
+    status.session_id = Some("host-uid".into());
     status.last_heartbeat = Some(Utc::now() - chrono::Duration::seconds(46));
     let resource = Arc::new(std::sync::Mutex::new(host));
     let listed = resource.clone();
@@ -71,7 +74,6 @@ async fn expiry_persists_offline_status_once_for_resource_watches() {
     state.hosts_api = Api::namespaced(client, "test");
     let connection = state.connections.open(
         identity(&resource.lock().unwrap().metadata),
-        "session".into(),
     );
     let host = resource.lock().unwrap().clone();
     state.offline(&host).await.unwrap();
@@ -87,6 +89,7 @@ async fn expiry_persists_offline_status_once_for_resource_watches() {
     server.abort();
 }
 
+/// Verify heartbeat expiry and stored session matching.
 #[test]
 fn heartbeat_expiry_and_session_identity_use_resource_status() {
     let mut host = SuntitleHost::new(
@@ -111,6 +114,7 @@ fn heartbeat_expiry_and_session_identity_use_resource_status() {
     assert!(!current_session(&host, "old-uid", "current"));
 }
 
+/// Verify a full outbound queue closes its session.
 #[tokio::test]
 async fn outbound_overflow_closes_session() {
     let mut state = state();
@@ -120,12 +124,11 @@ async fn outbound_overflow_closes_session() {
             name: "host".into(),
             uid: "host-uid".into(),
         },
-        "session".into(),
     );
     for _ in 0..32 {
         state.dispatch(
             "host-uid",
-            "session",
+            "host-uid",
             RegistrationServerMessage::Error {
                 message: "queued".into(),
             },
@@ -134,7 +137,7 @@ async fn outbound_overflow_closes_session() {
     assert!(!*connection.closed.borrow());
     state.dispatch(
         "host-uid",
-        "session",
+        "host-uid",
         RegistrationServerMessage::Error {
             message: "overflow".into(),
         },
@@ -143,13 +146,14 @@ async fn outbound_overflow_closes_session() {
     assert!(state.connections.hosts().is_empty());
 }
 
+/// Verify stale or deleting nodes reject reports.
 #[test]
 fn stale_incarnation_generation_token_and_deletion_reject_reports() {
     let mut node = node();
     let mut id = ApplyIdentity {
         target: identity(&node.metadata),
         host_uid: "host".into(),
-        session_id: "session".into(),
+        session_id: "host-uid".into(),
         generation: 1,
         restart_token: None,
         operation_id: "op".into(),
@@ -168,4 +172,84 @@ fn stale_incarnation_generation_token_and_deletion_reject_reports() {
         k8s_openapi::jiff::Timestamp::now(),
     ));
     assert!(!matches_node(&node, &id));
+}
+
+/// Verify registration reuses host identity and replaces connections.
+#[tokio::test]
+async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
+    use warp::Filter;
+
+    let resource = Arc::new(std::sync::Mutex::new(None::<SuntitleHost>));
+    let stored = resource.clone();
+    let route = warp::method()
+        .and(warp::body::bytes())
+        .map(move |method: warp::http::Method, body: actix_web::web::Bytes| {
+            let mut stored = stored.lock().unwrap();
+            match method.as_str() {
+                "POST" => {
+                    let mut host: SuntitleHost = serde_json::from_slice(&body).unwrap();
+                    assert!(host.metadata.uid.is_none());
+                    host.metadata.uid = Some("api-assigned-uid".into());
+                    host.metadata.namespace = Some("test".into());
+                    host.metadata.resource_version = Some("1".into());
+                    *stored = Some(host);
+                }
+                "PATCH" => {
+                    let patch: Value = serde_json::from_slice(&body).unwrap();
+                    stored.as_mut().unwrap().status =
+                        serde_json::from_value(patch["status"].clone()).unwrap();
+                }
+                "GET" => {}
+                _ => panic!("unexpected method"),
+            }
+            let (body, code) = match stored.as_ref() {
+                Some(host) => (json!(host), warp::http::StatusCode::OK),
+                None => (json!({"apiVersion":"v1","kind":"Status","status":"Failure","message":"not found","reason":"NotFound","code":404}), warp::http::StatusCode::NOT_FOUND),
+            };
+            warp::reply::with_status(warp::reply::json(&body), code)
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+    let mut state = state();
+    let client = Client::try_from(kube::Config::new(
+        format!("http://{address}").parse().unwrap(),
+    ))
+    .unwrap();
+    state.hosts_api = Api::namespaced(client, "test");
+    let first = state
+        .register("host".into(), "test".into(), Default::default(), None)
+        .await
+        .unwrap();
+    assert_eq!(first.host.uid, "api-assigned-uid");
+    assert_eq!(first.session_id, first.host.uid);
+    state
+        .connections
+        .mark_dispatched(&first.host.uid, "node".into(), "operation".into());
+    let replacement = state
+        .register("host".into(), "test".into(), Default::default(), None)
+        .await
+        .unwrap();
+    assert_eq!(replacement.session_id, first.host.uid);
+    assert!(*first.closed.borrow());
+    assert!(!*replacement.closed.borrow());
+    assert!(
+        !state
+            .connections
+            .dispatched(&replacement.host.uid, "node", "operation")
+    );
+    assert_eq!(
+        resource
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .status
+            .as_ref()
+            .unwrap()
+            .session_id
+            .as_deref(),
+        Some("api-assigned-uid")
+    );
+    server.abort();
 }

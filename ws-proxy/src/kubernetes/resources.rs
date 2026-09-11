@@ -133,7 +133,7 @@ pub struct HostStatus {
     /// Time of the latest host heartbeat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_heartbeat: Option<DateTime<Utc>>,
-    /// Current agent session identifier used to reject stale reports.
+    /// Registered host UID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     /// Observed host availability.
@@ -282,7 +282,7 @@ pub struct NodeStatus {
     /// Latest restart token acknowledged by the runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acknowledged_restart_token: Option<String>,
-    /// Host agent session that produced this status.
+    /// Host UID that produced this status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reporting_session: Option<String>,
     /// Node health observations keyed by condition type.

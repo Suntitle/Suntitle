@@ -7,15 +7,13 @@ use crate::{
 use futures_util::StreamExt;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{
-    Api, Resource, ResourceExt,
-    api::{Patch, PatchParams},
+    Api, ResourceExt,
     runtime::{
         WatchStreamExt,
         controller::{Action, Config, Controller as KubeController},
         reflector, watcher,
     },
 };
-use serde_json::json;
 use std::sync::Arc;
 
 /// Filter spec revisions before reconciling dispatch intent.
@@ -41,6 +39,7 @@ pub(super) async fn run(
         .await;
 }
 
+/// Reconcile dispatch intent for a node revision.
 async fn reconcile(node: Arc<SuntitleNode>, ctx: Arc<Context>) -> Result<Action, ReconcileError> {
     ctx.state
         .lock()
@@ -59,6 +58,7 @@ pub(super) fn spec_revision(node: &SuntitleNode) -> Option<u64> {
     )
 }
 
+/// Choose apply or removal from node deletion state.
 pub(super) fn operation(node: &SuntitleNode) -> Operation {
     if node.metadata.deletion_timestamp.is_some() {
         Operation::Remove
@@ -93,20 +93,6 @@ impl State {
             if host.metadata.deletion_timestamp.is_some() {
                 return Ok(());
             }
-            let owner = host.controller_owner_ref(&()).unwrap();
-            if node
-                .owner_references()
-                .iter()
-                .any(|o| o.controller == Some(true) && o.uid != owner.uid)
-            {
-                return self
-                    .invalid(
-                        &mut node,
-                        "InvalidOwner",
-                        "Controller owner MUST match the referenced host.",
-                    )
-                    .await;
-            }
             if let Some(input) = &node.spec.input_ref {
                 let upstream = self.nodes_api.get(&input.name).await?;
                 if upstream.metadata.deletion_timestamp.is_some()
@@ -123,13 +109,6 @@ impl State {
                         .await;
                 }
             }
-            let mut owners = node.owner_references().to_vec();
-            if !owners.iter().any(|o| o.controller == Some(true)) {
-                owners.push(owner);
-            }
-            if owners != node.owner_references() {
-                node = self.nodes_api.patch(&node.name_any(), &PatchParams::default(), &Patch::Merge(json!({"metadata":{"resourceVersion":node.resource_version(),"ownerReferences":owners}}))).await?;
-            }
         }
         let previous = node.status.clone();
         node.status.get_or_insert_default().dispatch = Some(DispatchStatus {
@@ -145,6 +124,7 @@ impl State {
 
 impl State {
 
+    /// Record a validation failure in node status.
     async fn invalid(
         &mut self,
         node: &mut SuntitleNode,
@@ -175,6 +155,7 @@ impl State {
     }
 }
 
+/// Check whether an upstream output suits the downstream node.
 fn compatible(input: &NodeSettings, output: &NodeSettings) -> bool {
     matches!(
         (input, output),
@@ -191,6 +172,7 @@ fn compatible(input: &NodeSettings, output: &NodeSettings) -> bool {
 mod tests {
     use super::*;
 
+    /// Verify dispatch revisions track generation and deletion.
     #[test]
     fn revision_ignores_status_and_metadata_but_includes_deletion() {
         let mut node = super::super::tests::node();
