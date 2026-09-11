@@ -50,8 +50,7 @@ async fn ack(
 ) {
     controller
         .report(
-            &connection.host.uid,
-            &connection.session_id,
+            connection,
             wire(RegistrationClientMessage::Acknowledgement {
                 identity: identity.clone(),
                 operation: Operation::Apply,
@@ -126,11 +125,15 @@ async fn controller_apply_recovery_acceptance() {
     let (mut controller, mut task) = Controller::start(client.clone(), "suntitle");
     let result = AssertUnwindSafe(async {
         let mut connection = connect(&controller, &name).await;
+        assert_eq!(connection.session_id, connection.host.uid);
+        assert_eq!(
+            hosts.get(&name).await.unwrap().status.unwrap().session_id.as_deref(),
+            Some(connection.host.uid.as_str())
+        );
         let first = apply(&mut connection).await;
         controller
             .report(
-                &connection.host.uid,
-                &connection.session_id,
+                &connection,
                 RegistrationClientMessage::Heartbeat {
                     host_uid: connection.host.uid.clone(),
                     session_id: connection.session_id.clone(),
@@ -155,7 +158,7 @@ async fn controller_apply_recovery_acceptance() {
         );
         let node = nodes.get(&name).await.unwrap();
         assert!(node.finalizers().iter().any(|f| f == NODE_FINALIZER));
-        assert_eq!(node.owner_references()[0].uid, connection.host.uid);
+        assert!(node.owner_references().is_empty());
         assert!(
             hosts
                 .get(&name)
@@ -211,8 +214,7 @@ async fn controller_apply_recovery_acceptance() {
         );
         controller
             .report(
-                &connection.host.uid,
-                &connection.session_id,
+                &connection,
                 RegistrationClientMessage::Heartbeat {
                     host_uid: connection.host.uid.clone(),
                     session_id: connection.session_id.clone(),
@@ -290,22 +292,19 @@ async fn controller_apply_recovery_acceptance() {
 
         let mut replacement = connect(&controller, &name).await;
         assert!(*connection.closed.borrow());
-        controller
-            .disconnect(&connection.host.uid, &connection.session_id)
-            .await;
+        controller.disconnect(&connection).await;
         assert!(
             !*replacement.closed.borrow(),
             "an old disconnect MUST preserve the replacement socket"
         );
         let resent = apply(&mut replacement).await;
-        assert_ne!(resent.session_id, retry.session_id);
+        assert_eq!(resent.session_id, retry.session_id);
+        assert_ne!(resent.operation_id, retry.operation_id);
         assert_eq!(resent.generation, disabled_identity.generation);
         ack(&nodes, &controller, &connection, retry, true).await;
         ack(&nodes, &controller, &replacement, resent, true).await;
         quiet(&mut replacement).await;
-        controller
-            .disconnect(&replacement.host.uid, &replacement.session_id)
-            .await;
+        controller.disconnect(&replacement).await;
         assert!(*replacement.closed.borrow());
         controller.shutdown().await;
         (&mut task).await.unwrap();
@@ -362,8 +361,7 @@ async fn controller_apply_recovery_acceptance() {
             .unwrap();
         controller
             .report(
-                &renewed.host.uid,
-                &renewed.session_id,
+                &renewed,
                 RegistrationClientMessage::Heartbeat {
                     host_uid: renewed.host.uid.clone(),
                     session_id: renewed.session_id.clone(),
@@ -377,16 +375,18 @@ async fn controller_apply_recovery_acceptance() {
             status.last_heartbeat, heartbeat,
             "a stale connection MUST NOT refresh the persisted heartbeat"
         );
-        assert_ne!(
+        assert_eq!(
             nodes
                 .get(&name)
                 .await
                 .unwrap()
                 .status
                 .unwrap()
-                .reporting_session
-                .as_deref(),
-            Some(renewed.session_id.as_str())
+                .dispatch
+                .unwrap()
+                .success,
+            None,
+            "a stale connection MUST NOT acknowledge the pending operation"
         );
     })
     .catch_unwind()
@@ -439,8 +439,7 @@ async fn cleanup_ack(
 ) {
     controller
         .report(
-            &connection.host.uid,
-            &connection.session_id,
+            connection,
             wire(RegistrationClientMessage::Acknowledgement {
                 identity: identity.clone(),
                 operation: Operation::Remove,
@@ -517,7 +516,7 @@ async fn controller_deletion_acceptance() {
         nodes.create(&PostParams::default(), &SuntitleNode::new(&node_names[1], spec)).await.unwrap();
         let applied = apply(&mut connection).await;
         ack(&nodes, &controller, &connection, applied, true).await;
-        controller.disconnect(&connection.host.uid, &connection.session_id).await;
+        controller.disconnect(&connection).await;
         hosts.delete(&name, &DeleteParams::default()).await.unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {

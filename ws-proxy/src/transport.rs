@@ -15,24 +15,27 @@ struct Route {
     host: ResourceIdentity,
     outbound: mpsc::Sender<RegistrationServerMessage>,
     closed: watch::Sender<bool>,
+    operations: HashMap<String, String>,
 }
 
 #[derive(Default)]
 pub(crate) struct Connections {
-    routes: HashMap<(String, String), Route>,
+    routes: HashMap<String, Route>,
 }
 
 impl Connections {
-    pub fn open(&mut self, host: ResourceIdentity, session_id: String) -> Connection {
+    pub fn open(&mut self, host: ResourceIdentity) -> Connection {
+        let session_id = host.uid.clone();
         self.close(&host.uid);
         let (outbound, receiver) = mpsc::channel(QUEUE_CAPACITY);
         let (closed, close_rx) = watch::channel(false);
         self.routes.insert(
-            (host.uid.clone(), session_id.clone()),
+            host.uid.clone(),
             Route {
                 host: host.clone(),
                 outbound,
                 closed,
+                operations: HashMap::new(),
             },
         );
         Connection {
@@ -44,14 +47,11 @@ impl Connections {
     }
 
     pub fn contains(&self, uid: &str, session: &str) -> bool {
-        self.routes.contains_key(&(uid.into(), session.into()))
+        uid == session && self.routes.contains_key(uid)
     }
 
     pub fn host(&self, uid: &str) -> Option<ResourceIdentity> {
-        self.routes
-            .values()
-            .find(|route| route.host.uid == uid)
-            .map(|route| route.host.clone())
+        self.routes.get(uid).map(|route| route.host.clone())
     }
 
     pub fn hosts(&self) -> Vec<ResourceIdentity> {
@@ -62,15 +62,27 @@ impl Connections {
     }
 
     pub fn close(&mut self, uid: &str) -> Option<ResourceIdentity> {
-        let key = self.routes.keys().find(|(host, _)| host == uid)?.clone();
-        let route = self.routes.remove(&key)?;
+        let route = self.routes.remove(uid)?;
         let _ = route.closed.send(true);
         Some(route.host)
     }
 
+    pub fn dispatched(&self, uid: &str, node: &str, operation: &str) -> bool {
+        self.routes
+            .get(uid)
+            .is_some_and(|route| route.operations.get(node).is_some_and(|sent| sent == operation))
+    }
+
+    pub fn mark_dispatched(&mut self, uid: &str, node: String, operation: String) {
+        if let Some(route) = self.routes.get_mut(uid) {
+            route.operations.insert(node, operation);
+        }
+    }
+
     pub fn send(&self, uid: &str, session: &str, message: RegistrationServerMessage) -> bool {
         self.routes
-            .get(&(uid.into(), session.into()))
+            .get(uid)
+            .filter(|_| uid == session)
             .is_some_and(|route| route.outbound.try_send(message).is_ok())
     }
 }

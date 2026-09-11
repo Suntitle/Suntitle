@@ -47,8 +47,6 @@ def main():
     host_name = PREFIX + '-host'
     host = create('suntitle-proxy', 'SuntitleHost', host_name, {'name': 'Phase 1 host'},
                   {'finalizers': [f'{GROUP}/host-cleanup']})
-    owner = {'apiVersion': f'{GROUP}/v1alpha1', 'kind': 'SuntitleHost', 'name': host_name,
-             'uid': host['metadata']['uid'], 'controller': True}
     variants = {
         'audio_source': {'sampleRateHz': 16000, 'channels': 1, 'encoding': 'pcm_s16le', 'deviceName': None},
         'transcriber': {'model': 'small', 'language': 'en', 'task': 'transcribe', 'beamSize': 5, 'vadEnabled': True},
@@ -58,17 +56,11 @@ def main():
     nodes = {}
     for kind, settings in variants.items():
         nodes[kind] = create('suntitle-api', 'SuntitleNode', PREFIX + '-' + kind.replace('_', '-'),
-            {'name': kind, 'hostRef': {'name': host_name}, 'settings': {kind: settings}, 'inputRef': None},
-            {'ownerReferences': [owner]})
+            {'name': kind, 'hostRef': {'name': host_name}, 'settings': {kind: settings}, 'inputRef': None})
         nodes[kind] = kubectl('suntitle-proxy', 'patch', NODES, nodes[kind]['metadata']['name'],
             '--type=merge', '-p', json.dumps({'metadata': {'finalizers': [f'{GROUP}/runtime-cleanup']}}), '-o', 'json')
         assert nodes[kind]['spec']['enabled'] is True
-    print('PASS all four settings types, default enabled, API owner admission')
-
-    # Proxy also needs owner-reference admission permissions.
-    proxy_node = create('suntitle-proxy', 'SuntitleNode', PREFIX + '-proxy', nodes['display']['spec'],
-                        {'ownerReferences': [{**owner, 'blockOwnerDeletion': True}]})
-    assert proxy_node['metadata']['ownerReferences'][0]['blockOwnerDeletion']
+    print('PASS all four settings types, default enabled, API creation')
 
     invalid = [
         ('audio_source', 'channels', 3), ('audio_source', 'encoding', 'opus'),
@@ -174,7 +166,7 @@ def main():
             '-p', '{"metadata":{"finalizers":[]}}', '-o', 'json')
     kubectl('suntitle-api', 'get', NODES, name, '-o', 'json', fails='NotFound')
     # Same name is a different resource incarnation.
-    replacement = create('suntitle-api', 'SuntitleNode', name, node['spec'], {'ownerReferences': [owner]})
+    replacement = create('suntitle-api', 'SuntitleNode', name, node['spec'])
     assert replacement['metadata']['uid'] != node['metadata']['uid']
     print('PASS finalizer deletion and replacement UID')
 

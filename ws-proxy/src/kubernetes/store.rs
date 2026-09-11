@@ -1,6 +1,6 @@
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
-    Api, Client, Resource,
+    Api, Client, ResourceExt,
     api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
 };
 use serde::{Deserialize, Serialize};
@@ -105,16 +105,22 @@ impl ResourceStore {
 
     pub async fn create(
         &self,
-        host_name: &str,
+        host_uid: &str,
         request: NodeCreate,
     ) -> Result<SuntitleNode, ApiError> {
-        let host = self.hosts.get(host_name).await?;
+        let host = self
+            .hosts
+            .list(&ListParams::default())
+            .await?
+            .items
+            .into_iter()
+            .find(|host| host.metadata.uid.as_deref() == Some(host_uid))
+            .ok_or_else(|| ApiError::not_found(format!("Host UID {host_uid} was not found.")))?;
         let name = request
             .name
             .unwrap_or_else(|| format!("node-{}", Uuid::new_v4()));
         let mut node = SuntitleNode::new(&name, request.spec);
-        node.spec.host_ref.name = host_name.to_owned();
-        node.metadata.owner_references = host.controller_owner_ref(&()).map(|owner| vec![owner]);
+        node.spec.host_ref.name = host.name_any();
         Ok(self.nodes.create(&PostParams::default(), &node).await?)
     }
 

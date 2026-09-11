@@ -1,6 +1,7 @@
 //! Controller lifecycle and shared reconciliation context.
 mod conditions;
 mod dispatch;
+mod gc;
 mod host;
 mod runtime;
 mod session;
@@ -28,23 +29,33 @@ use tokio::{
 
 pub use crate::transport::Connection;
 
+/// Handle for host sessions and controller shutdown.
 #[derive(Clone)]
 pub struct Controller {
+    /// Shared controller state and lifecycle signals.
     context: Arc<Context>,
 }
+/// Shared reconciliation state and shutdown signals.
 struct Context {
+    /// Serialized access to resources and connections.
     state: Mutex<State>,
+    /// Rejects registrations during shutdown.
     stopping: AtomicBool,
+    /// Wakes the controller task for shutdown.
     stopped: Notify,
 }
 
+/// Reconciliation failure or unfinished cleanup.
 #[derive(Debug)]
 enum ReconcileError {
+    /// Underlying resource or transport failure.
     Failed(Error),
+    /// Cleanup awaiting dependent resource changes.
     CleanupPending,
 }
 impl std::fmt::Display for ReconcileError {
 
+    /// Format the reconciliation error.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Failed(error) => error.fmt(f),
@@ -54,6 +65,7 @@ impl std::fmt::Display for ReconcileError {
 }
 impl std::error::Error for ReconcileError {}
 
+/// Schedule retries after reconciliation failures.
 fn error_policy<K>(_: Arc<K>, error: &ReconcileError, _: Arc<Context>) -> Action {
     if !matches!(error, ReconcileError::CleanupPending) {
         eprintln!("reconcile: {error}");
@@ -61,6 +73,7 @@ fn error_policy<K>(_: Arc<K>, error: &ReconcileError, _: Arc<Context>) -> Action
     Action::requeue(Duration::from_secs(5))
 }
 
+/// Unwrap finalizer failures for retry handling.
 fn finalizer_error(error: finalizer::Error<ReconcileError>) -> ReconcileError {
     match error {
         finalizer::Error::CleanupFailed(error) | finalizer::Error::ApplyFailed(error) => error,
@@ -70,7 +83,7 @@ fn finalizer_error(error: finalizer::Error<ReconcileError>) -> ReconcileError {
 
 impl Controller {
 
-    /// Spec changes and runtime observations use separate controllers.
+    /// Start reconciliation loops and return their shutdown task.
     pub fn start(client: Client, namespace: &str) -> (Self, JoinHandle<()>) {
         let hosts_api = Api::namespaced(client.clone(), namespace);
         let nodes_api = Api::namespaced(client, namespace);
@@ -87,7 +100,8 @@ impl Controller {
         let run_context = context.clone();
         let task = tokio::spawn(async move {
             tokio::select! {
-                _ = host::run(hosts_api.clone(), nodes_api.clone(), run_context.clone()) => {},
+                _ = host::run(hosts_api.clone(), run_context.clone()) => {},
+                _ = gc::run(hosts_api.clone(), run_context.clone()) => {},
                 _ = dispatch::run(nodes_api.clone(), nodes.clone(), writer, run_context.clone()) => {},
                 _ = runtime::run(nodes_api.clone(), hosts_api.clone(), nodes, run_context.clone()) => {},
                 _ = run_context.stopped.notified() => {},
@@ -112,6 +126,7 @@ impl Controller {
         (Self { context }, task)
     }
 
+    /// Accept a host registration and open its connection.
     pub async fn register(&self, message: RegistrationClientMessage) -> Result<Connection, String> {
         let RegistrationClientMessage::Register {
             host_name,
@@ -132,26 +147,32 @@ impl Controller {
             .map_err(|e| e.to_string())
     }
 
-    pub async fn report(&self, host: &str, session: &str, message: RegistrationClientMessage) {
-        if let Err(error) = self
-            .context
-            .state
-            .lock()
-            .await
-            .report(host, session, message)
+    /// Process a report from an open connection.
+    pub async fn report(&self, connection: &Connection, message: RegistrationClientMessage) {
+        let mut state = self.context.state.lock().await;
+        if *connection.closed.borrow() {
+            return;
+        }
+        if let Err(error) = state
+            .report(&connection.host.uid, &connection.session_id, message)
             .await
         {
             eprintln!("runtime report: {error}");
         }
     }
 
-    pub async fn disconnect(&self, host: &str, session: &str) {
+    /// Close the connection and mark its host offline.
+    pub async fn disconnect(&self, connection: &Connection) {
         let mut state = self.context.state.lock().await;
-        if let Err(error) = state.disconnect(host, session).await {
+        if *connection.closed.borrow() {
+            return;
+        }
+        if let Err(error) = state.disconnect(&connection.host.uid, &connection.session_id).await {
             eprintln!("disconnect: {error}");
         }
     }
 
+    /// Stop registration and signal controller shutdown.
     pub async fn shutdown(&self) {
         self.context.stopping.store(true, Ordering::Relaxed);
         self.context.stopped.notify_one();

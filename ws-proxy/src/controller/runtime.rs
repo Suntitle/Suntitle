@@ -45,6 +45,7 @@ pub(super) async fn run(
         .await;
 }
 
+/// Reconcile node runtime state and removal finalization.
 async fn reconcile(node: Arc<SuntitleNode>, ctx: Arc<Context>) -> Result<Action, ReconcileError> {
     let mut state = ctx.state.lock().await;
     let api = state.nodes_api.clone();
@@ -74,7 +75,7 @@ async fn reconcile(node: Arc<SuntitleNode>, ctx: Arc<Context>) -> Result<Action,
 }
 impl State {
 
-    /// The persisted session prevents duplicate sends before acknowledgement.
+    /// Track dispatches on the current connection to resynchronize after reconnect.
     async fn reconcile_runtime(&mut self, node: &SuntitleNode) -> Result<(), Error> {
         let Some(dispatch) = node
             .status
@@ -111,7 +112,13 @@ impl State {
         };
         let status = node.status.as_mut().unwrap();
         let dispatch = status.dispatch.as_mut().unwrap();
-        if dispatch.session_id.as_deref() == Some(&session) {
+        if dispatch.session_id.as_deref() == Some(&session)
+            && self.connections.dispatched(
+                host_uid,
+                node.metadata.uid.as_deref().unwrap(),
+                &dispatch.operation_id,
+            )
+        {
             if let Some(success) = dispatch.success {
                 if success {
                     status.observed_generation = Some(dispatch.generation);
@@ -148,7 +155,8 @@ impl State {
                 NodePhase::Pending
             },
         );
-        // Persist the session before sending so status events MUST NOT dispatch again.
+        let operation_id = identity.operation_id.clone();
+        let node_uid = identity.target.uid.clone();
         self.node_status(&mut node, &previous).await?;
         let message = if removing {
             RegistrationServerMessage::Remove { identity }
@@ -159,10 +167,12 @@ impl State {
             }
         };
         self.dispatch(host_uid, &session, message);
+        self.connections.mark_dispatched(host_uid, node_uid, operation_id);
         Ok(())
     }
 }
 
+/// Update the node phase and readiness conditions.
 fn set_phase(node: &mut SuntitleNode, phase: NodePhase) {
     let generation = node.metadata.generation.unwrap();
     let status = node.status.as_mut().unwrap();

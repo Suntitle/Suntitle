@@ -115,6 +115,7 @@ async fn resource_api_acceptance() {
         )
         .await
         .unwrap();
+    let host_uid = host.uid().unwrap();
     let mut created = Vec::<String>::new();
     let result = AssertUnwindSafe(async {
         expect(&store, Method::GET, "/readyz", None, 200).await;
@@ -122,11 +123,11 @@ async fn resource_api_acceptance() {
         for kind in ["audio_source", "transcriber", "translator", "display"] {
             let name = format!("{prefix}-{}", kind.replace('_', "-"));
             let spec = json!({"name":kind,"hostRef":{"name":"ignored-host"},"settings":{kind:variants[kind]},"inputRef":{"name":"missing-input"}});
-            let (status, node, location) = request(&store, Method::POST, &format!("/api/v1/hosts/{host_name}/nodes"), Some(json!({"name":name,"spec":spec}))).await;
+            let (status, node, location) = request(&store, Method::POST, &format!("/api/v1/hosts/{host_uid}/nodes"), Some(json!({"name":name,"spec":spec}))).await;
             assert_eq!(status, StatusCode::CREATED, "{node}");
             created.push(name.clone());
             assert_eq!(location, Some(format!("/api/v1/nodes/{name}")));
-            assert_eq!(node["metadata"]["ownerReferences"][0]["uid"], host.uid().unwrap());
+            assert!(node["metadata"]["ownerReferences"].is_null());
             assert!(node["metadata"]["finalizers"].is_null());
             assert_eq!(node["spec"]["hostRef"]["name"], host_name);
             assert!(node.get("status").is_none_or(Value::is_null));
@@ -158,23 +159,21 @@ async fn resource_api_acceptance() {
         let overwritten = expect(&store, Method::PUT, &uri, Some(json!({"spec":initial["spec"]})), 200).await;
         assert_eq!(overwritten["spec"], initial["spec"]);
         assert_eq!(overwritten["status"], updated["status"]);
-        let duplicate = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_name}/nodes"), Some(json!({"name":name,"spec":initial["spec"]})), 409).await;
+        let duplicate = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_uid}/nodes"), Some(json!({"name":name,"spec":initial["spec"]})), 409).await;
         assert_eq!(duplicate["error"]["code"], "AlreadyExists");
         expect(&store, Method::POST, "/api/v1/hosts/missing-host/nodes", Some(json!({"spec":initial["spec"]})), 404).await;
         expect(&store, Method::POST, "/api/v1/nodes/missing-node/restart", None, 404).await;
-        let mut owners = initial["metadata"]["ownerReferences"].clone(); owners[0]["uid"] = json!("old-host-uid");
-        nodes.patch(name, &PatchParams::default(), &Patch::Merge(&json!({"metadata":{"ownerReferences":owners,"finalizers":[NODE_FINALIZER]}}))).await.unwrap();
+        nodes.patch(name, &PatchParams::default(), &Patch::Merge(&json!({"metadata":{"finalizers":[NODE_FINALIZER]}}))).await.unwrap();
         expect(&store, Method::DELETE, &uri, None, 202).await;
         expect(&store, Method::DELETE, &uri, None, 202).await;
         expect(&store, Method::DELETE, "/api/v1/nodes/missing-node", None, 404).await;
         let terminating = expect(&store, Method::POST, &restart_uri, None, 202).await;
         assert!(terminating["metadata"]["deletionTimestamp"].is_string());
-        assert_eq!(terminating["metadata"]["ownerReferences"], owners);
         assert_eq!(terminating["metadata"]["finalizers"], json!([NODE_FINALIZER]));
         expect(&store, Method::PUT, &uri, Some(json!({"spec":initial["spec"]})), 200).await;
         hosts.patch(&host_name, &PatchParams::default(), &Patch::Merge(&json!({"metadata":{"finalizers":[HOST_FINALIZER]}}))).await.unwrap();
         hosts.delete(&host_name, &DeleteParams::default()).await.unwrap();
-        let allocated = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_name}/nodes"), Some(json!({"spec":initial["spec"]})), 201).await;
+        let allocated = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_uid}/nodes"), Some(json!({"spec":initial["spec"]})), 201).await;
         created.push(allocated["metadata"]["name"].as_str().unwrap().to_owned());
         assert!(allocated["metadata"]["finalizers"].is_null());
     }).catch_unwind().await;
@@ -283,5 +282,50 @@ async fn readiness_rejects_unestablished_crds() {
         503,
     )
     .await;
+    server.abort();
+}
+
+#[actix_web::test]
+async fn installation_resolves_host_uid_from_each_list_request() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use warp::Filter;
+
+    let lists = Arc::new(AtomicUsize::new(0));
+    let creates = Arc::new(AtomicUsize::new(0));
+    let list_count = lists.clone();
+    let create_count = creates.clone();
+    let route = warp::method()
+        .and(warp::path::full())
+        .and(warp::body::bytes())
+        .map(move |method: warp::http::Method, path: warp::path::FullPath, body: actix_web::web::Bytes| {
+            let value = if method == warp::http::Method::GET {
+                assert_eq!(path.as_str(), "/apis/control.suntitle.io/v1alpha1/namespaces/suntitle/suntitlehosts");
+                list_count.fetch_add(1, Ordering::SeqCst);
+                json!({"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleHostList","metadata":{"resourceVersion":"1"},"items":[
+                    {"metadata":{"name":"other-host","uid":"other-uid"},"spec":{"name":"Other"}},
+                    {"metadata":{"name":"target-host","uid":"target-uid"},"spec":{"name":"Target"}}
+                ]})
+            } else {
+                assert_eq!(method, warp::http::Method::POST);
+                assert_eq!(path.as_str(), "/apis/control.suntitle.io/v1alpha1/namespaces/suntitle/suntitlenodes");
+                create_count.fetch_add(1, Ordering::SeqCst);
+                let node: Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(node["spec"]["hostRef"]["name"], "target-host");
+                node
+            };
+            warp::reply::json(&value)
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+    let client = Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap();
+    let store = ResourceStore::new(client, "suntitle");
+    let body = json!({"spec":{"name":"Screen","hostRef":{"name":"ignored"},"settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}}});
+    for uid in ["target-uid", "target-uid", "target-host", "missing-uid"] {
+        let status = if uid == "target-uid" { 201 } else { 404 };
+        expect(&store, Method::POST, &format!("/api/v1/hosts/{uid}/nodes"), Some(body.clone()), status).await;
+    }
+    assert_eq!(lists.load(Ordering::SeqCst), 4);
+    assert_eq!(creates.load(Ordering::SeqCst), 2);
     server.abort();
 }

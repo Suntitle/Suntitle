@@ -187,7 +187,7 @@ async fn registration_connected(ws: WebSocket, controller: Option<Controller>) {
                     Some(Ok(message)) if message.is_text() => {
                         let Ok(envelope) = serde_json::from_slice::<Envelope<RegistrationClientMessage>>(message.as_bytes()) else { break; };
                         if envelope.protocol_version != 1 { break; }
-                        controller.report(&connection.host.uid, &connection.session_id, envelope.message).await;
+                        controller.report(&connection, envelope.message).await;
                     },
                     Some(Ok(message)) if message.is_ping() => { write.send(Message::pong(message.as_bytes().to_vec())).await?; },
                     Some(Ok(message)) if !message.is_close() => {},
@@ -201,7 +201,7 @@ async fn registration_connected(ws: WebSocket, controller: Option<Controller>) {
         eprintln!("registration socket: {e}");
     }
     controller
-        .disconnect(&connection.host.uid, &connection.session_id)
+        .disconnect(&connection)
         .await;
 }
 

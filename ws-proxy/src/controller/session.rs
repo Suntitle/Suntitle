@@ -15,14 +15,19 @@ use std::{collections::BTreeMap, time::Duration};
 
 pub(super) const EXPIRY: Duration = Duration::from_secs(45);
 
+/// Kubernetes clients and active host connections.
 pub(super) struct State {
+    /// Client for host resources and status.
     pub(super) hosts_api: Api<SuntitleHost>,
+    /// Client for node resources and status.
     pub(super) nodes_api: Api<SuntitleNode>,
+    /// Active host sessions and dispatch tracking.
     pub(super) connections: Connections,
 }
 
 impl State {
 
+    /// Close the matching session and persist offline status.
     pub(super) async fn disconnect(&mut self, uid: &str, session: &str) -> Result<(), Error> {
         let Some(identity) = self.connections.host(uid) else {
             return Ok(());
@@ -94,11 +99,7 @@ impl State {
                     || (operation == Operation::Apply && node.metadata.deletion_timestamp.is_some())
                     || (operation == Operation::Remove
                         && node.metadata.deletion_timestamp.is_none())
-                    || node
-                        .owner_references()
-                        .iter()
-                        .find(|o| o.controller == Some(true))
-                        .is_none_or(|o| o.uid != host_uid || o.name != host.name_any())
+                    || node.spec.host_ref.name != host.name_any()
                 {
                     return Ok(());
                 }
@@ -113,6 +114,7 @@ impl State {
         Ok(())
     }
 
+    /// Create or reuse a host and replace its connection.
     pub(super) async fn register(
         &mut self,
         name: String,
@@ -136,24 +138,25 @@ impl State {
         };
         let identity = identity(&host.metadata);
         self.close(&identity.uid);
-        let id = uuid::Uuid::new_v4().to_string();
         let previous = host.status.clone();
         let status = host.status.get_or_insert_default();
         status.ip = ip;
         status.agent_version = Some(version);
         status.reported_metadata = metadata;
-        status.session_id = Some(id.clone());
+        status.session_id = Some(identity.uid.clone());
         status.last_heartbeat = Some(Utc::now());
         status.presence = Some(Presence::Online);
         self.host_status(&mut host, &previous).await?;
-        let connection = self.connections.open(identity.clone(), id);
+        let connection = self.connections.open(identity);
         Ok(connection)
     }
 
+    /// Close the host connection.
     pub(super) fn close(&mut self, uid: &str) {
         self.connections.close(uid);
     }
 
+    /// Persist offline presence and close the host connection.
     pub(super) async fn offline(&mut self, host: &SuntitleHost) -> Result<(), Error> {
         let mut host = host.clone();
         let previous = host.status.clone();
@@ -167,6 +170,7 @@ impl State {
         Ok(())
     }
 
+    /// Return the connected session with a fresh heartbeat.
     pub(super) fn active_session(&self, host: &SuntitleHost) -> Option<String> {
         if heartbeat_expired(host, Utc::now()) {
             return None;
@@ -177,6 +181,7 @@ impl State {
             .then(|| session.clone())
     }
 
+    /// Persist changed host status with merged conditions.
     pub(super) async fn host_status(
         &self,
         host: &mut SuntitleHost,
@@ -197,6 +202,7 @@ impl State {
         Ok(())
     }
 
+    /// Persist changed node status with merged conditions.
     pub(super) async fn node_status(
         &self,
         node: &mut SuntitleNode,
@@ -239,6 +245,7 @@ impl State {
     }
 }
 
+/// Check the host UID and recorded session.
 pub(super) fn current_session(host: &SuntitleHost, uid: &str, session: &str) -> bool {
     host.uid().as_deref() == Some(uid)
         && host
@@ -248,6 +255,7 @@ pub(super) fn current_session(host: &SuntitleHost, uid: &str, session: &str) -> 
             == Some(session)
 }
 
+/// Check whether the heartbeat is missing or too old.
 pub(super) fn heartbeat_expired(host: &SuntitleHost, now: chrono::DateTime<Utc>) -> bool {
     host.status
         .as_ref()
@@ -259,6 +267,7 @@ pub(super) fn heartbeat_expired(host: &SuntitleHost, now: chrono::DateTime<Utc>)
         })
 }
 
+/// Extract the resource namespace, name, and UID.
 pub(super) fn identity(metadata: &kube::core::ObjectMeta) -> ResourceIdentity {
     ResourceIdentity {
         namespace: metadata.namespace.clone().unwrap(),
@@ -267,11 +276,13 @@ pub(super) fn identity(metadata: &kube::core::ObjectMeta) -> ResourceIdentity {
     }
 }
 
+/// Check report identity for a node without pending deletion.
 #[cfg(test)]
 pub(super) fn matches_node(node: &SuntitleNode, id: &ApplyIdentity) -> bool {
     matches_identity(node, id) && node.metadata.deletion_timestamp.is_none()
 }
 
+/// Check the resource identity, generation, and restart token.
 pub(super) fn matches_identity(node: &SuntitleNode, id: &ApplyIdentity) -> bool {
     node.uid().as_deref() == Some(&id.target.uid)
         && node.namespace().as_deref() == Some(&id.target.namespace)

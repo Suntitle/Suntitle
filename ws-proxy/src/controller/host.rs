@@ -1,26 +1,23 @@
-//! Host presence and host-owned resource cleanup.
+//! Host presence reconciliation.
 use super::{
-    Context, ReconcileError, error_policy, finalizer_error,
+    Context, ReconcileError, error_policy,
     session::{EXPIRY, State},
 };
 use crate::kubernetes::{Error, resources::*};
 use futures_util::StreamExt;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{
-    Api, ResourceExt,
-    api::{DeleteParams, ListParams},
+    Api,
     runtime::{
         controller::{Action, Config, Controller as KubeController},
-        finalizer::{self, Event},
         watcher,
     },
 };
 use std::sync::Arc;
 
-/// Run host presence and owned-node cleanup reconciliation.
-pub(super) async fn run(hosts: Api<SuntitleHost>, nodes: Api<SuntitleNode>, context: Arc<Context>) {
+/// Reconcile host presence.
+pub(super) async fn run(hosts: Api<SuntitleHost>, context: Arc<Context>) {
     KubeController::new(hosts, watcher::Config::default())
-        .owns(nodes, watcher::Config::default())
         .with_config(Config::default().concurrency(1))
         .run(reconcile, error_policy, context)
         .for_each(|result| async move {
@@ -31,63 +28,19 @@ pub(super) async fn run(hosts: Api<SuntitleHost>, nodes: Api<SuntitleNode>, cont
         .await;
 }
 
+/// Refresh host presence and schedule an expiry check.
 async fn reconcile(host: Arc<SuntitleHost>, ctx: Arc<Context>) -> Result<Action, ReconcileError> {
-    let mut state = ctx.state.lock().await;
-    let api = state.hosts_api.clone();
-    finalizer::finalizer(&api, HOST_FINALIZER, host, |event| async {
-        match event {
-            Event::Apply(host) => {
-                state
-                    .reconcile_host(&host)
-                    .await
-                    .map_err(ReconcileError::Failed)?;
-                Ok(Action::requeue(EXPIRY))
-            }
-            Event::Cleanup(host) => {
-                if state
-                    .cleanup_host(&host)
-                    .await
-                    .map_err(ReconcileError::Failed)?
-                {
-                    Ok(Action::await_change())
-                } else {
-                    Err(ReconcileError::CleanupPending)
-                }
-            }
-        }
-    })
-    .await
-    .map_err(finalizer_error)
+    ctx.state
+        .lock()
+        .await
+        .reconcile_host(&host)
+        .await
+        .map_err(ReconcileError::Failed)?;
+    Ok(Action::requeue(EXPIRY))
 }
 
 impl State {
-
-    /// The standalone API server has no garbage collector for owned nodes.
-    async fn cleanup_host(&mut self, host: &SuntitleHost) -> Result<bool, Error> {
-        let nodes = self.nodes_api.list(&ListParams::default()).await?;
-        let owned: Vec<_> = nodes
-            .iter()
-            .filter(|node| {
-                node.owner_references().iter().any(|owner| {
-                    owner.controller == Some(true)
-                        && Some(owner.uid.as_str()) == host.metadata.uid.as_deref()
-                })
-            })
-            .collect();
-        if owned.is_empty() {
-            self.close(host.metadata.uid.as_deref().unwrap());
-            return Ok(true);
-        }
-        for node in owned {
-            if node.metadata.deletion_timestamp.is_none() {
-                self.nodes_api
-                    .delete(&node.name_any(), &DeleteParams::default())
-                    .await?;
-            }
-        }
-        Ok(false)
-    }
-
+    /// Update host conditions and close expired sessions.
     async fn reconcile_host(&mut self, host: &SuntitleHost) -> Result<(), Error> {
         let uid = host.metadata.uid.clone().unwrap();
         let mut host = host.clone();

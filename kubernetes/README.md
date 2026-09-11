@@ -33,14 +33,14 @@ installs a ClusterRole allowing only GET on these two CRDs for readiness.
 
 Host/node list responses contain `items` and an opaque `resourceVersion`.
 Node GET/create/update/restart responses contain Kubernetes resources. Create
-returns 201 and Location, using the path host for `hostRef` and ownership. PUT
+returns 201 and Location, using the path host for `hostRef`. PUT
 accepts `{spec: ...}` and replaces only the complete desired spec. Restart has no
 request body and patches only a fresh restart token, returning 202. Neither write
 uses a resource-version precondition or a preliminary resource read. Metadata and
 status are preserved by these patches.
 
 Kubernetes schemas and CEL validate desired fields and immutable changes. The
-API does not check input references, ownership consistency, or deletion timestamps.
+API does not check input references or deletion timestamps.
 The controller owns reference reconciliation and all finalizer management.
 API-server errors retain their HTTP status and reason/message/details in the
 error envelope. The client retry layer is disabled so transient server errors
@@ -59,9 +59,9 @@ Fault-injection tests cover upstream error propagation and readiness failures.
 `pki/suntitle-api.kubeconfig` and `pki/suntitle-proxy.kubeconfig` use distinct
 certificate CNs. Neither identity can install CRDs or RBAC. API reads hosts and
 writes node desired state, but cannot write status or host finalizers. Proxy can
-watch/manage resources and status and perform lifecycle cleanup. API-created
-owner references set `controller: true`; finalizers and `blockOwnerDeletion`
-maintenance belong to the controller.
+watch/manage resources and status and perform lifecycle cleanup. Nodes reference hosts through `spec.hostRef.name`. A dedicated GC controller
+deletes referencing nodes on host deletion and retains the host cleanup finalizer
+until their runtime cleanup finishes.
 
 Specs reuse the current typed Rust settings through an externally tagged enum:
 
@@ -97,8 +97,7 @@ python3 scripts/test-kubernetes-resources.py
 
 The suite uses the three explicit local kubeconfigs and unique resource names;
 it removes its own resources and finalizers. It does not delete namespaces or
-rely on a garbage collector. Resource ownership/reference agreement and runtime
-cleanup are contracts for the later controller, not implemented by CRD schemas.
+rely on a garbage collector. Runtime cleanup is handled by controllers, not CRD schemas.
 
 For containers, credentials can come from a shared read-only volume. Generate
 kubeconfigs with certificate paths matching their container mount points and use

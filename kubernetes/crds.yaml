@@ -91,7 +91,7 @@ spec:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
               sessionId:
-                description: Current agent session identifier used to reject stale reports.
+                description: Registered host UID.
                 nullable: true
                 type: string
             type: object
@@ -453,7 +453,7 @@ spec:
                 nullable: true
                 type: string
               reportingSession:
-                description: Host agent session that produced this status.
+                description: Host UID that produced this status.
                 nullable: true
                 type: string
             type: object
