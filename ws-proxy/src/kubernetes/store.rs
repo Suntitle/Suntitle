@@ -1,6 +1,6 @@
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
-    Api, Client, ResourceExt,
+    Api, Client, Resource as _, ResourceExt,
     api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
 };
 use serde::{Deserialize, Serialize};
@@ -120,6 +120,7 @@ impl ResourceStore {
             .name
             .unwrap_or_else(|| format!("node-{}", Uuid::new_v4()));
         let mut node = SuntitleNode::new(&name, request.spec);
+        node.metadata.owner_references = host.controller_owner_ref(&()).map(|owner| vec![owner]);
         node.spec.host_ref.name = host.name_any();
         Ok(self.nodes.create(&PostParams::default(), &node).await?)
     }

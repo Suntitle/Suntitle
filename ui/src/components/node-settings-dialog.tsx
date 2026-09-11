@@ -65,22 +65,6 @@ function formatNodeId(value: string) {
   return value.length > 13 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
 }
 
-function getInputNodeId(node: Node, nodes: Node[]): string | null {
-  const nodeIds = new Set(nodes.map((item) => item.id))
-
-  for (const candidate of nodes) {
-    for (const connection of candidate.connections) {
-      if (!nodeIds.has(connection.peerNodeId)) continue
-
-      const sourceId = connection.direction === "outgoing" ? candidate.id : connection.peerNodeId
-      const targetId = connection.direction === "outgoing" ? connection.peerNodeId : candidate.id
-      if (targetId === node.id) return sourceId
-    }
-  }
-
-  return null
-}
-
 function createNodeUpdate(node: Node, name: string, inputNodeId: string | null, settings: Record<string, NodeSettingValue>): NodeUpdate {
   const base = {
     name,
@@ -121,7 +105,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
     if (!node) return
 
     setNodeName(node.name)
-    setInputNodeId(getInputNodeId(node, nodesStore.items))
+    setInputNodeId(node.inputNodeId)
     setSettings({ ...node.settings })
     nodesStore.clearSaveError()
 
@@ -258,7 +242,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
             </div>
 
             <DialogFooter className="items-center border-t px-6 py-4 sm:justify-between">
-              <p className="text-xs text-muted-foreground">Changes apply immediately on {node.host.name}.</p>
+              <p className="text-xs text-muted-foreground">Changes will be applied asynchronously on {node.host.name}.</p>
               <div className="flex items-center gap-2">
                 <Button type="button" variant="outline" onClick={() => nodesStore.selectNode(null)}>Cancel</Button>
                 <Button type="submit" className="bg-violet-600 hover:bg-violet-500" disabled={!canSave || nodesStore.isSaving}>

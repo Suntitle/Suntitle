@@ -36,6 +36,10 @@ db-test: db-up db-migrate
 db-stop:
     docker compose stop postgres
 
+# Stop Compose services and permanently delete the local database and Kubernetes data.
+db-drop-volume: db-env
+    docker compose --env-file .env.local down --volumes
+
 # Start the independent control API.
 api:
     cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api
@@ -68,9 +72,9 @@ listener-devices:
 listener-device device host="localhost:3030":
     uv run python suntitle-listener.py "ws://{{ host }}" --device "{{ device }}"
 
-# Start a local Diamant host with a persistent project-local identity.
+# Start the local Diamant host as local-host.
 diamant-local:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --id-file .suntitle/diamant.id --project-dir "{{ justfile_directory() }}"
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --host-name local-host --project-dir "{{ justfile_directory() }}"
 
 # Run kubectl against the local Compose API server, forwarding all arguments.
 [positional-arguments]
@@ -81,62 +85,46 @@ kubectl *args:
 _local-infra-up: db-env
     #!/usr/bin/env bash
     set -euo pipefail
-    for file in ca.crt apiserver.crt apiserver.key sa.pub sa.key; do
+    for file in ca.crt apiserver.crt apiserver.key sa.pub sa.key admin.crt admin.key; do
         if [[ ! -s "pki/$file" ]]; then
             echo "Missing pki/$file. Run 'just generate-certs' before 'just local-stack'." >&2
             exit 1
         fi
     done
-    docker compose --env-file .env.local up -d --wait --wait-timeout 90 postgres kine kube-apiserver
+    bash scripts/generate-kubeconfigs.sh
+    docker compose --env-file .env.local build kubernetes-bootstrap
+    docker compose --env-file .env.local up -d --wait --wait-timeout 180 api ws-proxy
 
-# Start PostgreSQL, Kine, kube-apiserver, API, proxy, Diamant and UI. Ctrl+C leaves Compose services running.
-local-stack: _local-infra-up _ui-dependencies db-migrate
+# Start the full stack. Exit stops all services and preserves database data.
+local-stack:
     #!/usr/bin/env bash
     set -euo pipefail
 
     pids=()
 
     cleanup() {
+        status=$?
         trap - EXIT
+        trap '' INT TERM
+        set +e
         if (( ${#pids[@]} > 0 )); then
-            kill "${pids[@]}" 2>/dev/null || true
-            wait "${pids[@]}" 2>/dev/null || true
+            kill -TERM "${pids[@]}" 2>/dev/null
+            wait "${pids[@]}" 2>/dev/null
         fi
+        docker compose --env-file .env.local down
+        exit "$status"
     }
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    cargo build --manifest-path ws-proxy/Cargo.toml --bins
-    ws-proxy/target/debug/control_api &
-    api_pid=$!
-    pids+=("$api_pid")
-
-    ws-proxy/target/debug/ws-proxy &
-    proxy_pid=$!
-    pids+=("$proxy_pid")
-
-    for _ in {1..120}; do
-        if curl -fsS http://127.0.0.1:3031/api/v1/hosts >/dev/null 2>&1 && (echo > /dev/tcp/127.0.0.1/3030) 2>/dev/null; then
-            break
-        fi
-        if ! kill -0 "$api_pid" 2>/dev/null; then
-            wait "$api_pid"
-            exit 1
-        fi
-        if ! kill -0 "$proxy_pid" 2>/dev/null; then
-            wait "$proxy_pid"
-            exit 1
-        fi
-        sleep 0.25
-    done
-    curl -fsS http://127.0.0.1:3031/api/v1/hosts >/dev/null
-    (echo > /dev/tcp/127.0.0.1/3030) 2>/dev/null
-
-    ws-proxy/target/debug/diamant --id-file .suntitle/diamant.id --project-dir "{{ justfile_directory() }}" &
+    just _local-infra-up
+    just _ui-dependencies
+    cargo build --manifest-path ws-proxy/Cargo.toml --bin diamant
+    ws-proxy/target/debug/diamant --host-name local-host --project-dir "{{ justfile_directory() }}" &
     pids+=("$!")
 
-    (cd ui && exec env SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js) &
+    (cd ui && exec env SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173 --strictPort) &
     pids+=("$!")
 
     while true; do

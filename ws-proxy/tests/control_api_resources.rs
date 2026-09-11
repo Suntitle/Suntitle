@@ -127,7 +127,13 @@ async fn resource_api_acceptance() {
             assert_eq!(status, StatusCode::CREATED, "{node}");
             created.push(name.clone());
             assert_eq!(location, Some(format!("/api/v1/nodes/{name}")));
-            assert!(node["metadata"]["ownerReferences"].is_null());
+            assert_eq!(node["metadata"]["ownerReferences"], json!([{
+                "apiVersion": "control.suntitle.io/v1alpha1",
+                "kind": "SuntitleHost",
+                "name": host_name,
+                "uid": host_uid,
+                "controller": true,
+            }]));
             assert!(node["metadata"]["finalizers"].is_null());
             assert_eq!(node["spec"]["hostRef"]["name"], host_name);
             assert!(node.get("status").is_none_or(Value::is_null));

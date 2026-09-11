@@ -30,49 +30,42 @@ Install the Python dependencies from the repository root:
 just setup
 ```
 
-## Local database and independent services
+## Local stack
 
-Docker Compose provides PostgreSQL 18 and a standalone Kubernetes API server
-backed by Kine. The Rust binaries run on the host:
+Docker Compose runs PostgreSQL, Kine, kube-apiserver, the control API, and the
+WebSocket proxy/controller. Diamant and the UI development server run on the host.
 
 ```bash
-cp .env.example .env.local  # first setup only; credentials are for local development
-just db-up
-just db-migrate
-just api                  # terminal 1, port 3031
-just proxy                # terminal 2, port 3030
+just generate-certs  # once before the first launch; requires mkcert and OpenSSL
+just local-stack
 ```
 
-Both binaries read `.env.local` without overriding exported environment variables.
-They require `DATABASE_URL`, a reachable database, and the exact migrated schema;
-startup fails otherwise. Each uses a bounded pool of eight connections. Only the
-proxy listens for database notifications. Run one proxy instance per database;
-a database advisory lock rejects a second instance.
+`just local-stack` creates `.env.local` if missing, generates local client
+kubeconfigs, builds the backend image, and starts Compose. A bootstrap container
+waits for Kubernetes readiness and installs the namespace, CRDs, and RBAC.
+The API and proxy start with their separate container kubeconfigs. The command
+waits for both services to be healthy before starting Diamant and the UI.
+PostgreSQL is Kine's backing database; legacy application database migrations
+are not needed.
 
-`just local-stack` starts PostgreSQL, Kine, and kube-apiserver through Compose,
-prepares the database, and starts API, proxy, Diamant, and UI. Run
-`just generate-certs` once before the first launch (requires `mkcert` and OpenSSL).
-The command checks the required certificate files and loads Compose settings
-from `.env.local`. It waits for the API and proxy before starting clients.
-Ctrl+C stops application children and leaves the Compose services running.
-`docker compose stop` stops all Compose services while preserving the database
-volume; `just db-stop` stops only PostgreSQL. `just ui` starts the database, API,
-and UI.
+Open http://127.0.0.1:5173. The UI forwards `/api` to the control API on port 3031,
+which stores resources through Kubernetes on port 6443. Diamant connects to the
+proxy on port 3030 and registers `local-host`. Nodes installed through the UI
+are reconciled asynchronously by the controller and executed by Diamant.
 
-Commands are committed with desired state, delivered in revision order per node,
-and completed only by a matching terminal runtime acknowledgement. Duplicate
-commands are ignored by Diamant when their revision has already been applied. Recovery from
-lost terminal acknowledgements is deferred. Registration reconciles a fresh agent
-with the latest full desired configuration. Timer scans recover missed notifications, and session tokens
-reject late messages from replaced connections. Domain models and OpenAPI stay
-unchanged, including typed `NodeSettings`. Callers Get current models, modify them,
-then submit direct Updates. An optimistic version check rejects stale submissions;
-retries Get fresh state before reapplying changes. SQL Create, Update, and Delete
-operations stay inside the PostgreSQL adapter.
+Ctrl+C or a startup failure stops Diamant and its node processes, stops the UI,
+and removes the Compose containers and network. The database volume is retained.
+`docker compose --env-file .env.local stop` stops the infrastructure while
+preserving its data volume. To erase the local database and all Kubernetes
+resources, stop `just local-stack`, then run `just db-drop-volume`. The next
+`just local-stack` creates a fresh database and bootstraps Kubernetes again.
 
-Run `just db-test` for live storage checks, `just host-e2e` and `just node-e2e`
-for separate-process checks. These use isolated schemas and leave development
-records intact. Run E2E examples one at a time with ports 3030 and 3031 free.
+After generating certificates and kubeconfigs, the backend can also run on its own:
+
+```bash
+docker compose --env-file .env.local build kubernetes-bootstrap
+docker compose --env-file .env.local up -d --wait api ws-proxy
+```
 
 For a local backup, capture a PostgreSQL custom-format dump:
 
@@ -407,11 +400,9 @@ with `--host-name` or `SUNTITLE_HOST_NAME`. The proxy URL can be set with
 `--proxy-url` or `SUNTITLE_PROXY_URL`. Diamant detects the routed host IP by
 default; use `--host-ip` or `SUNTITLE_HOST_IP` to override it.
 
-On its first run, Diamant creates `diamant.id` containing the host UUID and
-reuses it on subsequent registrations. Use `--id-file` or `SUNTITLE_ID_FILE` to
-choose another location. It reports health every 30 seconds, keeps the
-WebSocket open until the connection ends, and then exits. The health interval
-can be changed with `--health-interval-seconds` or
+The proxy resolves the host name to a Kubernetes host resource and returns its
+UID. Diamant reports health every 30 seconds and reconnects when the connection
+ends. The health interval can be changed with `--health-interval-seconds` or
 `SUNTITLE_HEALTH_INTERVAL_SECONDS`.
 
 Host identity, health, desired nodes, and pending commands persist in PostgreSQL.

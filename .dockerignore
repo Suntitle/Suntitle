@@ -1,0 +1,8 @@
+**/target
+**/node_modules
+.git
+pki
+.env*
+.suntitle
+.venv
+ui/dist

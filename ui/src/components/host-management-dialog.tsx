@@ -136,7 +136,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
 
     try {
       const node = await nodesStore.installNode(host.id, create)
-      setSuccessMessage(`${node.name} was installed on ${host.name}.`)
+      setSuccessMessage(`${node.name} installation was requested on ${host.name}.`)
     } catch {
       // NodesStore exposes the normalized API error to this observer.
     }
@@ -269,7 +269,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
             </div>
 
             <DialogFooter className="items-center border-t px-6 py-4 sm:justify-between">
-              <p className="text-xs text-muted-foreground">Installation starts immediately on {host.name}.</p>
+              <p className="text-xs text-muted-foreground">Installation will be applied asynchronously on {host.name}.</p>
               <div className="flex items-center gap-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
                 <Button type="submit" className="bg-violet-600 hover:bg-violet-500" disabled={!canInstall || nodesStore.isInstalling || host.status === "offline"}>

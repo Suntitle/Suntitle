@@ -1,25 +1,30 @@
 {
-  "id": "30000000-0000-4000-8000-000000000001",
-  "type": "audio_source",
-  "name": "Studio microphone",
-  "description": "Primary audio input",
-  "enabled": true,
-  "status": "connected",
-  "host": {
-    "id": "20000000-0000-4000-8000-000000000001",
-    "name": "studio-host",
-    "ip": "192.0.2.10",
-    "version": "0.1.0",
-    "status": "online",
-    "lastSeenAt": "2026-08-26T15:50:00Z"
+  "apiVersion": "control.suntitle.io/v1alpha1",
+  "kind": "SuntitleNode",
+  "metadata": {
+    "name": "30000000-0000-4000-8000-000000000001",
+    "uid": "uid-30000000-0000-4000-8000-000000000001",
+    "creationTimestamp": "2026-08-20T10:00:00Z"
   },
-  "connections": [],
-  "createdAt": "2026-08-20T10:00:00Z",
-  "updatedAt": "2026-08-26T15:50:00Z",
-  "settings": {
-    "sampleRateHz": 48000,
-    "channels": 1,
-    "encoding": "pcm_s16le",
-    "deviceName": "USB Audio Device"
+  "spec": {
+    "name": "Studio microphone",
+    "description": "Primary audio input",
+    "enabled": true,
+    "hostRef": {
+      "name": "studio-host-resource"
+    },
+    "inputRef": null,
+    "restartToken": "existing-restart",
+    "settings": {
+      "audio_source": {
+        "sampleRateHz": 48000,
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "deviceName": "USB Audio Device"
+      }
+    }
+  },
+  "status": {
+    "phase": "Running"
   }
 }

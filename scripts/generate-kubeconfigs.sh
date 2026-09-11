@@ -18,19 +18,29 @@ for identity in suntitle-api suntitle-proxy; do
   fi
 done
 for identity in admin suntitle-api suntitle-proxy; do
-  cat > "pki/${identity}.kubeconfig" <<CONFIG
+  for environment in local compose; do
+    if [[ "$environment" == local ]]; then
+      config_path="pki/${identity}.kubeconfig"
+      server="https://127.0.0.1:6443"
+      certificate_dir="${root_dir}/pki"
+    else
+      config_path="pki/${identity}.compose.kubeconfig"
+      server="https://kube-apiserver:6443"
+      certificate_dir="/etc/kubernetes/pki"
+    fi
+    cat > "$config_path" <<CONFIG
 apiVersion: v1
 kind: Config
 clusters:
   - name: suntitle-local
     cluster:
-      server: https://127.0.0.1:6443
-      certificate-authority: ${root_dir}/pki/ca.crt
+      server: ${server}
+      certificate-authority: ${certificate_dir}/ca.crt
 users:
   - name: ${identity}
     user:
-      client-certificate: ${root_dir}/pki/${identity}.crt
-      client-key: ${root_dir}/pki/${identity}.key
+      client-certificate: ${certificate_dir}/${identity}.crt
+      client-key: ${certificate_dir}/${identity}.key
 contexts:
   - name: suntitle-local
     context:
@@ -39,4 +49,5 @@ contexts:
       namespace: suntitle
 current-context: suntitle-local
 CONFIG
+  done
 done

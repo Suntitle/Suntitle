@@ -56,6 +56,21 @@ describe("Nodes page", () => {
     cy.get("h1").should("have.text", "Nodes")
   })
 
+  it("renders desired connections before nodes report status", () => {
+    visitAuthenticatedWorkspace()
+    cy.wait(["@getCurrentUser", "@getHosts"])
+    cy.fixture("api/v1/nodes.json").then((body) => {
+      body.items.forEach((node: { status?: unknown }) => { delete node.status })
+      cy.intercept("GET", "**/api/v1/nodes", { body }).as("pendingNodes")
+    })
+    cy.contains("a", "Nodes").click()
+    cy.wait("@pendingNodes")
+    cy.get('[data-testid="topology-connection"]').should("have.length", 5)
+    cy.contains('[data-testid="topology-node"]', "Live transcriber").within(() => {
+      cy.contains("disconnected").should("be.visible")
+    })
+  })
+
   it("opens node settings, filters compatible inputs, and updates the node", () => {
     cy.intercept("GET", "**/api/v1/node-types", {
       fixture: "api/v1/node-types.json",
@@ -102,20 +117,21 @@ describe("Nodes page", () => {
 
     cy.wait("@updateNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
-      expect(request.body).to.deep.equal({
-        type: "transcriber",
+      expect(request.body).to.deep.equal({ spec: {
         name: "Updated transcriber",
         description: "English transcription",
         enabled: true,
-        inputNodeId: "30000000-0000-4000-8000-000000000001",
-        settings: {
+        inputRef: { name: "30000000-0000-4000-8000-000000000001" },
+        settings: { transcriber: {
           model: "medium",
           language: "en-US",
           task: "transcribe",
           beamSize: 5,
           vadEnabled: true,
-        },
-      })
+        } },
+        hostRef: { name: "studio-host-resource" },
+        restartToken: "existing-restart",
+      } })
     })
 
     cy.get('[data-slot="dialog-content"]').should("not.exist")
@@ -124,6 +140,7 @@ describe("Nodes page", () => {
 
   it("restarts and disables a node from the actions dropdown after confirmation", () => {
     cy.intercept("POST", "**/api/v1/nodes/30000000-0000-4000-8000-000000000001/restart", {
+      statusCode: 202,
       fixture: "api/v1/nodes/30000000-0000-4000-8000-000000000001/restart.json",
     }).as("restartNode")
     cy.intercept("PUT", "**/api/v1/nodes/30000000-0000-4000-8000-000000000001", {
@@ -180,19 +197,20 @@ describe("Nodes page", () => {
 
     cy.wait("@disableNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
-      expect(request.body).to.deep.equal({
-        type: "audio_source",
+      expect(request.body).to.deep.equal({ spec: {
         name: "Studio microphone",
         description: "Primary audio input",
         enabled: false,
-        inputNodeId: null,
-        settings: {
+        inputRef: null,
+        settings: { audio_source: {
           sampleRateHz: 48000,
           channels: 1,
           encoding: "pcm_s16le",
           deviceName: "USB Audio Device",
-        },
-      })
+        } },
+        hostRef: { name: "studio-host-resource" },
+        restartToken: "existing-restart",
+      } })
     })
 
     cy.contains('[data-testid="topology-node"]', "Studio microphone").within(() => {

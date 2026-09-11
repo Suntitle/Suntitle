@@ -1,10 +1,14 @@
+import { mapNode } from "./resource-models"
 import { makeAutoObservable, runInAction } from "mobx"
 import type { ApiClient } from "./api-client"
 import { getErrorMessage } from "./api-client"
 import type {
   Node,
   NodeCreate,
+  NodeResource,
   NodeList,
+  HostList,
+  HostResource,
   NodeStatus,
   NodeType,
   NodeTypeDefinition,
@@ -12,39 +16,8 @@ import type {
   NodeUpdate,
 } from "./models"
 
-function getInputNodeId(node: Node, nodes: Node[]): string | null {
-  const nodeIds = new Set(nodes.map((item) => item.id))
-
-  for (const candidate of nodes) {
-    for (const connection of candidate.connections) {
-      if (!nodeIds.has(connection.peerNodeId)) continue
-
-      const sourceId = connection.direction === "outgoing" ? candidate.id : connection.peerNodeId
-      const targetId = connection.direction === "outgoing" ? connection.peerNodeId : candidate.id
-      if (targetId === node.id) return sourceId
-    }
-  }
-
-  return null
-}
-
-function createEnabledUpdate(node: Node, nodes: Node[], enabled: boolean): NodeUpdate {
-  const base = {
-    name: node.name,
-    description: node.description ?? null,
-    enabled,
-    inputNodeId: getInputNodeId(node, nodes),
-  }
-
-  switch (node.type) {
-    case "audio_source": return { ...base, type: node.type, settings: node.settings }
-    case "transcriber": return { ...base, type: node.type, settings: node.settings }
-    case "translator": return { ...base, type: node.type, settings: node.settings }
-    case "display": return { ...base, type: node.type, settings: node.settings }
-  }
-}
-
 export class NodesStore {
+  private hosts: HostResource[] = []
   items: Node[] = []
   total = 0
   nodeTypes: NodeTypeDefinition[] = []
@@ -113,14 +86,15 @@ export class NodesStore {
     this.isLoading = true
     this.error = null
     try {
-      const params = new URLSearchParams()
-      if (this.typeFilter) params.set("type", this.typeFilter)
-      if (this.statusFilter) params.set("status", this.statusFilter)
-      const query = params.size > 0 ? `?${params.toString()}` : ""
-      const response = await this.api.get<NodeList>(`/nodes${query}`)
+      const [response, hosts] = await Promise.all([
+        this.api.get<NodeList>("/nodes"),
+        this.api.get<HostList>("/hosts"),
+      ])
       runInAction(() => {
-        this.items = response.items
-        this.total = response.total
+        this.hosts = hosts.items
+        this.items = response.items.map((resource) => mapNode(resource, this.hosts))
+          .filter((node) => (!this.typeFilter || node.type === this.typeFilter) && (!this.statusFilter || node.status === this.statusFilter))
+        this.total = this.items.length
       })
     } catch (error) {
       runInAction(() => { this.error = getErrorMessage(error) })
@@ -134,7 +108,7 @@ export class NodesStore {
     this.isLoading = true
     this.error = null
     try {
-      const node = await this.api.get<Node>(`/nodes/${encodeURIComponent(nodeId)}`)
+      const node = mapNode(await this.api.get<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}`), this.hosts)
       runInAction(() => {
         this.selectedNode = node
         this.upsertNode(node)
@@ -152,7 +126,7 @@ export class NodesStore {
     this.isSaving = true
     this.saveError = null
     try {
-      const node = await this.api.put<Node>(`/nodes/${encodeURIComponent(nodeId)}`, update)
+      const node = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}`, this.specUpdate(nodeId, update)), this.hosts)
       runInAction(() => {
         this.selectedNode = node
         this.upsertNode(node)
@@ -170,7 +144,13 @@ export class NodesStore {
     this.isInstalling = true
     this.installError = null
     try {
-      const node = await this.api.post<Node>(`/hosts/${encodeURIComponent(hostId)}/nodes`, create)
+      const host = this.hosts.find((host) => host.metadata.uid === hostId)
+      if (!host) throw new Error("Host is no longer available")
+      const { inputNodeId, type, settings, ...fields } = create
+      const node = mapNode(await this.api.post<NodeResource>(`/hosts/${encodeURIComponent(hostId)}/nodes`, {
+        spec: { ...fields, hostRef: { name: host.metadata.name },
+          inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [type]: settings } },
+      }), this.hosts)
       runInAction(() => {
         this.selectedNode = node
         this.upsertNode(node)
@@ -188,7 +168,7 @@ export class NodesStore {
     this.pendingNodeActionIds.add(nodeId)
     this.nodeActionErrors.delete(nodeId)
     try {
-      const node = await this.api.post<Node>(`/nodes/${encodeURIComponent(nodeId)}/restart`)
+      const node = mapNode(await this.api.post<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}/restart`), this.hosts)
       runInAction(() => { this.upsertNode(node) })
       return node
     } catch (error) {
@@ -203,8 +183,7 @@ export class NodesStore {
     this.pendingNodeActionIds.add(node.id)
     this.nodeActionErrors.delete(node.id)
     try {
-      const update = createEnabledUpdate(node, this.items, false)
-      const updatedNode = await this.api.put<Node>(`/nodes/${encodeURIComponent(node.id)}`, update)
+      const updatedNode = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(node.id)}`, { spec: { ...node.spec, enabled: false } }), this.hosts)
       runInAction(() => { this.upsertNode(updatedNode) })
       return updatedNode
     } catch (error) {
@@ -213,6 +192,14 @@ export class NodesStore {
     } finally {
       runInAction(() => { this.pendingNodeActionIds.delete(node.id) })
     }
+  }
+
+  private specUpdate(nodeId: string, update: NodeUpdate) {
+    const node = this.nodeById.get(nodeId)
+    if (!node) throw new Error("Node is no longer available")
+    const { inputNodeId, type, settings, ...fields } = update
+    return { spec: { ...node.spec, ...fields,
+      inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [type]: settings } } }
   }
 
   private upsertNode(node: Node): void {
