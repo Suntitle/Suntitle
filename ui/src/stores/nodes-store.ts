@@ -172,7 +172,6 @@ export class NodesStore {
     try {
       const node = await this.api.post<Node>(`/hosts/${encodeURIComponent(hostId)}/nodes`, create)
       runInAction(() => {
-        this.selectedNode = node
         this.upsertNode(node)
       })
       return node

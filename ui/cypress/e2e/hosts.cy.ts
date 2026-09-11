@@ -67,7 +67,45 @@ describe("Hosts page", () => {
     cy.contains("td", "Hosts are temporarily unavailable.").should("be.visible")
   })
 
-  it("opens a host modal, renders type-specific settings, and installs a node", () => {
+  for (const dismiss of ["Cancel", "Close", "Escape"]) {
+    it(`keeps the node modal closed after ${dismiss} and navigation to Nodes`, () => {
+      cy.intercept("GET", "**/api/v1/hosts", {
+        fixture: "api/v1/hosts.json",
+      }).as("getHosts")
+      cy.intercept("GET", "**/api/v1/nodes", {
+        fixture: "api/v1/nodes.json",
+      }).as("getNodes")
+      cy.intercept("GET", "**/api/v1/node-types", {
+        fixture: "api/v1/node-types.json",
+      }).as("getNodeTypes")
+
+      visitAuthenticatedHosts()
+      cy.wait("@getHosts")
+      cy.contains("button", "studio-host").click()
+      cy.wait(["@getNodes", "@getNodeTypes"])
+      cy.get('[data-slot="dialog-title"]').should("have.text", "Manage studio-host")
+
+      if (dismiss === "Escape") {
+        cy.get("body").type("{esc}")
+      } else if (dismiss === "Close") {
+        cy.get('button[aria-label="Close dialog"]').click()
+      } else {
+        cy.contains('[data-slot="dialog-content"] button', dismiss).click()
+      }
+
+      cy.get('[data-slot="dialog-content"]').should("not.exist")
+      cy.contains("a", "Nodes").click()
+      cy.wait("@getNodes")
+      cy.get("h1").should("have.text", "Nodes")
+      cy.get('[data-slot="dialog-content"]').should("not.exist")
+      cy.contains("a", "Hosts").click()
+      cy.wait("@getHosts")
+      cy.get("h1").should("have.text", "Hosts")
+      cy.get('[data-slot="dialog-content"]').should("not.exist")
+    })
+  }
+
+  it("installs a node without reopening its settings when navigating to Nodes", () => {
     cy.intercept("GET", "**/api/v1/hosts", {
       fixture: "api/v1/hosts.json",
     }).as("getHosts")
@@ -136,5 +174,19 @@ describe("Hosts page", () => {
 
     cy.get('[role="status"]').should("have.text", "live-transcriber was installed on studio-host.")
     cy.contains("8 nodes").should("exist")
+
+    cy.contains("button", "Cancel").click()
+    cy.get('[data-slot="dialog-content"]').should("not.exist")
+    cy.contains("a", "Nodes").click()
+    cy.wait("@getNodes")
+    cy.get("h1").should("have.text", "Nodes")
+    cy.get('[data-slot="dialog-content"]').should("not.exist")
+
+    cy.contains('[data-testid="topology-node"]', "Studio microphone")
+      .find('button[aria-label^="Open settings for Studio microphone"]')
+      .click()
+    cy.get('[data-slot="dialog-title"]').should("have.text", "Update Studio microphone")
+    cy.contains("button", "Cancel").click()
+    cy.get('[data-slot="dialog-content"]').should("not.exist")
   })
 })
