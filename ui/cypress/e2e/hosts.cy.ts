@@ -37,6 +37,18 @@ describe("Hosts page", () => {
     })
   })
 
+  it("renders a host before its agent reports status", () => {
+    cy.intercept("GET", "**/api/v1/hosts", {
+      body: { items: [{ metadata: { name: "host-resource", uid: "host-uid" }, spec: { name: "New host" } }] },
+    }).as("getHosts")
+    visitAuthenticatedHosts()
+    cy.wait("@getHosts")
+    cy.contains("tr", "New host").within(() => {
+      cy.contains("offline").should("be.visible")
+      cy.contains("Unknown").should("be.visible")
+    })
+  })
+
   it("shows the empty state when no hosts are registered", () => {
     cy.intercept("GET", "**/api/v1/hosts", {
       body: { items: [], total: 0 },
@@ -54,10 +66,7 @@ describe("Hosts page", () => {
       statusCode: 503,
       headers: { "content-type": "application/problem+json" },
       body: {
-        type: "about:blank",
-        title: "Service unavailable",
-        status: 503,
-        detail: "Hosts are temporarily unavailable.",
+        error: { code: "Unavailable", message: "Hosts are temporarily unavailable." },
       },
     }).as("getHosts")
 
@@ -134,22 +143,23 @@ describe("Hosts page", () => {
     cy.contains("button", "Install node").click()
     cy.wait("@installNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
-      expect(request.body).to.deep.equal({
-        inputNodeId: "30000000-0000-4000-8000-000000000006",
-        type: "transcriber",
+      expect(request.url).to.include("/hosts/20000000-0000-4000-8000-000000000001/nodes")
+      expect(request.body).to.deep.equal({ spec: {
+        inputRef: { name: "30000000-0000-4000-8000-000000000006" },
         name: "live-transcriber",
         enabled: true,
-        settings: {
+        settings: { transcriber: {
           model: "large-v3",
           language: "en",
           task: "transcribe",
           beamSize: 5,
           vadEnabled: true,
-        },
-      })
+        } },
+        hostRef: { name: "studio-host-resource" },
+      } })
     })
 
-    cy.get('[role="status"]').should("have.text", "live-transcriber was installed on studio-host.")
+    cy.get('[role="status"]').should("have.text", "live-transcriber installation was requested on studio-host.")
     cy.contains("8 nodes").should("exist")
   })
 })

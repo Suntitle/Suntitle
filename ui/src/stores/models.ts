@@ -70,8 +70,7 @@ export interface Host {
 }
 
 export interface HostList {
-  items: Host[]
-  total: number
+  items: HostResource[]
 }
 
 export interface NodeConnection {
@@ -126,7 +125,8 @@ interface NodeBase {
   enabled: boolean
   status: NodeStatus
   host: Host
-  connections: NodeConnection[]
+  inputNodeId: string | null
+  spec: NodeSpec
   createdAt: string
   updatedAt: string
 }
@@ -176,8 +176,7 @@ export type NodeUpdate =
   | (NodeUpdateBase & { type: "display"; settings: DisplaySettings })
 
 export interface NodeList {
-  items: Node[]
-  total: number
+  items: NodeResource[]
 }
 
 export interface Problem {
@@ -196,4 +195,38 @@ export interface ValidationError {
 
 export interface ValidationProblem extends Problem {
   errors: ValidationError[]
+}
+
+export interface ResourceMetadata {
+  name: string
+  uid: string
+  creationTimestamp?: string
+}
+
+export interface HostResource {
+  metadata: ResourceMetadata
+  spec: { name: string }
+  status?: {
+    ip?: string
+    agentVersion?: string
+    lastHeartbeat?: string
+    reportedMetadata?: JsonMetadata
+    presence?: "Online" | "Offline"
+  }
+}
+
+export interface NodeSpec {
+  name: string
+  description?: string | null
+  hostRef: { name: string }
+  enabled: boolean
+  inputRef?: { name: string } | null
+  restartToken?: string | null
+  settings: Partial<Record<NodeType, Node["settings"]>>
+}
+
+export interface NodeResource {
+  metadata: ResourceMetadata
+  spec: NodeSpec
+  status?: { phase?: "Pending" | "Running" | "Disabled" | "Failed" | "Disconnected" | "Terminating" }
 }

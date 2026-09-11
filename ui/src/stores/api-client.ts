@@ -52,7 +52,7 @@ export class ApiClient {
 
   private async createError(response: Response): Promise<ApiError> {
     const contentType = response.headers.get("content-type") ?? ""
-    let problem: Problem | undefined
+    let problem: (Problem & { error?: { message?: string } }) | undefined
 
     if (contentType.includes("json")) {
       try {
@@ -62,7 +62,7 @@ export class ApiClient {
       }
     }
 
-    const message = problem?.detail ?? problem?.title ?? `Request failed with status ${response.status}`
+    const message = problem?.error?.message ?? problem?.detail ?? problem?.title ?? `Request failed with status ${response.status}`
     return new ApiError(response.status, message, problem)
   }
 }

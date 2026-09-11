@@ -1,16 +1,25 @@
 {
   "items": [
     {
-      "id": "20000000-0000-4000-8000-000000000001",
-      "name": "studio-host",
-      "ip": "192.0.2.10",
-      "version": "0.1.0",
-      "status": "online",
-      "lastSeenAt": "2026-08-26T15:50:00Z",
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleHost",
       "metadata": {
-        "runtime": "Linux x86_64"
+        "name": "studio-host-resource",
+        "uid": "20000000-0000-4000-8000-000000000001"
+      },
+      "spec": {
+        "name": "studio-host"
+      },
+      "status": {
+        "ip": "192.0.2.10",
+        "agentVersion": "0.1.0",
+        "presence": "Online",
+        "lastHeartbeat": "2026-08-26T15:50:00Z",
+        "reportedMetadata": {
+          "runtime": "Linux x86_64"
+        }
       }
     }
   ],
-  "total": 1
+  "resourceVersion": "123"
 }

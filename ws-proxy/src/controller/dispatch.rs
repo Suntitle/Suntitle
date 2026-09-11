@@ -9,26 +9,15 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{
     Api, ResourceExt,
     runtime::{
-        WatchStreamExt,
         controller::{Action, Config, Controller as KubeController},
-        reflector, watcher,
+        watcher,
     },
 };
 use std::sync::Arc;
 
-/// Filter spec revisions before reconciling dispatch intent.
-pub(super) async fn run(
-    api: Api<SuntitleNode>,
-    nodes: reflector::Store<SuntitleNode>,
-    writer: reflector::store::Writer<SuntitleNode>,
-    context: Arc<Context>,
-) {
-    let stream = watcher(api, watcher::Config::default())
-        .default_backoff()
-        .reflect(writer)
-        .applied_objects()
-        .predicate_filter(spec_revision, Default::default());
-    KubeController::for_stream(stream, nodes)
+/// Reconcile dispatch intent when node resources change.
+pub(super) async fn run(api: Api<SuntitleNode>, context: Arc<Context>) {
+    KubeController::new(api, watcher::Config::default())
         .with_config(Config::default().concurrency(1))
         .run(reconcile, error_policy, context)
         .for_each(|result| async move {
@@ -48,14 +37,6 @@ async fn reconcile(node: Arc<SuntitleNode>, ctx: Arc<Context>) -> Result<Action,
         .await
         .map_err(ReconcileError::Failed)?;
     Ok(Action::await_change())
-}
-
-/// Status-only updates do not change this watch key.
-pub(super) fn spec_revision(node: &SuntitleNode) -> Option<u64> {
-    Some(
-        (node.metadata.generation.unwrap() as u64) << 1
-            | u64::from(node.metadata.deletion_timestamp.is_some()),
-    )
 }
 
 /// Choose apply or removal from node deletion state.
@@ -166,26 +147,4 @@ fn compatible(input: &NodeSettings, output: &NodeSettings) -> bool {
             )
             | (NodeSettings::Translator(_), NodeSettings::Display(_))
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verify dispatch revisions track generation and deletion.
-    #[test]
-    fn revision_ignores_status_and_metadata_but_includes_deletion() {
-        let mut node = super::super::tests::node();
-        let original = spec_revision(&node);
-        node.status.get_or_insert_default().message = Some("Updated".into());
-        node.metadata.resource_version = Some("new".into());
-        node.metadata.finalizers = Some(vec![NODE_FINALIZER.into()]);
-        assert_eq!(spec_revision(&node), original);
-        node.metadata.generation = Some(2);
-        let updated = spec_revision(&node);
-        assert_ne!(updated, original);
-        node.metadata.deletion_timestamp = Some(Time(k8s_openapi::jiff::Timestamp::now()));
-        assert_ne!(spec_revision(&node), updated);
-        assert_eq!(operation(&node), Operation::Remove);
-    }
 }

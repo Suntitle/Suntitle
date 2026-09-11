@@ -1,3 +1,4 @@
+import { mapHost } from "./resource-models"
 import { makeAutoObservable, runInAction } from "mobx"
 import type { ApiClient } from "./api-client"
 import { getErrorMessage } from "./api-client"
@@ -24,11 +25,10 @@ export class HostsStore {
     this.isLoading = true
     this.error = null
     try {
-      const query = this.statusFilter ? `?status=${encodeURIComponent(this.statusFilter)}` : ""
-      const response = await this.api.get<HostList>(`/hosts${query}`)
+      const response = await this.api.get<HostList>("/hosts")
       runInAction(() => {
-        this.items = response.items
-        this.total = response.total
+        this.items = response.items.map(mapHost).filter((host) => !this.statusFilter || host.status === this.statusFilter)
+        this.total = this.items.length
       })
     } catch (error) {
       runInAction(() => { this.error = getErrorMessage(error) })

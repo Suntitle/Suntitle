@@ -62,6 +62,67 @@ services:
     networks:
       - control-plane
 
+  kubernetes-bootstrap:
+    build:
+      context: .
+      dockerfile: ws-proxy/Dockerfile
+    image: suntitle-control:local
+    depends_on:
+      kube-apiserver:
+        condition: service_started
+    volumes:
+      - ./pki:/etc/kubernetes/pki:ro
+    command:
+      - /bin/bash
+      - -ec
+      - |
+        for attempt in {1..90}; do
+          if curl -fsS --max-time 2 --cacert /etc/kubernetes/pki/ca.crt --cert /etc/kubernetes/pki/admin.crt --key /etc/kubernetes/pki/admin.key https://kube-apiserver:6443/readyz >/dev/null 2>&1; then
+            exec control_api bootstrap-kubernetes --kubeconfig /etc/kubernetes/pki/admin.compose.kubeconfig --namespace suntitle
+          fi
+          sleep 1
+        done
+        echo "Kubernetes API did not become ready." >&2
+        exit 1
+    networks:
+      - control-plane
+
+  api:
+    image: suntitle-control:local
+    depends_on:
+      kubernetes-bootstrap:
+        condition: service_completed_successfully
+    command: [control_api, --kubeconfig, /etc/kubernetes/pki/suntitle-api.compose.kubeconfig, --namespace, suntitle]
+    volumes:
+      - ./pki:/etc/kubernetes/pki:ro
+    ports:
+      - "127.0.0.1:3031:3031"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:3031/readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - control-plane
+
+  ws-proxy:
+    image: suntitle-control:local
+    depends_on:
+      kubernetes-bootstrap:
+        condition: service_completed_successfully
+    command: [ws-proxy, --kubeconfig, /etc/kubernetes/pki/suntitle-proxy.compose.kubeconfig, --namespace, suntitle]
+    volumes:
+      - ./pki:/etc/kubernetes/pki:ro
+    ports:
+      - "127.0.0.1:3030:3030"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/3030"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - control-plane
+
 volumes:
   postgres-data:
 

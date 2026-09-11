@@ -483,15 +483,13 @@ mod tests {
                 .cloned()
                 .unwrap_or_else(|| vec![fixture]);
             for wire in nodes {
-                let node: Node = serde_json::from_value(wire.clone()).unwrap();
-                let serialized = serde_json::to_value(&node).unwrap();
-                assert_eq!(serialized["type"], wire["type"]);
-                let settings: NodeSettings = serde_json::from_value(wire.clone()).unwrap();
-                assert_eq!(
-                    serialized["settings"],
-                    serde_json::to_value(settings).unwrap()["settings"]
-                );
-                tags.insert(wire["type"].as_str().unwrap().to_owned());
+                let node: crate::kubernetes::resources::SuntitleNode =
+                    serde_json::from_value(wire.clone()).unwrap();
+                let settings = serde_json::to_value(&node.spec.settings).unwrap();
+                let expected: crate::kubernetes::resources::NodeSettings =
+                    serde_json::from_value(wire["spec"]["settings"].clone()).unwrap();
+                assert_eq!(settings, serde_json::to_value(expected).unwrap());
+                tags.extend(settings.as_object().unwrap().keys().cloned());
             }
         }
         assert_eq!(

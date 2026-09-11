@@ -12,7 +12,7 @@ use crate::{kubernetes::Error, registration::RegistrationClientMessage, transpor
 use kube::{
     Api, Client,
     api::ListParams,
-    runtime::{controller::Action, finalizer, reflector},
+    runtime::{controller::Action, finalizer},
 };
 use session::State;
 use std::{
@@ -96,14 +96,13 @@ impl Controller {
                 connections: Connections::default(),
             }),
         });
-        let (nodes, writer) = reflector::store();
         let run_context = context.clone();
         let task = tokio::spawn(async move {
             tokio::select! {
                 _ = host::run(hosts_api.clone(), run_context.clone()) => {},
                 _ = gc::run(hosts_api.clone(), run_context.clone()) => {},
-                _ = dispatch::run(nodes_api.clone(), nodes.clone(), writer, run_context.clone()) => {},
-                _ = runtime::run(nodes_api.clone(), hosts_api.clone(), nodes, run_context.clone()) => {},
+                _ = dispatch::run(nodes_api.clone(), run_context.clone()) => {},
+                _ = runtime::run(nodes_api.clone(), hosts_api.clone(), run_context.clone()) => {},
                 _ = run_context.stopped.notified() => {},
             }
             let mut state = run_context.state.lock().await;

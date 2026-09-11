@@ -57,29 +57,13 @@ const statusStyles: Record<NodeStatus | "disabled", string> = {
 }
 
 function buildEdges(nodes: Node[]): TopologyEdge[] {
-  const nodeIds = new Set(nodes.map((node) => node.id))
-  const edges = new Map<string, TopologyEdge>()
-
-  nodes.forEach((node) => {
-    node.connections.forEach((connection) => {
-      if (!nodeIds.has(connection.peerNodeId)) return
-
-      const sourceId = connection.direction === "outgoing" ? node.id : connection.peerNodeId
-      const targetId = connection.direction === "outgoing" ? connection.peerNodeId : node.id
-      const key = `${sourceId}:${targetId}:${connection.dataType}`
-
-      if (!edges.has(key)) {
-        edges.set(key, {
-          id: connection.id,
-          sourceId,
-          targetId,
-          dataType: connection.dataType,
-        })
-      }
-    })
+  return nodes.flatMap((node) => {
+    const source = nodes.find((candidate) => candidate.id === node.inputNodeId)
+    if (!source) return []
+    return [{ id: `${source.id}:${node.id}`, sourceId: source.id, targetId: node.id,
+      dataType: source.type === "audio_source" ? "audio" as const
+        : source.type === "transcriber" ? "transcription" as const : "translation" as const }]
   })
-
-  return [...edges.values()]
 }
 
 function buildPipelines(nodes: Node[]): Pipeline[] {

@@ -13,7 +13,7 @@ use kube::{
     runtime::{
         controller::{Action, Config, Controller as KubeController},
         finalizer::{self, Event},
-        reflector::{self, ObjectRef},
+        reflector::ObjectRef,
         watcher,
     },
 };
@@ -23,10 +23,11 @@ use std::sync::Arc;
 pub(super) async fn run(
     nodes: Api<SuntitleNode>,
     hosts: Api<SuntitleHost>,
-    store: reflector::Store<SuntitleNode>,
     context: Arc<Context>,
 ) {
-    KubeController::new(nodes, watcher::Config::default())
+    let controller = KubeController::new(nodes, watcher::Config::default());
+    let store = controller.store();
+    controller
         .with_config(Config::default().concurrency(1))
         .watches(hosts, watcher::Config::default(), move |host| {
             store
