@@ -152,7 +152,6 @@ export class NodesStore {
           inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [type]: settings } },
       }), this.hosts)
       runInAction(() => {
-        this.selectedNode = node
         this.upsertNode(node)
       })
       return node
