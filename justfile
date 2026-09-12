@@ -162,15 +162,27 @@ restart-node node_id:
 
 # Run the lightweight WebSocket relay end-to-end probe.
 e2e:
-    cargo run --manifest-path ws-proxy/Cargo.toml --example e2e_probe
+    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example e2e_probe
 
 # Run the host-registration end-to-end test.
 host-e2e: kubernetes-up
-    cargo run --manifest-path ws-proxy/Cargo.toml --example host_registration_e2e
+    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example host_registration_e2e
 
 # Run the node-lifecycle end-to-end test.
 node-e2e: kubernetes-up
-    cargo run --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
+    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
+
+# Run Rust tests that do not require a Kubernetes server.
+test-rust:
+    cargo test --locked --manifest-path ws-proxy/Cargo.toml
+
+# Run ignored integration tests against bootstrapped Kubernetes.
+test-rust-live:
+    cargo test --locked --manifest-path ws-proxy/Cargo.toml -- --ignored --test-threads=1
+
+# Run the mock API and node CLI tests.
+test-python python="python3":
+    {{quote(python)}} -m unittest discover -s tests -v
 
 # Select an existing Pulumi stack.
 infra-select stack="dev":

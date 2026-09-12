@@ -1,0 +1,156 @@
+name: Backend CI
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-backend:
+    name: Rust and Kubernetes E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ws-proxy
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.37.0
+
+      - name: Install certificate tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mkcert libnss3-tools
+
+      - name: Build binaries and examples
+        run: cargo build --locked --manifest-path ws-proxy/Cargo.toml --bins --examples
+
+      - name: Run Rust unit and integration tests
+        run: just test-rust
+
+      - name: Generate test certificates
+        env:
+          CAROOT: ${{ runner.temp }}/suntitle-ca
+        run: |
+          bash scripts/generate-certs.sh
+          bash scripts/generate-kubeconfigs.sh
+
+      - name: Start Kubernetes dependencies
+        run: |
+          docker compose up -d kube-apiserver
+          for attempt in {1..90}; do
+            if kubectl --kubeconfig pki/admin.kubeconfig --request-timeout=2s get --raw=/readyz; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Kubernetes API did not become ready." >&2
+          exit 1
+
+      - name: Bootstrap Kubernetes
+        run: ws-proxy/target/debug/control_api bootstrap-kubernetes --kubeconfig pki/admin.kubeconfig --namespace suntitle
+
+      - name: Validate live resource contracts and RBAC
+        run: just kubernetes-test
+
+      - name: Run live Kubernetes integration tests
+        run: just test-rust-live
+
+      - name: Run host registration E2E example
+        timeout-minutes: 5
+        run: just host-e2e
+
+      - name: Run node lifecycle E2E example
+        timeout-minutes: 5
+        run: just node-e2e
+
+      - name: Run WebSocket relay E2E example
+        timeout-minutes: 2
+        run: |
+          mkdir -p test-results
+          ws-proxy/target/debug/ws-proxy --kubeconfig pki/suntitle-proxy.kubeconfig --namespace suntitle > test-results/relay-proxy.log 2>&1 &
+          proxy_pid=$!
+          trap 'kill "$proxy_pid" 2>/dev/null || true; wait "$proxy_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            kill -0 "$proxy_pid"
+            if (echo > /dev/tcp/127.0.0.1/3030) 2>/dev/null; then
+              just e2e
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "WebSocket proxy did not become ready." >&2
+          exit 1
+
+      - name: Collect service logs
+        if: always()
+        run: |
+          mkdir -p test-results
+          docker compose logs --no-color > test-results/compose.log 2>&1
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-e2e-logs
+          path: test-results/
+          retention-days: 7
+
+      - name: Stop test services
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  check-python:
+    name: Python mock API and node CLI tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2
+          python -m pip install numpy==2.2.6 librosa==0.11.0 sounddevice==0.5.2 websockets==15.0.1
+
+      - name: Run Python tests
+        run: just test-python
