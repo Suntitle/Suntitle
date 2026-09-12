@@ -80,7 +80,8 @@ docker compose exec -T postgres createdb -U suntitle suntitle_restore
 docker compose exec -T postgres pg_restore -U suntitle -d suntitle_restore < suntitle.dump
 ```
 
-Set `DATABASE_URL` to the restored database before starting the applications.
+Set `POSTGRES_DB=suntitle_restore` in `.env.local`, then recreate Kine before
+starting the applications.
 
 ### Standalone Kubernetes API server
 
@@ -110,8 +111,7 @@ The `pki/` directory is mounted read-only and excluded from Git. This standalone
 setup does not run a controller-manager, scheduler, or worker nodes.
 
 Compose defaults match the existing local database credentials. It reads
-`.env.local` only when passed `--env-file .env.local`; keep `DATABASE_URL` aligned
-with any PostgreSQL overrides. PostgreSQL initialization variables do not change
+`.env.local` only when passed `--env-file .env.local`. PostgreSQL initialization variables do not change
 credentials in an existing data volume. If you override `APISERVER_ADVERTISE_ADDRESS`
 or `SERVICE_CIDR`, ensure the server certificate covers the address clients use
 and the Kubernetes service IP in that range.
@@ -124,8 +124,8 @@ docker compose stop kube-apiserver kine
 
 ## Run the web UI with the API backend
 
-Start PostgreSQL, the control API, and UI from the repository root. Press
-`Ctrl+C` to stop the API and UI; PostgreSQL stays available:
+After generating certificates, start Kubernetes, the control API, and UI from
+the repository root. Press `Ctrl+C` to stop the API and UI; Kubernetes stays available:
 
 ```bash
 just ui
@@ -140,7 +140,7 @@ Start each process in a separate terminal, from the repository root. Start the
 consumers before the microphone because the proxy does not buffer messages for
 clients that are not connected.
 
-1. Prepare PostgreSQL with `just db-up` and `just db-migrate`, then start the
+1. Prepare Kubernetes with `just kubernetes-up`, then start the
    WebSocket proxy on port `3030`. Start `just api` in another terminal for the
    independent control API on port `3031`:
 
@@ -194,22 +194,22 @@ omitted; completed text is printed by `whisper_online_client.py`.
 
 ## Manage hosts and nodes through the API
 
-The proxy and control API share durable PostgreSQL host, node, and command state. The following
+The proxy and control API share durable Kubernetes host and node resources. The following
 quickstart runs both services plus one Diamant host and installs an audio-source
 node on it. Run each service command from the repository root in a separate
 terminal.
 
-1. Run `just db-up` and `just db-migrate`, then start `just proxy` and `just api`
+1. Run `just kubernetes-up`, then start `just proxy` and `just api`
    in separate terminals.
 
-2. Start Diamant. Its ID file keeps the host UUID stable between restarts, and
+2. Start Diamant. Its host name resolves to a stable Kubernetes resource UID.
    `--project-dir` tells it where to launch node programs:
 
    ```bash
    just diamant-local
    ```
 
-3. List hosts and copy the `id` of `local-diamant`:
+3. List hosts and copy `metadata.uid` and `metadata.name` of `local-host`:
 
    ```bash
    just hosts
@@ -218,29 +218,23 @@ terminal.
 4. Install and start an audio-source node on that host:
 
    ```bash
-   just install-audio-source <host-id>
+   just install-audio-source <host-uid> <host-name>
    ```
 
    Diamant launches the audio listener immediately. Set `deviceName` to a device
    name when the system default is not the intended input.
 
-5. List the nodes, then use the created node's `id` to inspect it:
+5. List the nodes, then use the created node's `metadata.name` to inspect it:
 
    ```bash
    just nodes
-   just node <node-id>
+   just node <node-name>
    ```
 
-Use `PUT /api/v1/nodes/{nodeId}` with the complete editable node document to
-change its name, enabled state, settings, or input. Diamant now runs uv through
-its Rust library inside the host process. Stop, replacement, and restart of a
-live Python command are deferred; such requests report a lifecycle error and
-do not launch duplicates. A completed command can be restarted. Disconnecting
-Diamant marks the host offline and retains desired nodes in the database;
-Python child cleanup on shutdown is not yet implemented.
-
-See [embedded uv integration](ws-proxy/EMBEDDED_UV.md) for the Rust API, CLI usage,
-build requirements, and current limitations.
+Use `PUT /api/v1/nodes/{name}` with `{"spec": ...}` containing the complete
+editable spec to change its name, enabled state, settings, or input. Controllers
+reconcile desired state and dispatch runtime operations to Diamant. Disconnecting
+Diamant marks the host offline and retains desired nodes in Kubernetes.
 
 ## Quick local end-to-end test
 
@@ -274,7 +268,8 @@ The probe disconnects its mock clients automatically. Return to the proxy
 terminal and press `Ctrl+C` to shut down the server.
 
 To verify the complete host-registration path, run the self-contained host E2E
-example. It prepares PostgreSQL, builds and starts `ws-proxy` and `control_api`,
+example. Generate certificates first with `just generate-certs`. The command
+starts Kubernetes, builds and starts `ws-proxy` and `control_api`,
 starts a temporary `diamant` agent,
 and checks that the host is returned by the control API:
 
@@ -282,8 +277,9 @@ and checks that the host is returned by the control API:
 just host-e2e
 ```
 
-The example stops its application children and removes its temporary identity
-file and isolated database schema when it finishes. PostgreSQL remains running.
+The example stops its application children and removes its isolated Kubernetes
+namespace when it finishes. Kubernetes remains running.
+Both E2Es require ports 3030 and 3031 to be free.
 
 To verify node lifecycle handling end to end, run:
 
@@ -295,7 +291,7 @@ This starts the proxy/API and Diamant locally, registers audio-source and displa
 nodes, verifies listing and concurrent launches, and checks service restart
 replay. Real embedded uv runs a dependency-free Python fixture, so the test
 does not use audio hardware, models, or a graphical session. Fixtures exit
-themselves before Diamant disconnects; this does not test deferred child
+themselves before Diamant disconnects; this test does not cover child
 cancellation. The check currently requires Unix and `/usr/bin/python3`.
 
 ## Run the proxy on AWS with Pulumi
@@ -405,7 +401,7 @@ UID. Diamant reports health every 30 seconds and reconnects when the connection
 ends. The health interval can be changed with `--health-interval-seconds` or
 `SUNTITLE_HEALTH_INTERVAL_SECONDS`.
 
-Host identity, health, desired nodes, and pending commands persist in PostgreSQL.
+Host identity, health, desired nodes, and dispatch status persist in Kubernetes resources.
 Disconnected hosts become offline; missing health reports expire after 45 seconds,
 so configure the health interval below that limit. Nodes remain available through
 the API while the host is offline. CI publishes

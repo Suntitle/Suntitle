@@ -4,7 +4,6 @@ pub mod hosts;
 pub mod models;
 pub mod node_types;
 pub mod nodes;
-pub mod validated_json;
 
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};

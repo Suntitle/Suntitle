@@ -1,6 +1,6 @@
 # Storage refactor: custom resources and Kubernetes watches
 
-Status: phases 1 and 2 completed and verified; awaiting review. Phase 5 Control API startup is complete; remaining work is pending.
+Status: phases 1 and 2 are verified. Simplified controllers and deletion are verified and awaiting review. Automatic command retries are deferred. Phase 5 Control API startup is complete; remaining work is pending.
 
 ## Pre-production scope
 
@@ -653,7 +653,7 @@ remains phase 4 work. No phase 2 commit has been created.
 
 - [x] Add the controller subsystem inside ws-proxy, shared watches/cache, initial
   synchronization,
-  generation filtering, ownership/dependency indexes, and per-resource serialized
+  generation/deletion filtering, host-to-node watches, and per-resource serialized
   work with bounded concurrency and per-host outbound queues.
 - [x] Implement registration sessions, heartbeat expiry, disconnect recovery, and
   shutdown. Enable dispatch only after initial watch synchronization; control_api
@@ -661,8 +661,9 @@ remains phase 4 work. No phase 2 commit has been created.
 - [x] Update ws-proxy and Diamant together for full desired-state delivery,
   idempotent apply/restart handling, and identity-checked acknowledgements.
 - [x] Implement pending/applied conditions, status writes with conflict checks,
-  acknowledgement deadlines, bounded retries, and no-op status suppression.
-- [x] Handle reconnect, ownership/dependency changes, retry, and watch recovery
+  separate dispatch/acknowledgement status, and no-op status suppression.
+  Automatic command retries are deferred.
+- [x] Handle reconnect, desired-state changes, and watch recovery
   independently of generation changes; establish missing ownership/finalizers
   before dispatch and reject conflicting or stale owners.
 
@@ -673,20 +674,35 @@ acknowledgements, coalesced restart requests, fresh-session resynchronization,
 proxy restart, and rejection of stale UID/generation/session reports. Check
 condition transition timestamps and ensure workers do not wait on remote replies.
 
+Controller simplification: a generation/deletion-filtered controller records the
+requested operation in `status.dispatch`. A separate runtime controller sends it
+once per host session and evaluates acknowledgement results. Status writes and
+heartbeats cannot create a new dispatch intent. Reconnection sends the current
+intent to the fresh session. No in-memory pending-operation registry, command
+retry deadlines, or raw watcher-event side effects remain. Automatic retries are
+deferred; an unacknowledged or failed command waits for a spec change or reconnect.
+Both controllers use the delivered resource rather than checking its existence again.
+
+Host and node cleanup use kube-runtime's `finalizer` helper with `Apply` and
+`Cleanup` branches, following the
+[secret syncer example](https://github.com/kube-rs/kube/blob/main/examples/secret_syncer.rs).
+Cleanup remains unsuccessful until the runtime acknowledgement or owned-node
+removal is recorded, so the helper retains the application finalizer.
+
 ### Phase 4 — Complete node and host deletion
 
 **Deliverables**
 
-- [ ] Add the REST node-delete endpoint and its OpenAPI contract with terminating
+- [x] Add the REST node-delete endpoint and its OpenAPI contract with terminating
   resources remaining visible while cleanup is pending.
-- [ ] Implement idempotent remove/stop messages and distinct cleanup
+- [x] Implement idempotent remove/stop messages and distinct cleanup
   acknowledgements in ws-proxy and Diamant; verify child-process stop behavior.
-- [ ] Handle deletion timestamps independently of generation and release node
+- [x] Handle deletion timestamps independently of generation and release node
   finalizers only after matching successful cleanup acknowledgements.
-- [ ] Implement explicit host-owned node deletion by owner UID, retaining the host
+- [x] Implement explicit host-owned node deletion by owner UID, retaining the host
   finalizer until all owned nodes are removed; allow terminating-host reconnects
   for outstanding cleanup.
-- [ ] Document manual forced cleanup and its inability to guarantee that remote
+- [x] Document manual forced cleanup and its inability to guarantee that remote
   processes have stopped. Do not add automatic cleanup-success timeouts.
 
 **Acceptance checks:** Exercise online/offline deletion, failed stops, duplicate
@@ -694,6 +710,23 @@ remove delivery, lost acknowledgements, API/proxy restart during cleanup, and ho
 recreation under the same name. Confirm that apply acknowledgements cannot finish
 removal, cleanup resumes after reconnect/relist, and host deletion completes
 without Kubernetes garbage collection or adoption of an old host's nodes.
+
+Validation: controller acceptance tests cover delayed/duplicate acknowledgements,
+wrong operation IDs, generation gating, heartbeat suppression, online remove,
+failed cleanup acknowledgement, and offline host deletion resumed after proxy
+restart and cleanup-only reconnect. Runtime tests check duplicate removal, stale
+UID isolation, and child reaping. REST acceptance covers asynchronous and repeated
+delete requests, missing resources, and visibility while finalizers remain.
+Expired-watch-history recovery and injected OS stop failures remain broader
+acceptance checks; they are not claimed as verified by these tests.
+
+Manual forced cleanup: an operator may use `kubectl edit suntitlenode NAME` to
+remove only `control.suntitle.io/runtime-cleanup` from `metadata.finalizers`, then
+remove `control.suntitle.io/host-cleanup` from a terminating host if necessary.
+Verify the finalizer names against the resource before editing. This bypasses
+acknowledged cleanup and cannot guarantee remote processes have stopped. Restore
+host connectivity and allow acknowledged removal whenever possible. Missing
+acknowledgements never automatically release either application finalizer.
 
 ### Phase 5 — Integrate startup and application clients
 

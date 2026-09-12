@@ -110,11 +110,12 @@ mod unix {
 
     pub async fn run() -> Result<(), Box<dyn Error>> {
         crate::support::require_free_ports()?;
-        let database = crate::support::Database::create().await?;
         build_helpers()?;
         let binary_directory = binary_directory()?;
+        let namespace = crate::support::TestNamespace::new()
+            .await
+            .map_err(io::Error::other)?;
         let temporary_directory = TemporaryDirectory::new()?;
-        let identity_file = temporary_directory.0.join("diamant.id");
         let process_log = temporary_directory.0.join("node-processes.log");
         let project = temporary_directory.0.join("project with spaces");
         fs::create_dir(&project)?;
@@ -138,13 +139,11 @@ with log.open('a') as f:
 
         let mut api = ChildProcess::spawn(
             "control_api",
-            Command::new(binary_path(&binary_directory, "control_api"))
-                .env("DATABASE_URL", &database.url),
+            &mut namespace.command(binary_path(&binary_directory, "control_api"), "api"),
         )?;
         let mut proxy = ChildProcess::spawn(
             "ws-proxy",
-            Command::new(binary_path(&binary_directory, "ws-proxy"))
-                .env("DATABASE_URL", &database.url),
+            &mut namespace.command(binary_path(&binary_directory, "ws-proxy"), "proxy"),
         )?;
         wait_for_proxy(&mut proxy).await?;
 
@@ -156,8 +155,6 @@ with log.open('a') as f:
             .arg(&host_name)
             .arg("--host-ip")
             .arg("192.0.2.20")
-            .arg("--id-file")
-            .arg(&identity_file)
             .arg("--health-interval-seconds")
             .arg("1")
             .arg("--project-dir")
@@ -168,23 +165,29 @@ with log.open('a') as f:
             .env("FAKE_NODE_LOG", &process_log);
         let mut diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
 
-        let host_id = wait_for_host(&host_name, "online", &mut proxy, &mut diamant).await?;
+        let host_id = wait_for_host(&host_name, "Online", &mut proxy, &mut diamant).await?;
         let audio = request_json(
             "POST",
             &format!("/api/v1/hosts/{host_id}/nodes"),
-            Some(&audio_body("Studio microphone", 16_000)),
+            Some(&audio_body(&host_name, "Studio microphone", 16_000)),
             201,
         )
         .await?;
-        let audio_id = value_uuid(&audio, "id")?;
+        let audio_id = audio["metadata"]["name"]
+            .as_str()
+            .ok_or("missing node name")?
+            .to_owned();
         let display = request_json(
             "POST",
             &format!("/api/v1/hosts/{host_id}/nodes"),
-            Some(&display_body("Main display", 3)),
+            Some(&display_body(&host_name, "Main display", 3)),
             201,
         )
         .await?;
-        let display_id = value_uuid(&display, "id")?;
+        let display_id = display["metadata"]["name"]
+            .as_str()
+            .ok_or("missing node name")?
+            .to_owned();
 
         wait_for_nodes(2, true, &mut proxy, &mut diamant).await?;
         wait_for_starts(&process_log, "suntitle-listener.py", 1).await?;
@@ -196,36 +199,33 @@ with log.open('a') as f:
         request_json(
             "POST",
             &format!("/api/v1/hosts/{host_id}/nodes"),
-            Some(&display_body("Auxiliary display", 5)),
+            Some(&display_body(&host_name, "Auxiliary display", 5)),
             201,
         )
         .await?;
         wait_for_nodes(3, true, &mut proxy, &mut diamant).await?;
         wait_for_starts(&process_log, "suntitle.py", 2).await?;
 
-        // Fixtures exit themselves. This deliberately does not claim that
-        // aborting a Rust task stops Python; live stop/restart is deferred.
+        // Fixtures MUST exit before testing disconnect and replay.
         fs::write(project.join("finish"), "")?;
         wait_for_all_processes_to_stop(&process_log).await?;
         diamant.terminate()?;
         diamant.wait_for_exit().await?;
         wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
-        wait_for_host(&host_name, "offline", &mut proxy, &mut diamant).await?;
+        wait_for_host(&host_name, "Offline", &mut proxy, &mut diamant).await?;
         wait_for_all_processes_to_stop(&process_log).await?;
 
-        // Restart both independent services with the same database. The API
+        // Restart both independent services with the same Kubernetes namespace. The API
         // must retain desired nodes, and a fresh agent must replay them.
         drop(api);
         drop(proxy);
         api = ChildProcess::spawn(
             "control_api",
-            Command::new(binary_path(&binary_directory, "control_api"))
-                .env("DATABASE_URL", &database.url),
+            &mut namespace.command(binary_path(&binary_directory, "control_api"), "api"),
         )?;
         proxy = ChildProcess::spawn(
             "ws-proxy",
-            Command::new(binary_path(&binary_directory, "ws-proxy"))
-                .env("DATABASE_URL", &database.url),
+            &mut namespace.command(binary_path(&binary_directory, "ws-proxy"), "proxy"),
         )?;
         wait_for_proxy(&mut proxy).await?;
         api.ensure_running()?;
@@ -236,8 +236,7 @@ with log.open('a') as f:
         wait_for_starts(&process_log, "suntitle-listener.py", 2).await?;
         wait_for_starts(&process_log, "suntitle.py", 4).await?;
         wait_for_node(&audio_id, "Studio microphone", true).await?;
-        // Fixtures exit themselves. This deliberately does not claim that
-        // aborting a Rust task stops Python; live stop/restart is deferred.
+        // Fixtures MUST exit before testing disconnect and replay.
         fs::write(project.join("finish"), "")?;
         wait_for_all_processes_to_stop(&process_log).await?;
         diamant.terminate()?;
@@ -251,36 +250,34 @@ with log.open('a') as f:
         Ok(())
     }
 
-    fn audio_body(name: &str, sample_rate: u32) -> Value {
-        json!({
-            "type": "audio_source",
-            "name": name,
-            "description": null,
-            "enabled": true,
-            "inputNodeId": null,
-            "settings": {
-                "sampleRateHz": sample_rate,
-                "channels": 1,
-                "encoding": "pcm_s16le",
-                "deviceName": null
-            }
-        })
+    fn node_body(host: &str, name: &str, settings: Value) -> Value {
+        json!({"spec": {
+            "name": name, "description": null, "enabled": true,
+            "hostRef": {"name": host}, "inputRef": null, "restartToken": null,
+            "settings": settings
+        }})
     }
 
-    fn display_body(name: &str, max_lines: u8) -> Value {
-        json!({
-            "type": "display",
-            "name": name,
-            "description": null,
-            "enabled": true,
-            "inputNodeId": null,
-            "settings": {
-                "maxLines": max_lines,
-                "fontScale": 1.0,
-                "showOriginal": false,
-                "theme": "dark"
-            }
-        })
+    fn audio_body(host: &str, name: &str, sample_rate: u32) -> Value {
+        node_body(
+            host,
+            name,
+            json!({"audio_source": {
+                "sampleRateHz": sample_rate, "channels": 1,
+                "encoding": "pcm_s16le", "deviceName": null
+            }}),
+        )
+    }
+
+    fn display_body(host: &str, name: &str, max_lines: u8) -> Value {
+        node_body(
+            host,
+            name,
+            json!({"display": {
+                "maxLines": max_lines, "fontScale": 1.0,
+                "showOriginal": false, "theme": "dark"
+            }}),
+        )
     }
 
     fn value_uuid(value: &Value, key: &str) -> Result<Uuid, Box<dyn Error>> {
@@ -373,17 +370,18 @@ with log.open('a') as f:
         let deadline = Instant::now() + ACTION_TIMEOUT;
         loop {
             proxy.ensure_running()?;
-            if status == "online" {
+            if status == "Online" {
                 diamant.ensure_running()?;
             }
             if let Ok(hosts) = request_json("GET", "/api/v1/hosts", None, 200).await
                 && let Some(host) = hosts["items"].as_array().and_then(|items| {
                     items.iter().find(|host| {
-                        host["name"] == name && host["status"].as_str() == Some(status)
+                        host["spec"]["name"] == name
+                            && host["status"]["presence"].as_str() == Some(status)
                     })
                 })
             {
-                return value_uuid(host, "id");
+                return value_uuid(&host["metadata"], "uid");
             }
             if Instant::now() >= deadline {
                 return Err(io::Error::new(
@@ -409,15 +407,11 @@ with log.open('a') as f:
                 diamant.ensure_running()?;
             }
             if let Ok(nodes) = request_json("GET", "/api/v1/nodes", None, 200).await
-                && nodes["total"].as_u64() == Some(total as u64)
+                && nodes["items"].as_array().map(Vec::len) == Some(total)
                 && nodes["items"].as_array().is_some_and(|items| {
                     items.iter().all(|node| {
-                        node["status"]
-                            == if connected {
-                                "connected"
-                            } else {
-                                "disconnected"
-                            }
+                        node["status"]["phase"]
+                            == if connected { "Running" } else { "Disconnected" }
                     })
                 })
             {
@@ -434,12 +428,12 @@ with log.open('a') as f:
         }
     }
 
-    async fn wait_for_node(id: &Uuid, name: &str, connected: bool) -> Result<(), Box<dyn Error>> {
+    async fn wait_for_node(id: &str, name: &str, connected: bool) -> Result<(), Box<dyn Error>> {
         let deadline = Instant::now() + ACTION_TIMEOUT;
         loop {
             if let Ok(node) = request_json("GET", &format!("/api/v1/nodes/{id}"), None, 200).await
-                && node["name"] == name
-                && (!connected || node["status"] == "connected")
+                && node["spec"]["name"] == name
+                && (!connected || node["status"]["phase"] == "Running")
             {
                 return Ok(());
             }

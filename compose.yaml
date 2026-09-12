@@ -65,7 +65,7 @@ services:
   kubernetes-bootstrap:
     build:
       context: .
-      dockerfile: ws-proxy/Dockerfile
+      dockerfile: docker/ws-proxy/Dockerfile
     image: suntitle-control:local
     depends_on:
       kube-apiserver:

@@ -119,7 +119,7 @@ async fn main() -> Result<ExitCode, MainReport> {
         }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(2)) => {},
-            _ = tokio::signal::ctrl_c() => break,
+            _ = shutdown_signal() => break,
         }
     }
     Ok(ExitCode::default())
@@ -343,5 +343,16 @@ async fn send_events(
 }
 
 async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = terminate.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
 }

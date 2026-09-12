@@ -10,11 +10,11 @@ setup:
 
 # Start the WebSocket proxy in release mode.
 proxy-release:
-    cargo run --release --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
+    cargo run --release --manifest-path ws-proxy/Cargo.toml --bin ws-proxy -- --kubeconfig pki/suntitle-proxy.kubeconfig
 
 # Start the WebSocket proxy in development mode.
 proxy:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy -- --kubeconfig pki/suntitle-proxy.kubeconfig
 
 # Create local database configuration without overwriting existing settings.
 db-env:
@@ -22,15 +22,7 @@ db-env:
 
 # Start PostgreSQL and wait until it is healthy.
 db-up: db-env
-    docker compose up -d --wait --wait-timeout 90 postgres
-
-# Apply versioned database migrations.
-db-migrate:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin db_migrate
-
-# Run live storage tests in isolated schemas.
-db-test: db-up db-migrate
-    cargo test --manifest-path ws-proxy/Cargo.toml --test postgres_store -- --ignored
+    docker compose --env-file .env.local up -d --wait --wait-timeout 90 postgres
 
 # Stop PostgreSQL, retaining its data volume.
 db-stop:
@@ -42,7 +34,7 @@ db-drop-volume: db-env
 
 # Start the independent control API.
 api:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- --kubeconfig pki/suntitle-api.kubeconfig
 
 # Start the subtitle window.
 subtitle host="localhost:3030":
@@ -95,6 +87,13 @@ _local-infra-up: db-env
     docker compose --env-file .env.local build kubernetes-bootstrap
     docker compose --env-file .env.local up -d --wait --wait-timeout 180 api ws-proxy
 
+# Start Kubernetes and install resource contracts for local applications and E2Es.
+kubernetes-up: db-env
+    bash scripts/generate-kubeconfigs.sh
+    docker compose --env-file .env.local up -d kube-apiserver
+    @for attempt in {1..90}; do just kubectl get --raw=/readyz >/dev/null 2>&1 && break; sleep 1; done
+    just kubernetes-bootstrap
+
 # Start the full stack. Exit stops all services and preserves database data.
 local-stack:
     #!/usr/bin/env bash
@@ -146,8 +145,8 @@ hosts:
     curl -sS http://127.0.0.1:3031/api/v1/hosts | python3 -m json.tool
 
 # Install and start a default audio-source node on a host.
-install-audio-source host_id:
-    curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/{{ host_id }}/nodes" -H 'Content-Type: application/json' -d '{"type":"audio_source","inputNodeId":null,"name":"Local microphone","description":"Default local audio input","enabled":true,"settings":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null}}' | python3 -m json.tool
+install-audio-source host_id host_name:
+    curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/{{ host_id }}/nodes" -H 'Content-Type: application/json' -d '{"spec":{"hostRef":{"name":"{{ host_name }}"},"inputRef":null,"restartToken":null,"name":"Local microphone","description":"Default local audio input","enabled":true,"settings":{"audio_source":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null}}}}' | python3 -m json.tool
 
 # List all nodes from the control API.
 nodes:
@@ -166,11 +165,11 @@ e2e:
     cargo run --manifest-path ws-proxy/Cargo.toml --example e2e_probe
 
 # Run the host-registration end-to-end test.
-host-e2e: db-up db-migrate
+host-e2e: kubernetes-up
     cargo run --manifest-path ws-proxy/Cargo.toml --example host_registration_e2e
 
 # Run the node-lifecycle end-to-end test.
-node-e2e: db-up db-migrate
+node-e2e: kubernetes-up
     cargo run --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
 
 # Select an existing Pulumi stack.
@@ -206,12 +205,12 @@ _ui-dependencies:
     @if [[ ! -x ui/node_modules/.bin/vite ]]; then npm --prefix ui install; fi
 
 # Start the UI and control API together. Ctrl+C stops both processes.
-ui: _ui-dependencies db-up db-migrate
+ui: _ui-dependencies kubernetes-up
     #!/usr/bin/env bash
     set -euo pipefail
 
     cargo build --manifest-path ws-proxy/Cargo.toml --bin control_api
-    ws-proxy/target/debug/control_api &
+    ws-proxy/target/debug/control_api --kubeconfig pki/suntitle-api.kubeconfig &
     backend_pid=$!
 
     cleanup() {

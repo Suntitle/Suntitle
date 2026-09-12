@@ -1,30 +1,22 @@
 mod audio_source;
-pub use audio_source::{AudioEncoding, AudioSourceNode, AudioSourceSettings};
+pub use audio_source::{AudioEncoding, AudioSourceSettings};
 
 mod transcriber;
-pub use transcriber::{TranscriberNode, TranscriberSettings, TranscriberTask};
+pub use transcriber::{TranscriberSettings, TranscriberTask};
 
 mod translator;
-pub use translator::{TranslatorNode, TranslatorSettings};
+pub use translator::TranslatorSettings;
 
 mod display;
-pub use display::{DisplayNode, DisplaySettings, DisplayTheme};
+pub use display::{DisplaySettings, DisplayTheme};
 
 mod language;
 pub use language::LanguageTag;
 
-mod node;
-pub use node::Node;
-
-use std::collections::BTreeMap;
-use std::net::IpAddr;
-
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use utoipa::{IntoParams, ToSchema};
+use utoipa::ToSchema;
 use uuid::Uuid;
-use validator::{Validate, ValidationError, ValidationErrors};
+use validator::ValidationError;
 
 const fn default_true() -> bool {
     true
@@ -175,273 +167,6 @@ pub struct NodeTypeDefinitionList {
     pub total: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum NodeStatus {
-    Connected,
-    Disconnected,
-    Degraded,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum HostStatus {
-    Online,
-    Offline,
-    Degraded,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Host {
-    /// Stable identifier of the host.
-    pub id: Uuid,
-    /// Display name shown for this host.
-    #[schema(min_length = 1, max_length = 128)]
-    pub name: String,
-    /// IP address of the host.
-    #[schema(value_type = String, format = "ip", examples("192.0.2.10", "2001:db8::10"))]
-    pub ip: IpAddr,
-    /// Version of the Suntitle host agent or runtime.
-    #[schema(min_length = 1, examples("0.1.0"))]
-    pub version: String,
-    /// Current host availability and health.
-    pub status: HostStatus,
-    /// Time the host was last observed by the control plane.
-    pub last_seen_at: DateTime<Utc>,
-    /// Optional host capabilities or implementation-specific information.
-    #[schema(additional_properties = true, nullable = false)]
-    pub metadata: Option<BTreeMap<String, Value>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HostList {
-    /// Hosts returned by the query.
-    pub items: Vec<Host>,
-    /// Total number of matching hosts.
-    #[schema(minimum = 0)]
-    pub total: u64,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ConnectionStatus {
-    Connected,
-    Reconnecting,
-    Degraded,
-}
-
-/// Type of data transferred over a node connection.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum DataType {
-    Audio,
-    Transcription,
-    Translation,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ConnectionDirection {
-    Incoming,
-    Outgoing,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ConnectionProtocol {
-    Websocket,
-    Http,
-    Https,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NodeConnection {
-    /// Stable identifier of this connection.
-    pub id: Uuid,
-    /// Identifier of the node at the other end of the connection.
-    pub peer_node_id: Uuid,
-    /// Processing role of the peer node.
-    pub peer_node_type: NodeType,
-    /// Display name of the peer node, when known.
-    #[schema(nullable = false)]
-    pub peer_name: Option<String>,
-    /// Direction of data flow relative to this node.
-    #[schema(inline)]
-    pub direction: ConnectionDirection,
-    /// Kind of payload carried by the connection.
-    pub data_type: DataType,
-    /// Current connection health.
-    pub status: ConnectionStatus,
-    /// Transport protocol used by the connection.
-    #[schema(inline)]
-    pub protocol: ConnectionProtocol,
-    /// Time the connection was established.
-    pub connected_at: DateTime<Utc>,
-    /// Time data was last observed on the connection.
-    pub last_activity_at: DateTime<Utc>,
-    /// Reported number of bytes transferred over the connection.
-    #[schema(minimum = 0, nullable = false)]
-    pub bytes_transferred: Option<u64>,
-    /// Optional implementation-specific connection information.
-    #[schema(additional_properties = true, nullable = false)]
-    pub metadata: Option<BTreeMap<String, Value>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeBase {
-    /// Stable identifier of the node.
-    #[schema(read_only)]
-    pub id: Uuid,
-    /// Display name shown to users.
-    #[schema(min_length = 1, max_length = 128)]
-    pub name: String,
-    /// Optional description of the node’s purpose.
-    #[schema(nullable, max_length = 1000)]
-    pub description: Option<String>,
-    /// Whether the node should run.
-    pub enabled: bool,
-    /// Current node connectivity and health.
-    #[schema(read_only)]
-    pub status: NodeStatus,
-    /// Host assigned to run this node.
-    #[schema(read_only)]
-    pub host: Host,
-    /// Observed data connections to peer nodes.
-    #[schema(read_only)]
-    pub connections: Vec<NodeConnection>,
-    /// Time the node was created.
-    #[schema(read_only)]
-    pub created_at: DateTime<Utc>,
-    /// Time the node record was last updated.
-    #[schema(read_only)]
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeUpdateBase {
-    /// Display name shown to users.
-    #[schema(min_length = 1, max_length = 128)]
-    #[validate(length(min = 1, max = 128))]
-    pub name: String,
-    /// Optional description of the node’s purpose.
-    #[schema(nullable, max_length = 1000)]
-    #[validate(length(max = 1000))]
-    pub description: Option<String>,
-    /// Whether the node should run.
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeInputUpdate {
-    /// Upstream node to connect as input. Must have a type included in the
-    /// selected node type's `inputTypes`; use null when the type accepts no input.
-    #[schema(nullable, required = true)]
-    #[serde(deserialize_with = "deserialize_nullable_uuid")]
-    pub input_node_id: Option<Uuid>,
-}
-
-/// The node type and its corresponding settings share a single discriminator.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "type", content = "settings", rename_all = "snake_case")]
-pub enum NodeSettings {
-    AudioSource(AudioSourceSettings),
-    Transcriber(TranscriberSettings),
-    Translator(TranslatorSettings),
-    Display(DisplaySettings),
-}
-
-impl NodeSettings {
-    pub fn node_type(&self) -> NodeType {
-        match self {
-            Self::AudioSource(_) => NodeType::AudioSource,
-            Self::Transcriber(_) => NodeType::Transcriber,
-            Self::Translator(_) => NodeType::Translator,
-            Self::Display(_) => NodeType::Display,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Validate)]
-pub struct NodeCreate {
-    /// Initial node configuration and upstream input.
-    #[serde(flatten)]
-    #[validate(nested)]
-    pub update: NodeUpdate,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate)]
-pub struct NodeUpdate {
-    /// Editable name, description, and enabled state.
-    #[serde(flatten)]
-    #[validate(nested)]
-    pub base: NodeUpdateBase,
-    /// Node type discriminator and its matching settings.
-    #[serde(flatten)]
-    #[validate(nested)]
-    pub settings: NodeSettings,
-    /// Upstream input selection for the node.
-    #[serde(flatten)]
-    pub input: NodeInputUpdate,
-}
-
-impl NodeUpdate {
-    pub fn base(&self) -> &NodeUpdateBase {
-        &self.base
-    }
-
-    pub fn node_type(&self) -> NodeType {
-        self.settings.node_type()
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.base().enabled
-    }
-
-    pub fn input_node_id(&self) -> Option<Uuid> {
-        self.input.input_node_id
-    }
-}
-
-// A custom field deserializer makes absence an error while still accepting null.
-fn deserialize_nullable_uuid<'de, D>(deserializer: D) -> Result<Option<Uuid>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<Uuid>::deserialize(deserializer)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NodeList {
-    /// Nodes returned by the query.
-    pub items: Vec<Node>,
-    /// Total number of matching nodes.
-    #[schema(minimum = 0)]
-    pub total: u64,
-}
-
-#[derive(Debug, Clone, Deserialize, IntoParams)]
-pub struct ListHostsQuery {
-    /// Return only hosts with this status.
-    pub status: Option<HostStatus>,
-}
-
-#[derive(Debug, Clone, Deserialize, IntoParams)]
-pub struct ListNodesQuery {
-    /// Return only nodes of this type.
-    #[serde(rename = "type")]
-    #[param(rename = "type")]
-    pub node_type: Option<NodeType>,
-    /// Return only nodes with this status.
-    pub status: Option<NodeStatus>,
-}
-
 fn require(valid: bool, message: &'static str) -> Result<(), ValidationError> {
     if valid {
         Ok(())
@@ -450,20 +175,10 @@ fn require(valid: bool, message: &'static str) -> Result<(), ValidationError> {
     }
 }
 
-impl Validate for NodeSettings {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        match self {
-            Self::AudioSource(settings) => settings.validate(),
-            Self::Transcriber(settings) => settings.validate(),
-            Self::Translator(settings) => settings.validate(),
-            Self::Display(settings) => settings.validate(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn mock_node_responses_support_all_variants() {
@@ -501,63 +216,6 @@ mod tests {
     }
 
     #[test]
-    fn tagged_nodes_preserve_the_client_wire_format() {
-        let cases = [
-            serde_json::json!({"type":"audio_source","settings":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null}}),
-            serde_json::json!({"type":"transcriber","settings":{"model":"large-v3","language":"en","task":"transcribe","beamSize":5,"vadEnabled":true}}),
-            serde_json::json!({"type":"translator","settings":{"sourceLanguage":"en","targetLanguage":"cs","provider":"openai","model":null,"preserveFormatting":true}}),
-            serde_json::json!({"type":"display","settings":{"maxLines":3,"fontScale":1.0,"showOriginal":false,"theme":"dark"}}),
-        ];
-        for mut wire in cases {
-            wire["name"] = "test".into();
-            wire["description"] = Value::Null;
-            wire["enabled"] = true.into();
-            assert!(serde_json::from_value::<NodeCreate>(wire.clone()).is_err());
-
-            // Required nullable input: omission must fail, null and UUID must work.
-            assert!(serde_json::from_value::<NodeUpdate>(wire.clone()).is_err());
-            for input in [Value::Null, serde_json::json!(Uuid::new_v4())] {
-                wire["inputNodeId"] = input;
-                let create: NodeCreate = serde_json::from_value(wire.clone()).unwrap();
-                assert_eq!(serde_json::to_value(create).unwrap(), wire);
-                let update: NodeUpdate = serde_json::from_value(wire.clone()).unwrap();
-                let json = serde_json::to_string(&update).unwrap();
-                assert_eq!(json.matches("\"type\"").count(), 1);
-                assert_eq!(serde_json::from_str::<Value>(&json).unwrap(), wire);
-                assert_eq!(serde_json::from_str::<NodeUpdate>(&json).unwrap(), update);
-
-                let host = Host {
-                    id: Uuid::new_v4(),
-                    name: "host".into(),
-                    ip: "192.0.2.10".parse().unwrap(),
-                    version: "0.1.0".into(),
-                    status: HostStatus::Online,
-                    last_seen_at: Utc::now(),
-                    metadata: None,
-                };
-                let node = Node::from_update(Uuid::new_v4(), host, &update);
-                let json = serde_json::to_string(&node).unwrap();
-                assert_eq!(json.matches("\"type\"").count(), 1);
-                let restored: Node = serde_json::from_str(&json).unwrap();
-                let restored_wire = serde_json::to_value(&restored).unwrap();
-                assert_eq!(restored_wire["settings"], wire["settings"]);
-                assert_eq!(restored_wire["type"], wire["type"]);
-                assert_eq!(restored.node_type(), update.node_type());
-                assert_eq!(restored.id(), node.id());
-            }
-
-            wire["type"] = "unknown".into();
-            assert!(serde_json::from_value::<NodeCreate>(wire.clone()).is_err());
-            assert!(serde_json::from_value::<NodeUpdate>(wire.clone()).is_err());
-            wire["type"] = "display".into();
-            wire["settings"] =
-                serde_json::json!({"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le"});
-            assert!(serde_json::from_value::<NodeCreate>(wire.clone()).is_err());
-            assert!(serde_json::from_value::<NodeUpdate>(wire).is_err());
-        }
-    }
-
-    #[test]
     fn transcriber_defaults_match_contract() {
         let settings: TranscriberSettings = serde_json::from_value(serde_json::json!({
             "model": "large-v3",
@@ -580,25 +238,5 @@ mod tests {
         }));
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn node_update_deserializes_the_wire_shape() {
-        let update = serde_json::from_value::<NodeUpdate>(serde_json::json!({
-            "type": "translator",
-            "name": "English to Czech",
-            "enabled": true,
-            "settings": {
-                "sourceLanguage": "en",
-                "targetLanguage": "cs",
-                "provider": "openai"
-            },
-            "inputNodeId": null
-        }));
-
-        assert!(matches!(
-            update.unwrap().settings,
-            NodeSettings::Translator(_)
-        ));
     }
 }

@@ -3,7 +3,6 @@ mod support;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -13,7 +12,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Instant, sleep, timeout};
 use uuid::Uuid;
-use ws_proxy::api::models::{HostList, HostStatus};
+use ws_proxy::kubernetes::{
+    resources::{Presence, SuntitleHost},
+    store::HostList,
+};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -54,40 +56,23 @@ impl Drop for ChildProcess {
     }
 }
 
-struct TemporaryDirectory(PathBuf);
-
-impl TemporaryDirectory {
-    fn new() -> io::Result<Self> {
-        let path = env::temp_dir().join(format!("suntitle-host-e2e-{}", Uuid::new_v4()));
-        fs::create_dir(&path)?;
-        Ok(Self(path))
-    }
-}
-
-impl Drop for TemporaryDirectory {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     support::require_free_ports()?;
-    let database = support::Database::create().await?;
     build_binaries()?;
     let binary_directory = binary_directory()?;
-    let temporary_directory = TemporaryDirectory::new()?;
-    let identity_file = temporary_directory.0.join("diamant.id");
+    let namespace = crate::support::TestNamespace::new()
+        .await
+        .map_err(io::Error::other)?;
     let host_name = format!("e2e-host-{}", Uuid::new_v4().simple());
 
     let _api = ChildProcess::spawn(
         "control_api",
-        Command::new(binary_path(&binary_directory, "control_api"))
-            .env("DATABASE_URL", &database.url),
+        &mut namespace.command(binary_path(&binary_directory, "control_api"), "api"),
     )?;
     let mut proxy = ChildProcess::spawn(
         "ws-proxy",
-        Command::new(binary_path(&binary_directory, "ws-proxy")).env("DATABASE_URL", &database.url),
+        &mut namespace.command(binary_path(&binary_directory, "ws-proxy"), "proxy"),
     )?;
     wait_for_proxy(&mut proxy).await?;
 
@@ -99,28 +84,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .arg(&host_name)
         .arg("--host-ip")
         .arg("192.0.2.10")
-        .arg("--id-file")
-        .arg(&identity_file)
         .arg("--health-interval-seconds")
         .arg("1");
     let mut diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
 
     let host = wait_for_registered_host(&host_name, &mut proxy, &mut diamant).await?;
-    let expected_id = Uuid::parse_str(fs::read_to_string(&identity_file)?.trim())?;
-    assert_eq!(host.id, expected_id);
-    assert_eq!(host.name, host_name);
-    assert_eq!(host.ip.to_string(), "192.0.2.10");
-    assert_eq!(host.status, HostStatus::Online);
-    assert!(
-        host.metadata.as_ref().is_some_and(|metadata| {
-            metadata.contains_key("os") && metadata.contains_key("arch")
-        })
-    );
+    let uid = host.metadata.uid.as_deref().expect("host UID");
+    Uuid::parse_str(uid)?;
+    assert_eq!(host.spec.name, host_name);
+    let status = host.status.expect("host status");
+    assert_eq!(status.ip.as_deref(), Some("192.0.2.10"));
+    assert!(matches!(status.presence, Some(Presence::Online)));
+    assert!(status.reported_metadata.contains_key("os"));
+    assert!(status.reported_metadata.contains_key("arch"));
 
-    println!(
-        "PASS: Diamant registered host {} and GET /api/v1/hosts returned it online",
-        host.id
-    );
+    println!("PASS: Diamant registered host {uid} and GET /api/v1/hosts returned it online");
     Ok(())
 }
 
@@ -176,13 +154,19 @@ async fn wait_for_registered_host(
     host_name: &str,
     proxy: &mut ChildProcess,
     diamant: &mut ChildProcess,
-) -> Result<ws_proxy::api::models::Host, Box<dyn Error>> {
+) -> Result<SuntitleHost, Box<dyn Error>> {
     let deadline = Instant::now() + REGISTRATION_TIMEOUT;
     loop {
         proxy.ensure_running()?;
         diamant.ensure_running()?;
         if let Ok(hosts) = list_hosts().await
-            && let Some(host) = hosts.items.into_iter().find(|host| host.name == host_name)
+            && let Some(host) = hosts.items.into_iter().find(|host| {
+                host.spec.name == host_name
+                    && matches!(
+                        host.status.as_ref().and_then(|s| s.presence.as_ref()),
+                        Some(Presence::Online)
+                    )
+            })
         {
             return Ok(host);
         }

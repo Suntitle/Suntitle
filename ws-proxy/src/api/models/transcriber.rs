@@ -1,21 +1,11 @@
 use std::ffi::OsString;
 
-use super::NodeBase;
 use super::language::validate_language;
 use super::{LanguageTag, default_true, require};
 use clap_reverse::AsCommand as _;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::{Validate, ValidationError};
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct TranscriberNode {
-    /// Common node identity, configuration, and runtime state.
-    #[serde(flatten)]
-    pub base: NodeBase,
-    /// Configuration for this node type.
-    pub settings: TranscriberSettings,
-}
 
 #[derive(
     Debug,
