@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 
-use super::NodeBase;
 use super::require;
 use clap_reverse::AsCommand as _;
 use serde::{Deserialize, Serialize};
@@ -8,15 +7,6 @@ use utoipa::ToSchema;
 use utoipa::openapi::RefOr;
 use utoipa::openapi::schema::{ObjectBuilder, Schema, Type};
 use validator::{Validate, ValidationError};
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct AudioSourceNode {
-    /// Common node identity, configuration, and runtime state.
-    #[serde(flatten)]
-    pub base: NodeBase,
-    /// Configuration for this node type.
-    pub settings: AudioSourceSettings,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate, kube::KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

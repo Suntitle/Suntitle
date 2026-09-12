@@ -1,20 +1,10 @@
 use std::ffi::OsString;
 
-use super::NodeBase;
 use super::require;
 use clap_reverse::AsCommand as _;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::{Validate, ValidationError};
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DisplayNode {
-    /// Common node identity, configuration, and runtime state.
-    #[serde(flatten)]
-    pub base: NodeBase,
-    /// Configuration for this node type.
-    pub settings: DisplaySettings,
-}
 
 #[derive(
     Debug,
