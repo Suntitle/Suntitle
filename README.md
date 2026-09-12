@@ -406,3 +406,27 @@ Disconnected hosts become offline; missing health reports expire after 45 second
 so configure the health interval below that limit. Nodes remain available through
 the API while the host is offline. CI publishes
 Diamant as `diamant.<target>.tar.xz` alongside the proxy release.
+
+## Presubmit checks
+
+Pull requests and merge queue entries run these GitHub Actions checks:
+
+All tests run through `just`: `test-rust`, `test-rust-live`, `kubernetes-test`,
+`host-e2e`, `node-e2e`, `e2e`, `test-python`, and `ui-test`.
+
+- `Rust and Kubernetes E2E`: Rust tests, live Kubernetes integration tests,
+  resource contract and RBAC checks, and the `host_registration_e2e`,
+  `node_handling_e2e`, and `e2e_probe` examples.
+- `Python mock API and node CLI tests`: the Python unittest suite.
+- `Lint, build, and test UI`: UI lint, production build, and Cypress tests.
+
+The backend job starts PostgreSQL, Kine, and the Kubernetes API with temporary
+certificates. Lifecycle examples run sequentially because they use the same
+local ports. `fake_uv` supports the node lifecycle example; it is not a separate
+test. These checks use simulated node processes and relay payloads, without
+downloading speech or translation models. Cypress tests use intercepted API
+responses.
+
+Backend service logs and Cypress screenshots/videos are uploaded on failure.
+The backend workflow also supports manual runs. To enforce these checks before
+merging, select the three check names above in the repository's branch rules.
