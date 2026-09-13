@@ -193,6 +193,24 @@ export class NodesStore {
     }
   }
 
+  async deleteNode(nodeId: string): Promise<void> {
+    if (this.isNodeActionPending(nodeId)) return
+    this.pendingNodeActionIds.add(nodeId)
+    this.nodeActionErrors.delete(nodeId)
+    try {
+      await this.api.delete(`/nodes/${encodeURIComponent(nodeId)}`)
+      await this.loadNodes()
+      runInAction(() => {
+        if (this.selectedNode?.id === nodeId) this.selectedNode = null
+      })
+    } catch (error) {
+      runInAction(() => { this.nodeActionErrors.set(nodeId, getErrorMessage(error)) })
+      throw error
+    } finally {
+      runInAction(() => { this.pendingNodeActionIds.delete(nodeId) })
+    }
+  }
+
   private specUpdate(nodeId: string, update: NodeUpdate) {
     const node = this.nodeById.get(nodeId)
     if (!node) throw new Error("Node is no longer available")

@@ -35,7 +35,11 @@ export class ApiClient {
     return this.request<T>(path, { method: "PUT", body: JSON.stringify(body) })
   }
 
-  private async request<T>(path: string, init: RequestInit): Promise<T> {
+  delete(path: string): Promise<void> {
+    return this.request<void>(path, { method: "DELETE" }, false)
+  }
+
+  private async request<T>(path: string, init: RequestInit, parseResponse = true): Promise<T> {
     const headers = new Headers(init.headers)
     const accessToken = this.getAccessToken()
 
@@ -45,7 +49,7 @@ export class ApiClient {
 
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers })
     if (!response.ok) throw await this.createError(response)
-    if (response.status === 204) return undefined as T
+    if (!parseResponse || response.status === 204) return undefined as T
 
     return response.json() as Promise<T>
   }

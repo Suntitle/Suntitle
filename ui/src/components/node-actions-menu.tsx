@@ -13,7 +13,25 @@ import {
 import { useStores } from "@/stores"
 import type { Node } from "@/stores/models"
 
-type NodeAction = "restart" | "disable"
+type NodeAction = "restart" | "disable" | "delete"
+
+const actionDetails = {
+  restart: {
+    verb: "Restart",
+    description: "Subtitle processing through this node may pause briefly while it restarts.",
+    pendingLabel: "Restarting…",
+  },
+  disable: {
+    verb: "Disable",
+    description: "This node will stop processing data and may interrupt downstream output.",
+    pendingLabel: "Disabling…",
+  },
+  delete: {
+    verb: "Delete",
+    description: "This will permanently remove this node and its settings. Downstream processing may be interrupted. This cannot be undone.",
+    pendingLabel: "Deleting…",
+  },
+} satisfies Record<NodeAction, { verb: string; description: string; pendingLabel: string }>
 
 export const NodeActionsMenu = observer(function NodeActionsMenu({ node }: { node: Node }) {
   const { nodesStore } = useStores()
@@ -33,6 +51,7 @@ export const NodeActionsMenu = observer(function NodeActionsMenu({ node }: { nod
 
     try {
       if (action === "restart") await nodesStore.restartNode(node.id)
+      else if (action === "delete") await nodesStore.deleteNode(node.id)
       else await nodesStore.disableNode(node)
       setIsConfirmationOpen(false)
     } catch {
@@ -40,7 +59,7 @@ export const NodeActionsMenu = observer(function NodeActionsMenu({ node }: { nod
     }
   }
 
-  const isRestart = action === "restart"
+  const details = actionDetails[action ?? "restart"]
 
   return (
     <>
@@ -67,19 +86,19 @@ export const NodeActionsMenu = observer(function NodeActionsMenu({ node }: { nod
           >
             Disable node
           </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onClick={() => selectAction("delete")}>
+            Delete node
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
       <ConfirmationDialog
         open={isConfirmationOpen}
-        title={isRestart ? `Restart ${node.name}?` : `Disable ${node.name}?`}
-        description={isRestart
-          ? "Subtitle processing through this node may pause briefly while it restarts."
-          : "This node will stop processing data and may interrupt downstream output."
-        }
-        confirmLabel={isRestart ? "Restart node" : "Disable node"}
-        pendingLabel={isRestart ? "Restarting…" : "Disabling…"}
-        destructive={!isRestart}
+        title={`${details.verb} ${node.name}?`}
+        description={details.description}
+        confirmLabel={`${details.verb} node`}
+        pendingLabel={details.pendingLabel}
+        destructive={action !== "restart"}
         isPending={isPending}
         error={error}
         onConfirm={confirmAction}
