@@ -1,5 +1,6 @@
 export { ApiClient, ApiError } from "./api-client"
 export { AuthStore } from "./auth-store"
+export { ExtensionsStore } from "./extensions-store"
 export { HostsStore } from "./hosts-store"
 export { NodesStore } from "./nodes-store"
 export { RootStore } from "./root-store"
