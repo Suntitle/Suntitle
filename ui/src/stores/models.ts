@@ -9,6 +9,20 @@ export type DataType = "audio" | "transcription" | "translation"
 export type ConnectionDirection = "incoming" | "outgoing"
 export type ConnectionProtocol = "websocket" | "http" | "https"
 export type JsonMetadata = Record<string, unknown>
+export type ExtensionSourceType = "local" | "git" | "zip"
+
+export interface Extension {
+  name: string
+  version: string
+  description: string
+  source: string
+  sourceType: ExtensionSourceType
+}
+
+export interface ExtensionCreate {
+  source: string
+  sourceType: ExtensionSourceType
+}
 
 export interface NodeSettingOption {
   value: NodeSettingValue
