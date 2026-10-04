@@ -1,0 +1,16 @@
+[
+  {
+    "name": "obs-captions",
+    "version": "1.4.2",
+    "description": "Publishes live subtitles to OBS Studio.",
+    "source": "https://github.com/suntitle/extensions/obs-captions.git",
+    "sourceType": "git"
+  },
+  {
+    "name": "archive-export",
+    "version": "0.8.0",
+    "description": "Exports completed subtitle sessions as WebVTT files.",
+    "source": "/opt/suntitle/extensions/archive-export",
+    "sourceType": "local"
+  }
+]
