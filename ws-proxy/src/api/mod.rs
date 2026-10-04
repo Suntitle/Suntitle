@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod errors;
+pub mod extensions;
 pub mod hosts;
 pub mod models;
 pub mod node_types;
@@ -26,6 +27,9 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
         auth::login,
         auth::logout,
         auth::get_current_user,
+        extensions::list_extensions,
+        extensions::create_extension,
+        extensions::refresh_extension,
         hosts::list_hosts,
         hosts::install_node_on_host,
         node_types::list_node_types,
@@ -38,6 +42,7 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
     components(
         schemas(
             LoginRequest, LoginResponse, User,
+            extensions::Extension, extensions::ExtensionCreate, extensions::ExtensionSourceType,
             NodeType, NodeSettingValue, NodeSettingOption, NodeSettingDefinition,
             NodeTypeDefinition, NodeTypeDefinitionList,
             AudioSourceSettings, TranscriberSettings, TranslatorSettings, DisplaySettings,
@@ -55,6 +60,7 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
     security(("bearerAuth" = [])),
     tags(
         (name = "Authentication"),
+        (name = "Extensions"),
         (name = "Hosts"),
         (name = "Node types"),
         (name = "Nodes")
@@ -147,6 +153,9 @@ pub fn configure_with_store(
             .service(auth::login)
             .service(auth::logout)
             .service(auth::get_current_user)
+            .service(extensions::list_extensions)
+            .service(extensions::create_extension)
+            .service(extensions::refresh_extension)
             .service(hosts::list_hosts)
             .service(hosts::install_node_on_host)
             .service(node_types::list_node_types)
@@ -172,5 +181,16 @@ mod tests {
             document["components"]["schemas"]["SuntitleNode"]["properties"]["metadata"].is_object()
         );
         assert!(document["paths"]["/nodes/{name}/restart"]["post"]["responses"]["202"].is_object());
+        assert_eq!(
+            document["components"]["schemas"]["Extension"]["required"],
+            serde_json::json!(["name", "version", "description", "source", "sourceType"])
+        );
+        assert_eq!(
+            document["components"]["schemas"]["ExtensionSourceType"]["enum"],
+            serde_json::json!(["local", "git", "zip"])
+        );
+        assert!(document["paths"]["/extensions"]["get"].is_object());
+        assert!(document["paths"]["/extensions"]["post"].is_object());
+        assert!(document["paths"]["/extensions/{name}/refresh"]["post"].is_object());
     }
 }

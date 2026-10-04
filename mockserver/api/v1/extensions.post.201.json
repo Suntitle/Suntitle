@@ -1,0 +1,7 @@
+{
+  "name": "speaker-notes",
+  "version": "1.0.0",
+  "description": "Sends translated subtitles to the speaker notes display.",
+  "source": "https://extensions.suntitle.dev/speaker-notes-1.0.0.zip",
+  "sourceType": "zip"
+}

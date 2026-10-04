@@ -76,6 +76,135 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /extensions:
+    get:
+      tags:
+      - Extensions
+      summary: List installed extensions
+      operationId: listExtensions
+      responses:
+        '200':
+          description: Installed extensions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Extension'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: Extension storage is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      tags:
+      - Extensions
+      summary: Install an extension
+      operationId: createExtension
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtensionCreate'
+        required: true
+      responses:
+        '201':
+          description: Extension installed.
+          headers:
+            Location:
+              schema:
+                type: string
+              description: Created extension URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Extension'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: The extension is already installed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          description: Extension storage is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /extensions/{name}/refresh:
+    post:
+      tags:
+      - Extensions
+      summary: Refresh an extension from its source
+      operationId: refreshExtension
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Extension refresh accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Extension'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The extension cannot be refreshed in its current state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: Extension source is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /hosts:
     get:
       tags:
@@ -531,6 +660,43 @@ components:
       properties:
         error:
           $ref: '#/components/schemas/ErrorDetail'
+    Extension:
+      type: object
+      required:
+      - name
+      - version
+      - description
+      - source
+      - sourceType
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
+        source:
+          type: string
+        sourceType:
+          $ref: '#/components/schemas/ExtensionSourceType'
+      additionalProperties: false
+    ExtensionCreate:
+      type: object
+      required:
+      - source
+      - sourceType
+      properties:
+        source:
+          type: string
+        sourceType:
+          $ref: '#/components/schemas/ExtensionSourceType'
+      additionalProperties: false
+    ExtensionSourceType:
+      type: string
+      enum:
+      - local
+      - git
+      - zip
     HostList:
       type: object
       required:
@@ -1882,6 +2048,7 @@ security:
 - bearerAuth: []
 tags:
 - name: Authentication
+- name: Extensions
 - name: Hosts
 - name: Node types
 - name: Nodes

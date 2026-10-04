@@ -1,0 +1,7 @@
+{
+  "name": "obs-captions",
+  "version": "1.4.3",
+  "description": "Publishes live subtitles to OBS Studio.",
+  "source": "https://github.com/suntitle/extensions/obs-captions.git",
+  "sourceType": "git"
+}
