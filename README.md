@@ -33,7 +33,7 @@ just setup
 ## Local stack
 
 Docker Compose runs PostgreSQL, Kine, kube-apiserver, the control API, and the
-WebSocket proxy/controller. Diamant and the UI development server run on the host.
+WebSocket proxy/controller, and the UI development server. Diamant runs on the host.
 
 ```bash
 just generate-certs  # once before the first launch; requires mkcert and OpenSSL
@@ -41,16 +41,21 @@ just local-stack
 ```
 
 `just local-stack` creates `.env.local` if missing, generates local client
-kubeconfigs, builds the backend image, and starts Compose. A bootstrap container
+kubeconfigs, builds the backend and UI images, and starts Compose. A bootstrap container
 waits for Kubernetes readiness and installs the namespace, CRDs, and RBAC.
 The API and proxy start with their separate container kubeconfigs. The command
-waits for both services to be healthy before starting Diamant and the UI.
+waits for the API, proxy, and UI to be healthy before starting Diamant.
 PostgreSQL is Kine's backing database; legacy application database migrations
 are not needed.
 
-Open http://127.0.0.1:5173. The UI forwards `/api` to the control API on port 3031,
-which stores resources through Kubernetes on port 6443. Diamant connects to the
-proxy on port 3030 and registers `local-host`. Nodes installed through the UI
+Open http://localhost. Traefik routes `/api` to the control API and
+`/register`, `/transcribe`, `/translate`, and `/display` to the WebSocket proxy.
+WebSocket audio connections at `/` also reach the proxy; normal page requests
+and Vite hot-reload connections reach the UI. Diamant registers through
+`ws://localhost/register`.
+Only Traefik publishes a host port (80); PostgreSQL, Kine, and Kubernetes
+are accessible inside Compose only.
+The API stores resources through Kubernetes. Nodes installed through the UI
 are reconciled asynchronously by the controller and executed by Diamant.
 
 Ctrl+C or a startup failure stops Diamant and its node processes, stops the UI,
@@ -60,12 +65,17 @@ preserving its data volume. To erase the local database and all Kubernetes
 resources, stop `just local-stack`, then run `just db-drop-volume`. The next
 `just local-stack` creates a fresh database and bootstraps Kubernetes again.
 
-After generating certificates and kubeconfigs, the backend can also run on its own:
+After generating certificates and kubeconfigs, the container stack can also run on its own:
 
 ```bash
-docker compose --env-file .env.local build kubernetes-bootstrap
-docker compose --env-file .env.local up -d --wait api ws-proxy
+docker compose --env-file .env.local build kubernetes-bootstrap ui
+docker compose --env-file .env.local up -d --wait traefik api ws-proxy ui
 ```
+
+Standalone clients can use `localhost:80` instead of `localhost:3030` for
+the WebSocket proxy, and `http://localhost/api` for the control API.
+Commands that access Kubernetes on host port 6443 require separate connectivity;
+that port is no longer published by the stack.
 
 For a local backup, capture a PostgreSQL custom-format dump:
 

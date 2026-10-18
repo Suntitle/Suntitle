@@ -2,6 +2,12 @@
 
 ## Local development
 
+To run the UI with the backend in Docker Compose, follow the container stack
+commands in the root README and open http://localhost. Traefik routes `/api` requests
+to the API and other paths to the UI. Rebuild the UI image after source changes.
+
+To run the UI on the host with the mock API instead:
+
 Run the mock API from the repository root:
 
 ```bash

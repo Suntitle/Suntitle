@@ -125,7 +125,7 @@ async fn controller_apply_recovery_acceptance() {
     let (mut controller, mut task) = Controller::start(client.clone(), "suntitle");
     let result = AssertUnwindSafe(async {
         let mut connection = connect(&controller, &name).await;
-        assert_eq!(connection.session_id, connection.host.uid);
+        assert_ne!(connection.session_id, connection.host.uid);
         assert_eq!(
             hosts.get(&name).await.unwrap().status.unwrap().session_id.as_deref(),
             Some(connection.host.uid.as_str())

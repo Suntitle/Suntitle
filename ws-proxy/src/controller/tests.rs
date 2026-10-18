@@ -128,7 +128,7 @@ async fn outbound_overflow_closes_session() {
     for _ in 0..32 {
         state.dispatch(
             "host-uid",
-            "host-uid",
+            &connection.session_id,
             RegistrationServerMessage::Error {
                 message: "queued".into(),
             },
@@ -137,7 +137,7 @@ async fn outbound_overflow_closes_session() {
     assert!(!*connection.closed.borrow());
     state.dispatch(
         "host-uid",
-        "host-uid",
+        &connection.session_id,
         RegistrationServerMessage::Error {
             message: "overflow".into(),
         },
@@ -222,7 +222,7 @@ async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
         .await
         .unwrap();
     assert_eq!(first.host.uid, "api-assigned-uid");
-    assert_eq!(first.session_id, first.host.uid);
+    assert_ne!(first.session_id, first.host.uid);
     state
         .connections
         .mark_dispatched(&first.host.uid, "node".into(), "operation".into());
@@ -230,7 +230,12 @@ async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
         .register("host".into(), "test".into(), Default::default(), None)
         .await
         .unwrap();
-    assert_eq!(replacement.session_id, first.host.uid);
+    assert_ne!(replacement.session_id, first.session_id);
+    state
+        .disconnect(&first.host.uid, &first.session_id)
+        .await
+        .unwrap();
+    assert!(state.connections.contains(&replacement.host.uid, &replacement.session_id));
     assert!(*first.closed.borrow());
     assert!(!*replacement.closed.borrow());
     assert!(
@@ -249,7 +254,7 @@ async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
             .unwrap()
             .session_id
             .as_deref(),
-        Some("api-assigned-uid")
+        Some(replacement.session_id.as_str())
     );
     server.abort();
 }

@@ -84,8 +84,8 @@ _local-infra-up: db-env
         fi
     done
     bash scripts/generate-kubeconfigs.sh
-    docker compose --env-file .env.local build kubernetes-bootstrap
-    docker compose --env-file .env.local up -d --wait --wait-timeout 180 api ws-proxy
+    docker compose --env-file .env.local build kubernetes-bootstrap ui
+    docker compose --env-file .env.local up -d --wait --wait-timeout 180 traefik api ws-proxy ui
 
 # Start Kubernetes and install resource contracts for local applications and E2Es.
 kubernetes-up: db-env
@@ -117,13 +117,13 @@ local-stack:
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    just _local-infra-up
-    just _ui-dependencies
-    cargo build --manifest-path ws-proxy/Cargo.toml --bin diamant
-    ws-proxy/target/debug/diamant --host-name local-host --project-dir "{{ justfile_directory() }}" &
-    pids+=("$!")
+    if [[ "$(uname -s)" == Darwin && -z "${SDKROOT:-}" ]]; then
+        export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+    fi
 
-    (cd ui && exec env SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173 --strictPort) &
+    just _local-infra-up
+    cargo build --manifest-path ws-proxy/Cargo.toml --bin diamant
+    ws-proxy/target/debug/diamant --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
     pids+=("$!")
 
     while true; do
@@ -137,7 +137,7 @@ local-stack:
     done
 
 # Start a release-mode Diamant host agent.
-diamant proxy_url="ws://localhost:3030/register":
+diamant proxy_url="ws://localhost/register":
     cargo run --release --manifest-path ws-proxy/Cargo.toml --bin diamant -- --proxy-url "{{ proxy_url }}"
 
 # List registered hosts from the control API.
