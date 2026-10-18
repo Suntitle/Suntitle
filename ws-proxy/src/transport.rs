@@ -13,6 +13,7 @@ pub struct Connection {
 
 struct Route {
     host: ResourceIdentity,
+    session_id: String,
     outbound: mpsc::Sender<RegistrationServerMessage>,
     closed: watch::Sender<bool>,
     operations: HashMap<String, String>,
@@ -25,7 +26,7 @@ pub(crate) struct Connections {
 
 impl Connections {
     pub fn open(&mut self, host: ResourceIdentity) -> Connection {
-        let session_id = host.uid.clone();
+        let session_id = uuid::Uuid::new_v4().to_string();
         self.close(&host.uid);
         let (outbound, receiver) = mpsc::channel(QUEUE_CAPACITY);
         let (closed, close_rx) = watch::channel(false);
@@ -33,6 +34,7 @@ impl Connections {
             host.uid.clone(),
             Route {
                 host: host.clone(),
+                session_id: session_id.clone(),
                 outbound,
                 closed,
                 operations: HashMap::new(),
@@ -47,7 +49,9 @@ impl Connections {
     }
 
     pub fn contains(&self, uid: &str, session: &str) -> bool {
-        uid == session && self.routes.contains_key(uid)
+        self.routes
+            .get(uid)
+            .is_some_and(|route| route.session_id == session)
     }
 
     pub fn host(&self, uid: &str) -> Option<ResourceIdentity> {
@@ -82,7 +86,7 @@ impl Connections {
     pub fn send(&self, uid: &str, session: &str, message: RegistrationServerMessage) -> bool {
         self.routes
             .get(uid)
-            .filter(|_| uid == session)
+            .filter(|route| route.session_id == session)
             .is_some_and(|route| route.outbound.try_send(message).is_ok())
     }
 }

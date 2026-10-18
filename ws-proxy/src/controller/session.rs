@@ -137,17 +137,19 @@ impl State {
             }
         };
         let identity = identity(&host.metadata);
-        self.close(&identity.uid);
+        let connection = self.connections.open(identity.clone());
         let previous = host.status.clone();
         let status = host.status.get_or_insert_default();
         status.ip = ip;
         status.agent_version = Some(version);
         status.reported_metadata = metadata;
-        status.session_id = Some(identity.uid.clone());
+        status.session_id = Some(connection.session_id.clone());
         status.last_heartbeat = Some(Utc::now());
         status.presence = Some(Presence::Online);
-        self.host_status(&mut host, &previous).await?;
-        let connection = self.connections.open(identity);
+        if let Err(error) = self.host_status(&mut host, &previous).await {
+            self.close(&identity.uid);
+            return Err(error);
+        }
         Ok(connection)
     }
 

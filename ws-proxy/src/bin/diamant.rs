@@ -110,6 +110,8 @@ async fn main() -> Result<ExitCode, MainReport> {
         return Ok(unsafe { uv::main(args) });
     }
 
+    let _agent_lock = lock_host(&config.host_name)
+        .context("another Diamant agent is already running for this host")?;
     pretty_env_logger::init();
     loop {
         match register(&config).await {
@@ -355,4 +357,33 @@ async fn shutdown_signal() {
     }
     #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
+}
+
+fn lock_host(host_name: &str) -> io::Result<std::fs::File> {
+    use std::hash::{Hash, Hasher};
+    let mut key = std::collections::hash_map::DefaultHasher::new();
+    host_name.hash(&mut key);
+    let path = std::env::temp_dir().join(format!("suntitle-diamant-{:x}.lock", key.finish()));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    file.try_lock().map_err(io::Error::other)?;
+    Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_lock_rejects_duplicates_and_releases_on_exit() {
+        let host = uuid::Uuid::new_v4().to_string();
+        let first = lock_host(&host).unwrap();
+        assert!(lock_host(&host).is_err());
+        assert!(lock_host(&format!("{host}-other")).is_ok());
+        drop(first);
+        assert!(lock_host(&host).is_ok());
+    }
 }
