@@ -26,6 +26,26 @@ pub enum NodeRuntimeStatus {
     Failed,
 }
 
+impl NodeRuntimeStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "Running",
+            Self::Stopped => "Stopped",
+            Self::Failed => "Failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct NodeSnapshot {
+    pub name: String,
+    pub node_type: &'static str,
+    pub status: &'static str,
+    pub parameters: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub executable: PathBuf,
@@ -320,9 +340,41 @@ impl NodeProcessManager {
         }
         events
     }
+
+    pub fn snapshots(&self) -> Vec<NodeSnapshot> {
+        let mut snapshots = self
+            .nodes
+            .values()
+            .map(|node| {
+                let command = command_spec(
+                    &self.uv_bin,
+                    &self.project_dir,
+                    &self.endpoints,
+                    &node.spec,
+                );
+                NodeSnapshot {
+                    name: node.spec.name.clone(),
+                    node_type: match &node.spec.settings {
+                        NodeSettings::AudioSource(_) => "Audio source",
+                        NodeSettings::Transcriber(_) => "Transcriber",
+                        NodeSettings::Translator(_) => "Translator",
+                        NodeSettings::Display(_) => "Display",
+                    },
+                    status: node.status.as_str(),
+                    parameters: command
+                        .args
+                        .iter()
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .collect(),
+                    message: node.message.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.name.cmp(&right.name));
+        snapshots
+    }
 }
 impl ManagedNode {
-
     fn event(&self) -> NodeEvent {
         NodeEvent {
             identity: self.identity.clone(),
@@ -603,6 +655,12 @@ mod tests {
         let started = manager.apply(identity.clone(), update.clone()).await;
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].status, NodeRuntimeStatus::Running, "{started:?}");
+        let snapshots = manager.snapshots();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].name, "screen");
+        assert_eq!(snapshots[0].node_type, "Display");
+        assert_eq!(snapshots[0].status, "Running");
+        assert_eq!(snapshots[0].parameters[3], "suntitle.py");
         let pid_file = directory.join("pids.txt");
         for _ in 0..40 {
             if pid_file.exists() {

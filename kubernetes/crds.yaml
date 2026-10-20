@@ -91,7 +91,7 @@ spec:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
               sessionId:
-                description: Registered host UID.
+                description: Active host connection session ID.
                 nullable: true
                 type: string
             type: object

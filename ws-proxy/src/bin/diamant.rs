@@ -4,6 +4,8 @@ use std::io;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, builder::NonEmptyStringValueParser};
@@ -16,8 +18,10 @@ use tokio_tungstenite::{
     tungstenite::{Error as WebSocketError, Message},
 };
 use url::Url;
-use ws_proxy::diamant::nodes::NodeRuntimeStatus;
-use ws_proxy::diamant::nodes::{NodeEvent, NodeProcessManager, data_plane_url_from_registration};
+use diamant_ui::{AgentConfig, Reporter};
+use ws_proxy::diamant::nodes::{
+    NodeEvent, NodeProcessManager, NodeRuntimeStatus, data_plane_url_from_registration,
+};
 use ws_proxy::registration::{
     Envelope, Operation, RegistrationClientMessage, RegistrationServerMessage,
 };
@@ -26,10 +30,14 @@ const DEFAULT_PROXY_URL: &str = "ws://127.0.0.1:3030/register";
 const DEFAULT_HEALTH_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_SHUTDOWN_GRACE_SECONDS: u64 = 5;
 
-/// Registers this host with a Suntitle VS Proxy.
-#[derive(Debug, Parser)]
+/// Opens the Diamant desktop UI or runs its headless host agent.
+#[derive(Clone, Debug, Parser)]
 #[command(version, about)]
 struct Config {
+    /// Run as a headless host agent instead of opening the desktop window.
+    #[arg(long)]
+    cli: bool,
+
     /// WebSocket registration endpoint exposed by VS Proxy.
     #[arg(
         long,
@@ -77,13 +85,27 @@ struct Config {
     command: Option<Command>,
 }
 
-#[derive(Subcommand, Debug)]
+impl Config {
+    fn agent_config(&self) -> AgentConfig {
+        AgentConfig {
+            proxy_url: self.proxy_url.clone(),
+            host_name: self.host_name.clone(),
+            host_ip: self.host_ip,
+            health_interval_seconds: self.health_interval_seconds,
+            project_dir: self.project_dir.clone(),
+            data_plane_url: self.data_plane_url.clone(),
+            shutdown_grace_seconds: self.shutdown_grace_seconds,
+        }
+    }
+}
+
+#[derive(Clone, Subcommand, Debug)]
 enum Command {
     /// Invoke the embedded uv CLI.
     Uv(UvArgs),
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Clone, Debug)]
 struct UvArgs {
     /// Everything after `uv` is forwarded verbatim.
     #[arg(
@@ -109,22 +131,73 @@ async fn main() -> Result<ExitCode, MainReport> {
         let args = std::iter::once(std::ffi::OsString::from("uv")).chain(args.clone());
         return Ok(unsafe { uv::main(args) });
     }
+    if !config.cli {
+        return Ok(diamant_ui::run(config.agent_config(), run_gui_agent));
+    }
 
     let _agent_lock = lock_host(&config.host_name)
         .context("another Diamant agent is already running for this host")?;
     pretty_env_logger::init();
+    run_agent(config.agent_config(), None, None).await;
+    Ok(ExitCode::default())
+}
+
+fn run_gui_agent(config: AgentConfig, stop: Arc<AtomicBool>, reporter: Reporter) {
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime.block_on(run_agent(config, Some(stop), Some(reporter))),
+        Err(error) => reporter.failed(&format!("Failed to start runtime: {error}")),
+    }
+}
+
+async fn run_agent(
+    config: AgentConfig,
+    stop: Option<Arc<AtomicBool>>,
+    reporter: Option<Reporter>,
+) {
     loop {
-        match register(&config).await {
+        if is_stopped(&stop) {
+            break;
+        }
+        if let Some(reporter) = &reporter {
+            reporter.connection("connecting", "");
+        }
+        match register(&config, stop.clone(), reporter.as_ref()).await {
             Ok(false) => break,
             Ok(true) => {}
-            Err(error) => eprintln!("registration disconnected: {error}"),
+            Err(error) => {
+                eprintln!("registration disconnected: {error}");
+                if let Some(reporter) = &reporter {
+                    reporter.connection("error", &error.to_string());
+                }
+            }
         }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(2)) => {},
-            _ = shutdown_signal() => break,
+            _ = shutdown_requested(stop.clone()) => break,
         }
     }
-    Ok(ExitCode::default())
+    if let Some(reporter) = &reporter {
+        reporter.finished();
+    }
+}
+
+fn is_stopped(stop: &Option<Arc<AtomicBool>>) -> bool {
+    stop.as_ref()
+        .is_some_and(|stop| stop.load(Ordering::Relaxed))
+}
+
+async fn shutdown_requested(stop: Option<Arc<AtomicBool>>) {
+    match stop {
+        Some(stop) => {
+            while !stop.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+        None => shutdown_signal().await,
+    }
 }
 
 fn connection_ip(stream: &MaybeTlsStream<tokio::net::TcpStream>) -> rootcause::Result<IpAddr> {
@@ -152,7 +225,11 @@ fn host_metadata() -> BTreeMap<String, serde_json::Value> {
     ])
 }
 
-async fn register(config: &Config) -> rootcause::Result<bool> {
+async fn register(
+    config: &AgentConfig,
+    stop: Option<Arc<AtomicBool>>,
+    reporter: Option<&Reporter>,
+) -> rootcause::Result<bool> {
     let registration_url = Url::parse(&config.proxy_url).context("invalid proxy URL")?;
     let data_plane_url = match &config.data_plane_url {
         Some(url) => url.clone(),
@@ -215,6 +292,10 @@ async fn register(config: &Config) -> rootcause::Result<bool> {
         }
         _ => rootcause::bail!("proxy sent a command before registration"),
     };
+    if let Some(reporter) = reporter {
+        reporter.connection("connected", &format!("Registered as {}", host.name));
+        reporter.nodes(&manager.snapshots());
+    }
     let health = RegistrationClientMessage::Heartbeat {
         host_uid: host.uid.clone(),
         session_id: session_id.clone(),
@@ -226,7 +307,7 @@ async fn register(config: &Config) -> rootcause::Result<bool> {
     let mut reap_interval = tokio::time::interval(Duration::from_millis(250));
     reap_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     reap_interval.tick().await;
-    let shutdown = shutdown_signal();
+    let shutdown = shutdown_requested(stop);
     tokio::pin!(shutdown);
     let mut failure = None;
     let mut reconnect = true;
@@ -240,9 +321,16 @@ async fn register(config: &Config) -> rootcause::Result<bool> {
                 }
             }
             _ = reap_interval.tick() => {
-                if let Err(error) = send_events(&mut write, manager.reap_exited()).await {
+                let events = manager.reap_exited();
+                let changed = !events.is_empty();
+                if let Err(error) = send_events(&mut write, events).await {
                     failure = Some(format!("failed to report node exit: {error}"));
                     break;
+                }
+                if changed {
+                    if let Some(reporter) = reporter {
+                        reporter.nodes(&manager.snapshots());
+                    }
                 }
             }
             _ = &mut shutdown => { reconnect = false; break; },
@@ -291,6 +379,9 @@ async fn register(config: &Config) -> rootcause::Result<bool> {
                             failure = Some(format!("failed to report node lifecycle: {error}"));
                             break;
                         }
+                        if let Some(reporter) = reporter {
+                            reporter.nodes(&manager.snapshots());
+                        }
                     }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => {
@@ -304,6 +395,9 @@ async fn register(config: &Config) -> rootcause::Result<bool> {
     }
 
     let _ = send_events(&mut write, manager.shutdown_all().await).await;
+    if let Some(reporter) = reporter {
+        reporter.nodes(&manager.snapshots());
+    }
     let _ = write.send(Message::Close(None)).await;
     if let Some(message) = failure {
         rootcause::bail!(message);

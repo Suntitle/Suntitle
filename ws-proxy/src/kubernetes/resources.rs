@@ -133,7 +133,7 @@ pub struct HostStatus {
     /// Time of the latest host heartbeat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_heartbeat: Option<DateTime<Utc>>,
-    /// Registered host UID.
+    /// Active host connection session ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     /// Observed host availability.

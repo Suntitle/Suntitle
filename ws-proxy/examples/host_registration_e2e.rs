@@ -78,6 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut diamant_command = Command::new(binary_path(&binary_directory, "diamant"));
     diamant_command
+        .arg("--cli")
         .arg("--proxy-url")
         .arg("ws://127.0.0.1:3030/register")
         .arg("--host-name")
