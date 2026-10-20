@@ -128,7 +128,7 @@ async fn controller_apply_recovery_acceptance() {
         assert_ne!(connection.session_id, connection.host.uid);
         assert_eq!(
             hosts.get(&name).await.unwrap().status.unwrap().session_id.as_deref(),
-            Some(connection.host.uid.as_str())
+            Some(connection.session_id.as_str())
         );
         let first = apply(&mut connection).await;
         controller
@@ -298,7 +298,8 @@ async fn controller_apply_recovery_acceptance() {
             "an old disconnect MUST preserve the replacement socket"
         );
         let resent = apply(&mut replacement).await;
-        assert_eq!(resent.session_id, retry.session_id);
+        assert_eq!(resent.session_id, replacement.session_id);
+        assert_ne!(resent.session_id, retry.session_id);
         assert_ne!(resent.operation_id, retry.operation_id);
         assert_eq!(resent.generation, disabled_identity.generation);
         ack(&nodes, &controller, &connection, retry, true).await;

@@ -669,16 +669,16 @@ components:
       - source
       - sourceType
       properties:
-        name:
-          type: string
-        version:
-          type: string
         description:
+          type: string
+        name:
           type: string
         source:
           type: string
         sourceType:
           $ref: '#/components/schemas/ExtensionSourceType'
+        version:
+          type: string
       additionalProperties: false
     ExtensionCreate:
       type: object
@@ -1125,9 +1125,9 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Host health observations keyed by condition type.
+              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
-              x-kubernetes-list-type: map
             ip:
               type:
               - string
@@ -1156,7 +1156,7 @@ components:
               type:
               - string
               - 'null'
-              description: Registered host UID.
+              description: Active host connection session ID.
     SuntitleNode:
       type: object
       title: SuntitleNode
@@ -1612,9 +1612,9 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Node health observations keyed by condition type.
+              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
-              x-kubernetes-list-type: map
             dispatch:
               type:
               - object

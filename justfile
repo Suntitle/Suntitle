@@ -66,7 +66,7 @@ listener-device device host="localhost:3030":
 
 # Start the local Diamant host as local-host.
 diamant-local:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --host-name local-host --project-dir "{{ justfile_directory() }}"
+    cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --cli --host-name local-host --project-dir "{{ justfile_directory() }}"
 
 # Run kubectl against the local Compose API server, forwarding all arguments.
 [positional-arguments]
@@ -123,7 +123,7 @@ local-stack:
 
     just _local-infra-up
     cargo build --manifest-path ws-proxy/Cargo.toml --bin diamant
-    ws-proxy/target/debug/diamant --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
+    ws-proxy/target/debug/diamant --cli --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
     pids+=("$!")
 
     while true; do
@@ -138,7 +138,7 @@ local-stack:
 
 # Start a release-mode Diamant host agent.
 diamant proxy_url="ws://localhost/register":
-    cargo run --release --manifest-path ws-proxy/Cargo.toml --bin diamant -- --proxy-url "{{ proxy_url }}"
+    cargo run --release --manifest-path ws-proxy/Cargo.toml --bin diamant -- --cli --proxy-url "{{ proxy_url }}"
 
 # List registered hosts from the control API.
 hosts:

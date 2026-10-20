@@ -12,6 +12,7 @@ uv  = "0.12.10"
 actix-web = "4"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
+diamant-ui = { path = "diamant-ui" }
 futures-util = "0.3.31"
 hostname = "0.4"
 ctrlc = { version = "3", features = ["termination"] }
@@ -35,3 +36,9 @@ clap_reverse = "0.1.1"
 
 [dev-dependencies]
 warp = { version = "0.4.2", features = ["websocket", "server", "test"] }
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

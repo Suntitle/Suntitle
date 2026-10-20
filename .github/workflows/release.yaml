@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUST_BACKTRACE: full
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
     strategy:
       fail-fast: true
       matrix:
@@ -37,19 +38,16 @@ jobs:
         with:
           env-vars: "RUST_TOOLCHAIN=${{env.RUST_TOOLCHAIN}}"
 
-      - name: Install cross
+      - name: Install system dependencies
         run: |
-          cargo install --git https://github.com/cross-rs/cross --branch main cross
-
-      - name: Install bindgen-cli
-        run: |
-          cargo install --force --locked bindgen-cli
+          sudo apt-get update
+          sudo apt-get install -y lld qt6-base-dev qt6-declarative-dev
 
       - name: Build release
         timeout-minutes: 120
         working-directory: ws-proxy
         run: |
-          cross build --locked --release --bins --target ${{ matrix.target.name }}
+          cargo build --locked --release --bins --target ${{ matrix.target.name }}
 
       - name: Package
         working-directory: ws-proxy

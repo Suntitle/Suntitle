@@ -20,9 +20,11 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
+      COMPOSE_FILE: compose.yaml:compose.ci.yaml
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -45,10 +47,10 @@ jobs:
         with:
           version: v1.37.0
 
-      - name: Install certificate tools
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y mkcert libnss3-tools
+          sudo apt-get install -y lld mkcert libnss3-tools qt6-base-dev qt6-declarative-dev
 
       - name: Build binaries and examples
         run: cargo build --locked --manifest-path ws-proxy/Cargo.toml --bins --examples
@@ -73,6 +75,8 @@ jobs:
             sleep 2
           done
           echo "Kubernetes API did not become ready." >&2
+          docker compose ps -a
+          docker compose logs --no-color postgres kine kube-apiserver
           exit 1
 
       - name: Bootstrap Kubernetes
