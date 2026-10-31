@@ -4,11 +4,13 @@ use std::io;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, builder::NonEmptyStringValueParser};
+#[cfg(feature = "gui")]
+use diamant_ui::{AgentConfig, Reporter};
 use futures_util::{SinkExt, StreamExt};
 use rootcause::compat::MainReport;
 use rootcause::option_ext::OptionExt;
@@ -18,7 +20,6 @@ use tokio_tungstenite::{
     tungstenite::{Error as WebSocketError, Message},
 };
 use url::Url;
-use diamant_ui::{AgentConfig, Reporter};
 use ws_proxy::diamant::nodes::{
     NodeEvent, NodeProcessManager, NodeRuntimeStatus, data_plane_url_from_registration,
 };
@@ -30,11 +31,15 @@ const DEFAULT_PROXY_URL: &str = "ws://127.0.0.1:3030/register";
 const DEFAULT_HEALTH_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_SHUTDOWN_GRACE_SECONDS: u64 = 5;
 
-/// Opens the Diamant desktop UI or runs its headless host agent.
+/// Runs the Diamant host agent.
 #[derive(Clone, Debug, Parser)]
 #[command(version, about)]
+#[cfg_attr(
+    feature = "gui",
+    command(about = "Opens the Diamant desktop UI or runs its headless host agent.")
+)]
 struct Config {
-    /// Run as a headless host agent instead of opening the desktop window.
+    /// Run headless. This is the default in builds without the gui feature.
     #[arg(long)]
     cli: bool,
 
@@ -85,6 +90,7 @@ struct Config {
     command: Option<Command>,
 }
 
+#[cfg(feature = "gui")]
 impl Config {
     fn agent_config(&self) -> AgentConfig {
         AgentConfig {
@@ -131,6 +137,7 @@ async fn main() -> Result<ExitCode, MainReport> {
         let args = std::iter::once(std::ffi::OsString::from("uv")).chain(args.clone());
         return Ok(unsafe { uv::main(args) });
     }
+    #[cfg(feature = "gui")]
     if !config.cli {
         return Ok(diamant_ui::run(config.agent_config(), run_gui_agent));
     }
@@ -138,11 +145,29 @@ async fn main() -> Result<ExitCode, MainReport> {
     let _agent_lock = lock_host(&config.host_name)
         .context("another Diamant agent is already running for this host")?;
     pretty_env_logger::init();
-    run_agent(config.agent_config(), None, None).await;
+    run_agent(
+        config,
+        None,
+        #[cfg(feature = "gui")]
+        None,
+    )
+    .await;
     Ok(ExitCode::default())
 }
 
+#[cfg(feature = "gui")]
 fn run_gui_agent(config: AgentConfig, stop: Arc<AtomicBool>, reporter: Reporter) {
+    let config = Config {
+        cli: true,
+        proxy_url: config.proxy_url,
+        host_name: config.host_name,
+        host_ip: config.host_ip,
+        health_interval_seconds: config.health_interval_seconds,
+        project_dir: config.project_dir,
+        data_plane_url: config.data_plane_url,
+        shutdown_grace_seconds: config.shutdown_grace_seconds,
+        command: None,
+    };
     match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -153,22 +178,31 @@ fn run_gui_agent(config: AgentConfig, stop: Arc<AtomicBool>, reporter: Reporter)
 }
 
 async fn run_agent(
-    config: AgentConfig,
+    config: Config,
     stop: Option<Arc<AtomicBool>>,
-    reporter: Option<Reporter>,
+    #[cfg(feature = "gui")] reporter: Option<Reporter>,
 ) {
     loop {
         if is_stopped(&stop) {
             break;
         }
+        #[cfg(feature = "gui")]
         if let Some(reporter) = &reporter {
             reporter.connection("connecting", "");
         }
-        match register(&config, stop.clone(), reporter.as_ref()).await {
+        match register(
+            &config,
+            stop.clone(),
+            #[cfg(feature = "gui")]
+            reporter.as_ref(),
+        )
+        .await
+        {
             Ok(false) => break,
             Ok(true) => {}
             Err(error) => {
                 eprintln!("registration disconnected: {error}");
+                #[cfg(feature = "gui")]
                 if let Some(reporter) = &reporter {
                     reporter.connection("error", &error.to_string());
                 }
@@ -179,6 +213,7 @@ async fn run_agent(
             _ = shutdown_requested(stop.clone()) => break,
         }
     }
+    #[cfg(feature = "gui")]
     if let Some(reporter) = &reporter {
         reporter.finished();
     }
@@ -226,9 +261,9 @@ fn host_metadata() -> BTreeMap<String, serde_json::Value> {
 }
 
 async fn register(
-    config: &AgentConfig,
+    config: &Config,
     stop: Option<Arc<AtomicBool>>,
-    reporter: Option<&Reporter>,
+    #[cfg(feature = "gui")] reporter: Option<&Reporter>,
 ) -> rootcause::Result<bool> {
     let registration_url = Url::parse(&config.proxy_url).context("invalid proxy URL")?;
     let data_plane_url = match &config.data_plane_url {
@@ -292,6 +327,7 @@ async fn register(
         }
         _ => rootcause::bail!("proxy sent a command before registration"),
     };
+    #[cfg(feature = "gui")]
     if let Some(reporter) = reporter {
         reporter.connection("connected", &format!("Registered as {}", host.name));
         reporter.nodes(&manager.snapshots());
@@ -322,11 +358,13 @@ async fn register(
             }
             _ = reap_interval.tick() => {
                 let events = manager.reap_exited();
+                #[cfg(feature = "gui")]
                 let changed = !events.is_empty();
                 if let Err(error) = send_events(&mut write, events).await {
                     failure = Some(format!("failed to report node exit: {error}"));
                     break;
                 }
+                #[cfg(feature = "gui")]
                 if changed {
                     if let Some(reporter) = reporter {
                         reporter.nodes(&manager.snapshots());
@@ -379,6 +417,7 @@ async fn register(
                             failure = Some(format!("failed to report node lifecycle: {error}"));
                             break;
                         }
+                        #[cfg(feature = "gui")]
                         if let Some(reporter) = reporter {
                             reporter.nodes(&manager.snapshots());
                         }
@@ -395,6 +434,7 @@ async fn register(
     }
 
     let _ = send_events(&mut write, manager.shutdown_all().await).await;
+    #[cfg(feature = "gui")]
     if let Some(reporter) = reporter {
         reporter.nodes(&manager.snapshots());
     }
