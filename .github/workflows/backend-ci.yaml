@@ -50,7 +50,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y lld mkcert libnss3-tools qt6-base-dev qt6-declarative-dev
+          sudo apt-get install -y lld mkcert libnss3-tools
 
       - name: Build binaries and examples
         run: cargo build --locked --manifest-path ws-proxy/Cargo.toml --bins --examples
@@ -131,6 +131,29 @@ jobs:
       - name: Stop test services
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+  check-gui:
+    name: Optional Diamant GUI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ws-proxy
+
+      - name: Install Qt development packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lld qt6-base-dev qt6-declarative-dev
+
+      - name: Check GUI build
+        run: cargo check --locked --manifest-path ws-proxy/Cargo.toml --bin diamant --features gui
 
   check-python:
     name: Python mock API and node CLI tests

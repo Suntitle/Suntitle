@@ -394,16 +394,14 @@ just infra-destroy
 
 ## Run the Diamant host agent
 
-`diamant` is built from the same Rust package as `ws-proxy`. Running the binary
-without arguments opens its desktop window. The window stores connection
-settings locally, connects to the hub on demand, and shows the nodes running on
-the host with their command parameters.
+`diamant` is built from the same Rust package as `ws-proxy`. Default builds run
+the headless host agent and do not require Qt at build time or runtime.
 
 For headless operation, run one CLI instance on each host that should register
 with the proxy:
 
 ```bash
-diamant --cli
+diamant
 ```
 
 The host name defaults to the operating system hostname and can be overridden
@@ -416,11 +414,22 @@ UID. Diamant reports health every 30 seconds and reconnects when the connection
 ends. The health interval can be changed with `--health-interval-seconds` or
 `SUNTITLE_HEALTH_INTERVAL_SECONDS`.
 
-The desktop fields map to the same CLI options. `diamant uv ...` remains
-available for invoking the embedded uv CLI.
+To enable the optional desktop window, build with the `gui` Cargo feature:
 
-Building the desktop window requires the Qt 6 base and declarative development
-packages. The released binary requires the corresponding Qt 6 runtime libraries.
+```bash
+cargo build --manifest-path ws-proxy/Cargo.toml --bin diamant --features gui
+```
+
+GUI builds open the desktop window by default; `diamant --cli` runs headless.
+The window stores connection settings locally, connects to the hub on demand,
+and shows the nodes running on the host with their command parameters.
+The desktop fields map to the same CLI options. `diamant uv ...` remains
+available in both builds for invoking the embedded uv CLI. The `--cli` flag
+also remains accepted in default builds.
+
+Building with `gui` requires the Qt 6 base and declarative development packages.
+GUI binaries require the corresponding Qt 6 runtime libraries, even in CLI mode.
+CI release builds use the default features and do not require Qt.
 
 Host identity, health, desired nodes, and dispatch status persist in Kubernetes resources.
 Disconnected hosts become offline; missing health reports expire after 45 seconds,
