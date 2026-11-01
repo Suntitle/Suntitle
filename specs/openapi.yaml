@@ -1325,6 +1325,20 @@ components:
               type: boolean
               description: Whether the node should run.
               default: true
+            extensionRef:
+              type:
+              - object
+              - 'null'
+              description: Extension in the same namespace supplying custom execution.
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                  description: Name of the referenced resource in the same namespace.
+                  maxLength: 253
+                  minLength: 1
+                  pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
             hostRef:
               type: object
               description: Host assigned to run this node. MUST remain unchanged.
@@ -1565,10 +1579,22 @@ components:
                           rule: self in ['light', 'dark', 'transparent']
                     additionalProperties: false
                 additionalProperties: false
+              - type: object
+                description: Arbitrary settings for the referenced extension.
+                required:
+                - custom
+                properties:
+                  custom:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                additionalProperties: false
               description: Configuration for exactly one node type. The selected type MUST remain unchanged.
               x-kubernetes-validations:
               - message: node type is immutable
-                rule: has(self.audio_source) == has(oldSelf.audio_source) && has(self.transcriber) == has(oldSelf.transcriber) && has(self.translator) == has(oldSelf.translator) && has(self.display) == has(oldSelf.display)
+                rule: has(self.audio_source) == has(oldSelf.audio_source) && has(self.transcriber) == has(oldSelf.transcriber) && has(self.translator) == has(oldSelf.translator) && has(self.display) == has(oldSelf.display) && has(self.custom) == has(oldSelf.custom)
+          x-kubernetes-validations:
+          - message: extensionRef is required for custom settings and forbidden for built-in settings
+            rule: (has(self.extensionRef) && self.extensionRef != null) == has(self.settings.custom)
         status:
           type:
           - object
@@ -1690,6 +1716,20 @@ components:
           type: boolean
           description: Whether the node should run.
           default: true
+        extensionRef:
+          type:
+          - object
+          - 'null'
+          description: Extension in the same namespace supplying custom execution.
+          required:
+          - name
+          properties:
+            name:
+              type: string
+              description: Name of the referenced resource in the same namespace.
+              maxLength: 253
+              minLength: 1
+              pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
         hostRef:
           type: object
           description: Host assigned to run this node. MUST remain unchanged.
@@ -1930,10 +1970,22 @@ components:
                       rule: self in ['light', 'dark', 'transparent']
                 additionalProperties: false
             additionalProperties: false
+          - type: object
+            description: Arbitrary settings for the referenced extension.
+            required:
+            - custom
+            properties:
+              custom:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            additionalProperties: false
           description: Configuration for exactly one node type. The selected type MUST remain unchanged.
           x-kubernetes-validations:
           - message: node type is immutable
-            rule: has(self.audio_source) == has(oldSelf.audio_source) && has(self.transcriber) == has(oldSelf.transcriber) && has(self.translator) == has(oldSelf.translator) && has(self.display) == has(oldSelf.display)
+            rule: has(self.audio_source) == has(oldSelf.audio_source) && has(self.transcriber) == has(oldSelf.transcriber) && has(self.translator) == has(oldSelf.translator) && has(self.display) == has(oldSelf.display) && has(self.custom) == has(oldSelf.custom)
+      x-kubernetes-validations:
+      - message: extensionRef is required for custom settings and forbidden for built-in settings
+        rule: (has(self.extensionRef) && self.extensionRef != null) == has(self.settings.custom)
     TranscriberSettings:
       type: object
       required:

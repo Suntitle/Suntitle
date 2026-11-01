@@ -54,6 +54,48 @@ pub struct ResourceRef {
     pub name: String,
 }
 
+#[derive(CustomResource, JsonSchema, Serialize, Deserialize, Clone, Debug)]
+#[kube(
+    group = "control.suntitle.io",
+    version = "v1alpha1",
+    kind = "SuntitleExtension",
+    namespaced,
+    status = "ExtensionStatus"
+)]
+#[serde(rename_all = "camelCase")]
+pub struct SuntitleExtensionSpec {
+    #[schemars(length(min = 1, max = 128))]
+    pub name: String,
+    pub source_type: ExtensionSourceType,
+    #[schemars(length(min = 1))]
+    pub source: String,
+    #[schemars(schema_with = "reported_metadata_schema")]
+    pub adapter: BTreeMap<String, Value>,
+}
+
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtensionSourceType {
+    Local,
+    Git,
+    Oci,
+    Http,
+}
+
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_generation: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(schema_with = "conditions_schema")]
+    pub conditions: Vec<Condition>,
+}
+
 #[derive(CustomResource, KubeSchema, Serialize, Deserialize, Clone, Debug)]
 #[kube(
     group = "control.suntitle.io",
@@ -65,6 +107,8 @@ pub struct ResourceRef {
 )]
 #[serde(rename_all = "camelCase")]
 #[x_kube(cel)]
+#[x_kube(validation = Rule::new("(has(self.extensionRef) && self.extensionRef != null) == has(self.settings.custom)")
+    .message("extensionRef is required for custom settings and forbidden for built-in settings"))]
 pub struct SuntitleNodeSpec {
     /// Display name shown to users.
     #[schemars(length(min = 1, max = 128))]
@@ -80,6 +124,9 @@ pub struct SuntitleNodeSpec {
     pub enabled: bool,
     /// Upstream node supplying input, when configured.
     pub input_ref: Option<ResourceRef>,
+    /// Extension in the same namespace supplying custom execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extension_ref: Option<ResourceRef>,
     /// Opaque token whose change requests a node restart.
     #[schemars(length(min = 1, max = 128))]
     pub restart_token: Option<String>,
@@ -88,7 +135,8 @@ pub struct SuntitleNodeSpec {
         "has(self.audio_source) == has(oldSelf.audio_source) && ",
         "has(self.transcriber) == has(oldSelf.transcriber) && ",
         "has(self.translator) == has(oldSelf.translator) && ",
-        "has(self.display) == has(oldSelf.display)",
+        "has(self.display) == has(oldSelf.display) && ",
+        "has(self.custom) == has(oldSelf.custom)",
     )).message("node type is immutable"))]
     pub settings: NodeSettings,
 }
@@ -98,7 +146,6 @@ fn enabled_default() -> bool {
 }
 
 impl SuntitleHost {
-
     pub fn conditions(&self) -> &[Condition] {
         self.status
             .as_ref()
@@ -108,7 +155,6 @@ impl SuntitleHost {
 }
 
 impl SuntitleNode {
-
     pub fn conditions(&self) -> &[Condition] {
         self.status
             .as_ref()
@@ -152,7 +198,6 @@ pub enum Presence {
 }
 
 impl Presence {
-
     pub fn ready_condition(&self, generation: i64) -> Condition {
         Condition {
             last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
@@ -185,7 +230,6 @@ pub enum NodePhase {
 }
 
 impl NodePhase {
-
     pub fn from_acknowledgement(success: bool, enabled: bool) -> Self {
         match (success, enabled) {
             (true, true) => Self::Running,
@@ -316,12 +360,18 @@ pub enum NodeSettings {
     Translator(TranslatorSettings),
     /// Subtitle presentation configuration.
     Display(DisplaySettings),
+    /// Arbitrary settings for the referenced extension.
+    Custom(#[schemars(schema_with = "reported_metadata_schema")] BTreeMap<String, Value>),
 }
 
 pub fn crds()
 -> Vec<k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition>
 {
-    vec![SuntitleHost::crd(), SuntitleNode::crd()]
+    vec![
+        SuntitleHost::crd(),
+        SuntitleNode::crd(),
+        SuntitleExtension::crd(),
+    ]
 }
 
 // TODO: replace with serde saphyr
@@ -343,7 +393,7 @@ macro_rules! openapi_schema {
                 settings.inline_subschemas = true;
                 let schema = settings.clone().into_generator().into_root_schema_for::<Self>();
                 let mut value = serde_json::to_value(schema).expect("resource schema serialization");
-                if matches!(stringify!($ty), "SuntitleHost" | "SuntitleNode") {
+                if matches!(stringify!($ty), "SuntitleHost" | "SuntitleNode" | "SuntitleExtension") {
                     let metadata = settings.into_generator().into_root_schema_for::<k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta>();
                     value["properties"]["metadata"] = serde_json::to_value(metadata).expect("metadata schema");
                     value["properties"]["apiVersion"] = json!({"type":"string", "enum":["control.suntitle.io/v1alpha1"]});
@@ -358,4 +408,9 @@ macro_rules! openapi_schema {
     )+};
 }
 
-openapi_schema!(SuntitleHost, SuntitleNode, SuntitleNodeSpec);
+openapi_schema!(
+    SuntitleHost,
+    SuntitleNode,
+    SuntitleNodeSpec,
+    SuntitleExtension
+);

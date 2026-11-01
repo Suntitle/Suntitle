@@ -1,6 +1,8 @@
 use kube::CustomResourceExt;
 use serde_json::json;
-use ws_proxy::kubernetes::resources::{SuntitleHost, SuntitleNode, SuntitleNodeSpec, crd_yaml};
+use ws_proxy::kubernetes::resources::{
+    SuntitleExtension, SuntitleHost, SuntitleNode, SuntitleNodeSpec, crd_yaml,
+};
 
 #[test]
 fn checked_in_manifests_match_the_generator() {
@@ -12,7 +14,11 @@ fn checked_in_manifests_match_the_generator() {
 
 #[test]
 fn resources_have_status_subresources_and_conditions_map() {
-    for crd in [SuntitleHost::crd(), SuntitleNode::crd()] {
+    for crd in [
+        SuntitleHost::crd(),
+        SuntitleNode::crd(),
+        SuntitleExtension::crd(),
+    ] {
         let version = &crd.spec.versions[0];
         assert!(version.subresources.as_ref().unwrap().status.is_some());
         assert_eq!(crd.spec.scope, "Namespaced");
@@ -239,4 +245,124 @@ fn phase_two_api_fixtures_use_resource_contracts() {
     .unwrap();
     assert_eq!(create.name, nodes.items[0].metadata.name);
     assert_eq!(update.spec.name, create.spec.name);
+}
+
+#[test]
+fn extension_schema_preserves_adapter_and_constrains_source_fields() {
+    let crd = SuntitleExtension::crd();
+    let schema = serde_json::to_value(crd.spec.versions[0].schema.as_ref().unwrap()).unwrap();
+    let spec = &schema["openAPIV3Schema"]["properties"]["spec"];
+    assert_eq!(
+        spec["properties"]["sourceType"]["enum"],
+        json!(["local", "git", "oci", "http"])
+    );
+    assert_eq!(spec["properties"]["source"]["minLength"], 1);
+    assert_eq!(spec["properties"]["adapter"]["type"], "object");
+    assert_eq!(
+        spec["properties"]["adapter"]["x-kubernetes-preserve-unknown-fields"],
+        true
+    );
+    let adapter = json!({"type":"transcriber", "execution":{"runtime":"executable", "executable":"./run"},
+        "settings":{"nested":{"default":{"values":[null, false, 0, ""]}}},
+        "arguments":[{"flag":"--server", "source":"runtime.websocketUrl"}]});
+    for source_type in ["local", "git", "oci", "http"] {
+        let document = json!({"apiVersion":"control.suntitle.io/v1alpha1", "kind":"SuntitleExtension",
+            "metadata":{"name":"custom-transcriber"}, "spec":{"name":"Custom transcriber",
+            "sourceType":source_type, "source":"example", "adapter":adapter}});
+        let extension: SuntitleExtension = serde_json::from_value(document).unwrap();
+        assert_eq!(
+            serde_json::to_value(extension).unwrap()["spec"]["adapter"],
+            adapter
+        );
+    }
+}
+
+#[test]
+fn node_extension_reference_is_optional_and_uses_resource_ref_schema() {
+    let mut document = json!({"name":"Mic", "hostRef":{"name":"studio"},
+        "settings":{"audio_source":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le"}}});
+    let spec: SuntitleNodeSpec = serde_json::from_value(document.clone()).unwrap();
+    assert!(spec.extension_ref.is_none());
+    assert!(
+        serde_json::to_value(spec)
+            .unwrap()
+            .get("extensionRef")
+            .is_none()
+    );
+    document["extensionRef"] = json!({"name":"custom-source"});
+    document["settings"] = json!({"custom":{}});
+    let spec: SuntitleNodeSpec = serde_json::from_value(document).unwrap();
+    assert_eq!(spec.extension_ref.unwrap().name, "custom-source");
+    let crd = SuntitleNode::crd();
+    let schema = serde_json::to_value(crd.spec.versions[0].schema.as_ref().unwrap()).unwrap();
+    let properties = &schema["openAPIV3Schema"]["properties"]["spec"]["properties"];
+    assert_eq!(
+        properties["extensionRef"]["properties"],
+        properties["inputRef"]["properties"]
+    );
+}
+
+#[test]
+fn custom_settings_require_extension_ref_and_preserve_arbitrary_values() {
+    let settings = json!({"custom":{"nested":{"values":[null, false, 0, "", [1], {"key":"value"}]},
+        "model":"unrestricted-model", "language":"unrestricted-language"}});
+    let mut custom = json!({"name":"Custom", "hostRef":{"name":"studio"}, "enabled":true,
+        "extensionRef":{"name":"plugin"}, "settings":settings});
+    SuntitleNodeSpec::validate_cel(&custom, None).unwrap();
+    let parsed: SuntitleNodeSpec = serde_json::from_value(custom.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap()["settings"], settings);
+    let crd = SuntitleNode::crd();
+    let schema = serde_json::to_value(crd.spec.versions[0].schema.as_ref().unwrap()).unwrap();
+    let custom_schema = &schema["openAPIV3Schema"]["properties"]["spec"]["properties"]["settings"]
+        ["properties"]["custom"];
+    assert_eq!(custom_schema["type"], "object");
+    assert_eq!(custom_schema["x-kubernetes-preserve-unknown-fields"], true);
+
+    custom["settings"] = json!({"custom":{}});
+    SuntitleNodeSpec::validate_cel(&custom, None).unwrap();
+    for reference in [None, Some(json!(null))] {
+        let mut invalid = custom.clone();
+        invalid.as_object_mut().unwrap().remove("extensionRef");
+        if let Some(reference) = reference {
+            invalid["extensionRef"] = reference;
+        }
+        assert!(SuntitleNodeSpec::validate_cel(&invalid, None).is_err());
+    }
+    for settings in [
+        json!({"custom":null}),
+        json!({"custom":[]}),
+        json!({"custom":{},"display":{"maxLines":3,"fontScale":1.0,"showOriginal":true}}),
+    ] {
+        let mut invalid = custom.clone();
+        invalid["settings"] = settings;
+        assert!(serde_json::from_value::<SuntitleNodeSpec>(invalid).is_err());
+    }
+}
+
+#[test]
+fn built_in_settings_forbid_extension_ref_and_cannot_change_to_custom() {
+    for settings in [
+        json!({"audio_source":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le"}}),
+        json!({"transcriber":{"model":"small","language":"en"}}),
+        json!({"translator":{"sourceLanguage":"en","targetLanguage":"cs","provider":"huggingface"}}),
+        json!({"display":{"maxLines":3,"fontScale":1.0,"showOriginal":true}}),
+    ] {
+        let mut builtin = json!({"name":"Built-in", "hostRef":{"name":"studio"}, "enabled":true, "settings":settings});
+        // Deserialize to include defaults used by CEL rules.
+        builtin =
+            serde_json::to_value(serde_json::from_value::<SuntitleNodeSpec>(builtin).unwrap())
+                .unwrap();
+        SuntitleNodeSpec::validate_cel(&builtin, None).unwrap();
+        let mut invalid = builtin.clone();
+        invalid["extensionRef"] = json!({"name":"plugin"});
+        assert!(SuntitleNodeSpec::validate_cel(&invalid, None).is_err());
+        let custom = json!({"name":"Custom", "hostRef":{"name":"studio"}, "enabled":true,
+            "extensionRef":{"name":"plugin"}, "settings":{"custom":{}}});
+        assert!(SuntitleNodeSpec::validate_cel(&custom, Some(&builtin)).is_err());
+        assert!(SuntitleNodeSpec::validate_cel(&builtin, Some(&custom)).is_err());
+        let mut changed = custom.clone();
+        changed["extensionRef"]["name"] = json!("another-plugin");
+        changed["settings"]["custom"] = json!({"threads":4});
+        SuntitleNodeSpec::validate_cel(&changed, Some(&custom)).unwrap();
+    }
 }
