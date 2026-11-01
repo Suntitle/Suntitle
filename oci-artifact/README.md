@@ -1,9 +1,8 @@
 # oci-artifact
 
-Download a single file or directory artifact from an OCI registry. Restore
+Push or download a single file or directory artifact in an OCI registry. Restore
 directory contents, symlinks, and ordinary archived permissions locally.
 Diamant can import this library without a CLI or an installed ORAS binary.
-Packing and pushing are not implemented yet.
 
 ```rust,no_run
 use oci_artifact::{DownloadRequest, Downloader, RegistryAuth, client::TransportOptions};
@@ -16,6 +15,47 @@ let result = downloader.download(request).await?;
 # Ok(())
 # }
 ```
+
+Push prepared content with the same transport and credential options:
+
+```rust,no_run
+use oci_artifact::{UploadRequest, Uploader, client::TransportOptions};
+
+# async fn push() -> Result<(), oci_artifact::Error> {
+let uploader = Uploader::new(TransportOptions::default())?;
+let request = UploadRequest::new("registry.example.com/assets:v1", "prepared/payload");
+let result = uploader.upload(request).await?;
+println!("Published {}", result.manifest_digest);
+# Ok(())
+# }
+```
+
+HTTP downloads, Git checkouts, and local source selection remain caller-owned.
+Pass their prepared file or directory to `Uploader`. Uploads use the source's
+UTF-8 basename as the title and contain one layer, compatible with `Downloader`
+and `oras pull`. Directory layers contain a gzip/tar archive with its directory
+prefix, `io.deis.oras.content.unpack=true`, and the uncompressed tar SHA-256 in
+`io.deis.oras.content.digest`, following the
+[ORAS file store](https://github.com/oras-project/oras-go/tree/v2/content/file).
+Raw files use ORAS's default `application/vnd.oci.image.layer.v1.tar` media type
+without unpack annotations. The config is unnamed OCI empty JSON metadata.
+This is an artifact manifest, not a runnable container image.
+
+Packaging and upload use bounded buffers and private temporary disk storage.
+Nonempty payloads and config blobs use chunked streaming uploads; the registry
+client computes their digests and sizes during transfer. Empty files use the
+client's ordinary blob upload because its chunked streaming API rejects empty
+streams. The public upload API still accepts local filesystem paths.
+Keep the source stable until upload returns. Files, directories, and archived
+symlinks are supported; top-level symlinks and special files are rejected.
+Directory archives normalize ownership to zero and retain ordinary permissions.
+Archive bytes and manifest digests need not equal ORAS's encoding.
+Upload references must use a tag (omitting it means `latest`). The result contains
+the immutable manifest digest. Credentials are explicit and cancellation uses
+the request token. Cancel and await completion so packaging can stop and clean up.
+Cancelled or failed uploads can leave unreferenced registry blobs. A failure or
+cancellation during manifest publication can leave the tag published.
+Uploads do not currently retry failed transfers automatically.
 
 Credentials are explicit; requests default to anonymous access. Transport uses
 HTTPS and verified certificates. `TransportOptions` also accepts plain HTTP,
@@ -70,9 +110,11 @@ docker compose up -d --no-deps distribution traefik
 cargo test --manifest-path oci-artifact/Cargo.toml --test compose_distribution -- --ignored --nocapture
 ```
 
-This test requires ORAS 1.3.2. It pushes generated directory and binary-file
-fixtures, pulls each with the library and ORAS, and compares paths, contents,
-ordinary modes, and symlink targets. The default endpoint is `registry.localhost`;
+This test requires ORAS 1.3.2. Both ORAS and the library push generated directory,
+binary-file, empty-file, and empty-directory fixtures. Both clients pull the
+results; the test compares paths, contents, ordinary modes, and symlink targets,
+and checks the library's returned digest by pulling its immutable reference.
+The default endpoint is `registry.localhost`;
 override it with `OCI_ARTIFACT_TEST_REGISTRY` when using a different registry host.
 Each run uses a unique `oci-artifact-tests/` repository prefix and prints the
 references and manifest digests. Registry fixtures remain available for inspection;

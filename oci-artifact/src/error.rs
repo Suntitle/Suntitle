@@ -1,7 +1,7 @@
-//! Typed download errors.
+//! Typed artifact transfer errors.
 use std::io;
 
-/// Registry, verification, extraction, and local output failures.
+/// Registry, packaging, verification, extraction, and local I/O failures.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// The registry reference could not be parsed.
@@ -31,7 +31,10 @@ pub enum Error {
     /// Decompression or extraction failed.
     #[error("rendering failed: {0}")]
     Render(#[from] ocirender::Error),
-    /// The caller cancelled the download.
-    #[error("download cancelled")]
+    /// A blocking packaging task failed.
+    #[error("packaging task failed: {0}")]
+    Packaging(#[from] tokio::task::JoinError),
+    /// The caller cancelled the operation.
+    #[error("operation cancelled")]
     Cancelled,
 }
