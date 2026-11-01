@@ -73,8 +73,7 @@ pub struct SuntitleExtensionSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1, max = 128))]
     pub refresh_token: Option<String>,
-    #[schemars(schema_with = "reported_metadata_schema")]
-    pub adapter: BTreeMap<String, Value>,
+    pub adapter: super::adapter::ExtensionAdapter,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -143,6 +142,19 @@ pub struct SuntitleNodeSpec {
         "has(self.custom) == has(oldSelf.custom)",
     )).message("node type is immutable"))]
     pub settings: NodeSettings,
+}
+
+impl SuntitleNodeSpec {
+    pub fn resolve_extension(
+        &self,
+        extension: &SuntitleExtensionSpec,
+    ) -> Result<Option<super::adapter::ResolvedAdapter>, super::adapter::MissingRequiredSettings>
+    {
+        match &self.settings {
+            NodeSettings::Custom(overrides) => extension.adapter.resolve(overrides).map(Some),
+            _ => Ok(None),
+        }
+    }
 }
 
 fn enabled_default() -> bool {
@@ -339,7 +351,7 @@ pub struct NodeStatus {
     pub conditions: Vec<Condition>,
 }
 
-fn reported_metadata_schema(_: &mut SchemaGenerator) -> Schema {
+pub(super) fn reported_metadata_schema(_: &mut SchemaGenerator) -> Schema {
     json!({"type":"object", "x-kubernetes-preserve-unknown-fields":true})
         .try_into()
         .unwrap()

@@ -416,9 +416,12 @@ async fn extension_requests_persist_resources_and_refresh_only_the_request_token
     let empty = expect(&store, Method::GET, "/api/v1/extensions", None, 200).await;
     assert_eq!(empty["items"], json!([]));
     assert_eq!(empty["resourceVersion"], "12");
-    let body: Value = serde_json::from_str(include_str!(
-        "../../mockserver/fixtures/kubernetes/extension-create.json"
-    ))
+    let body = serde_json::to_value(
+        serde_json::from_str::<ws_proxy::kubernetes::store::ExtensionCreate>(include_str!(
+            "../../mockserver/fixtures/kubernetes/extension-create.json"
+        ))
+        .unwrap(),
+    )
     .unwrap();
     let (status, created, location) = request(
         &store,
@@ -481,9 +484,12 @@ async fn extension_api_preserves_kubernetes_errors_and_rejects_malformed_request
         atomic::{AtomicUsize, Ordering},
     };
     use warp::Filter;
-    let body: Value = serde_json::from_str(include_str!(
-        "../../mockserver/fixtures/kubernetes/extension-create.json"
-    ))
+    let body = serde_json::to_value(
+        serde_json::from_str::<ws_proxy::kubernetes::store::ExtensionCreate>(include_str!(
+            "../../mockserver/fixtures/kubernetes/extension-create.json"
+        ))
+        .unwrap(),
+    )
     .unwrap();
     for code in [403, 404, 409, 422, 503] {
         let calls = Arc::new(AtomicUsize::new(0));

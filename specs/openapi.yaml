@@ -1135,7 +1135,65 @@ components:
           properties:
             adapter:
               type: object
-              x-kubernetes-preserve-unknown-fields: true
+              required:
+              - type
+              - execution
+              properties:
+                arguments:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                    - source
+                    properties:
+                      flag:
+                        type:
+                        - string
+                        - 'null'
+                        description: Omit the flag for a positional value.
+                        minLength: 1
+                      mode:
+                        type: string
+                        default: value
+                        enum:
+                        - value
+                        - switch
+                      source:
+                        type: string
+                        pattern: ^(runtime\.websocketUrl|settings\..+)$
+                    additionalProperties: false
+                    x-kubernetes-validations:
+                    - message: switch arguments require a flag
+                      rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+                execution:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                settings:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      default:
+                        type:
+                        - 'null'
+                        - boolean
+                        - object
+                        - array
+                        - number
+                        - string
+                        description: Explicit null MUST remain distinct from an omitted default.
+                      required:
+                        type: boolean
+                        default: false
+                    additionalProperties: false
+                type:
+                  type: string
+                  enum:
+                  - audio_source
+                  - transcriber
+                  - translator
+                  - display
+              additionalProperties: false
             name:
               type: string
               maxLength: 128
@@ -1198,9 +1256,9 @@ components:
                   type:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
+              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
-              x-kubernetes-list-type: map
             observedGeneration:
               type:
               - integer
@@ -1221,7 +1279,65 @@ components:
       properties:
         adapter:
           type: object
-          x-kubernetes-preserve-unknown-fields: true
+          required:
+          - type
+          - execution
+          properties:
+            arguments:
+              type: array
+              items:
+                type: object
+                required:
+                - source
+                properties:
+                  flag:
+                    type:
+                    - string
+                    - 'null'
+                    description: Omit the flag for a positional value.
+                    minLength: 1
+                  mode:
+                    type: string
+                    default: value
+                    enum:
+                    - value
+                    - switch
+                  source:
+                    type: string
+                    pattern: ^(runtime\.websocketUrl|settings\..+)$
+                additionalProperties: false
+                x-kubernetes-validations:
+                - message: switch arguments require a flag
+                  rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+            execution:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            settings:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  default:
+                    type:
+                    - 'null'
+                    - boolean
+                    - object
+                    - array
+                    - number
+                    - string
+                    description: Explicit null MUST remain distinct from an omitted default.
+                  required:
+                    type: boolean
+                    default: false
+                additionalProperties: false
+            type:
+              type: string
+              enum:
+              - audio_source
+              - transcriber
+              - translator
+              - display
+          additionalProperties: false
         name:
           type: string
           maxLength: 128
@@ -1960,9 +2076,9 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Node health observations keyed by condition type.
-              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
+              x-kubernetes-list-type: map
             dispatch:
               type:
               - object

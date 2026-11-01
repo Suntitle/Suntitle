@@ -45,6 +45,18 @@ Extension list responses also contain `items` and `resourceVersion`.
 The optional `name` is the Kubernetes name; `spec.name` is the display name.
 Omitting `name` generates an `extension-<UUID>` name. The required spec fields
 are `name`, `sourceType` (`local`, `git`, `oci`, or `http`), `source`, and `adapter`.
+`adapter.type` selects the pipeline type. `adapter.execution` remains an extensible
+object. `adapter.settings` maps setting names to `{default?, required?}` declarations;
+`required` defaults to false. A declared default supplies a value without requiring
+`required: true`. `adapter.arguments` contains bindings with `source`,
+optional `flag`, and `mode` (`value` by default, or `switch`). Switch bindings
+require a flag. Sources are `settings.<key>` or `runtime.websocketUrl`.
+Execution resolution uses node overrides before extension defaults and reports
+missing required settings. Null, false, zero, and empty strings count as supplied
+values. Optional settings without values omit their mappings. Neither the Node CR
+nor the Extension CR is changed by resolution. Host dispatch and command conversion
+remain pending.
+
 `POST /api/v1/extensions/{name}/refresh` patches a fresh `spec.refreshToken` and
 returns 202. It preserves metadata and publication status; compare
 `status.observedGeneration` to `metadata.generation` before treating status as
