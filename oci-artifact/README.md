@@ -119,3 +119,18 @@ override it with `OCI_ARTIFACT_TEST_REGISTRY` when using a different registry ho
 Each run uses a unique `oci-artifact-tests/` repository prefix and prints the
 references and manifest digests. Registry fixtures remain available for inspection;
 local fixture and output directories are removed after the test.
+
+`Publisher` publishes one `PreparedUpload` with chunked uploads.
+It applies backpressure without staging a complete payload. Empty files and
+responses without a known size are supported. HTTP responses publish as one named file. Directory archives retain the existing
+ORAS convention. The prepared upload owns its stream and optional archive producer, collects
+metadata computed during streaming, and joins the producer during publication
+or cancellation cleanup. Publication completes only after the manifest is accepted and its
+canonical digest reference resolves through the OCI client.
+
+`Publisher::republish` streams upstream blobs directly into a destination registry
+and republishes the original manifest bytes. It does not inspect extension layout,
+adapter contents, or payload files. Library-owned digest verification still applies.
+
+HTTP executable file layers carry `io.suntitle.executable: "true"`. The downloader
+restores these files with mode `0755` on Unix hosts.

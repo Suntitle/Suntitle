@@ -534,3 +534,10 @@ This stage downloads and reports only. Success leaves the node `Pending` with
 Failure sets `Failed`, reason `ArtifactDownloadFailed`. Prerequisite preparation
 and custom execution are deferred. Existing agents must be upgraded to understand
 the new registration command before extension downloads can be dispatched to them.
+
+Git extension sources use HTTP or HTTPS through `gix` and rustls. Each preparation
+fetches default `HEAD` at depth one into a private temporary bare repository, then
+streams that commit's files into the extension artifact without a working checkout.
+The temporary repository is removed when packaging finishes or fails. Cancellation
+interrupts fetching and waits for cleanup. SSH, Git submodules, and Git LFS content
+resolution are deferred. The application does not invoke external Git or SSH tools.

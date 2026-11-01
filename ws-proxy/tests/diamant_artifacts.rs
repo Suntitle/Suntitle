@@ -1,3 +1,7 @@
+use oci_artifact::constants::{
+    ANNOTATION_UNPACK, IMAGE_LAYER_GZIP_MEDIA_TYPE, MediaType, OCI_IMAGE_MEDIA_TYPE,
+    ORG_OPENCONTAINERS_IMAGE_TITLE,
+};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -43,17 +47,17 @@ async fn registry(corrupt: bool, delay: Duration) -> (String, tokio::task::JoinH
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     std::io::Write::write_all(&mut encoder, &tar).unwrap();
     let blob = encoder.finish().unwrap();
-    let manifest = json!({ "schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "config": {"mediaType":"application/vnd.oci.empty.v1+json", "digest":digest(b"{}"),"size":2},
-        "layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip", "digest":digest(&blob), "size":blob.len(),
-            "annotations":{"org.opencontainers.image.title":"payload","io.deis.oras.content.unpack":"true"}}] });
+    let manifest = json!({ "schemaVersion": 2, "mediaType": OCI_IMAGE_MEDIA_TYPE,
+        "config": {"mediaType":MediaType::EmptyJSON.as_ref(), "digest":digest(b"{}"),"size":2},
+        "layers":[{"mediaType":IMAGE_LAYER_GZIP_MEDIA_TYPE, "digest":digest(&blob), "size":blob.len(),
+            "annotations":{(ORG_OPENCONTAINERS_IMAGE_TITLE):"payload",(ANNOTATION_UNPACK):"true"}}] });
     let manifest = serde_json::to_vec(&manifest).unwrap();
     let route = warp::path::full().and_then(move |path: warp::path::FullPath| {
         let manifest = manifest.clone();
         let blob = blob.clone();
         async move {
             let (content, media) = if path.as_str().contains("/manifests/") {
-                (manifest, "application/vnd.oci.image.manifest.v1+json")
+                (manifest, OCI_IMAGE_MEDIA_TYPE)
             } else if path.as_str().contains("/blobs/") {
                 tokio::time::sleep(delay).await;
                 (

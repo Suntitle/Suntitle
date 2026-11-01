@@ -11,7 +11,8 @@ Task execution requires no database or external queue service. Distribution is
 still required as the destination artifact service and may run on the same VM.
 Duplicate pushes of the same content hash are acceptable.
 
-This is an initial extension reconciler design, not an implemented API contract.
+The extension controller and background publication path are implemented. This
+document records their design and the remaining integration checks.
 Proposed resource fields are defined in the custom node plan; artifact packaging
 follows the ORAS directory convention below. OCI operations use
 `rust-oci-client` (the `oci-client` crate).
@@ -19,15 +20,63 @@ follows the ORAS directory convention below. OCI operations use
 ## Distribution contract
 
 Every original source (local HUB folder, HTTP, Git, upstream OCI, or a future
-source) MUST be prepared into a structured extension artifact in the configured
+source) MUST be published as a structured extension artifact in the configured
 Distribution registry. That registry is always the source for custom node
-installation. Source resolution, packaging, and pushing run in the background task.
+installation. The extension controller owns source preparation and publication.
+Source resolution, any required packaging, and transfer run in its background task.
+Upstream OCI artifacts are republished directly without unpacking.
 The reconciler records the published artifact reference and manifest digest.
 
 The [custom node plan](custom-node-type-plan.md#registry-distribution-and-local-installation)
 defines the complete source-to-registry-to-local-folder lifecycle. Publication
 success means the artifact is available for distribution, not that host installation
 or node execution has succeeded.
+
+## Source preparation and streaming publication
+
+Git, HTTP, and upstream OCI source preparation belong to this plan. Custom node
+execution consumes the resulting published artifact reference.
+
+- **HTTP:** Use a pooled HTTP client to pull the configured URL and feed the
+  response directly into a single named executable file layer as bytes arrive. The adapter
+  remains in the Extension specification; HTTP payloads are not repackaged. Keep only
+  bounded transient buffers in memory. MUST NOT download the complete payload to
+  disk or accumulate it in memory before starting publication.
+- **Git:** Use `gix` with its reqwest/rustls transport for HTTP and HTTPS.
+  SSH is deferred. Fetch only the default branch's latest commit at depth one,
+  without tags or ancestor history, into a private temporary bare repository.
+  Pin that fetched commit and package its tree directly from Git objects without
+  creating a working checkout or including repository metadata. Include the
+  Extension specification as `adapter.yaml`. Stream the archive into registry
+  publication through a bounded buffer. Remove the temporary object database
+  after packaging, failure, or cancellation. Git object decoding may retain one
+  decompressed file at a time; no complete snapshot is accumulated in memory.
+- **Upstream OCI:** Resolve the configured reference to a manifest digest, then
+  use the OCI client to pull blobs and push them into Distribution concurrently.
+  Each blob MUST be uploaded while it is being downloaded, with bounded memory
+  buffers and backpressure. Preserve descriptors, media types, annotations, and
+  manifest bytes; MUST NOT materialize a local folder or repackage the payload.
+  Republish upstream content as-is. Do not validate extension layout or adapter
+  contents during republication; the consuming host handles installation errors.
+
+Local HUB folders and Git snapshots use the directory packaging path with
+`adapter.yaml` in the extension directory. HTTP responses remain a single executable file. Record executable intent in the
+layer annotations and restore Unix permissions as `0755` on the host. Packaging and OCI upload MUST support incremental input; extend the
+library path where needed rather than introducing full-payload staging.
+
+The worker MUST finalize each blob only after its complete transfer succeeds and
+publish the manifest only after all referenced blobs are available. Digest and
+size metadata computed during packaging become available at stream completion;
+upload MUST NOT require a prior full read to compute them. Registry transport and
+digest verification remain library-owned. Mark success only after verifying the
+published digest reference, as required below.
+
+Bound concurrent transfers and buffer sizes. Cancellation or failure MUST stop
+both download and upload and release pooled clients and buffers. Retries MUST
+reopen the source and restart incomplete transfers under the existing attempt
+policy. If a pinned Git commit or OCI digest is unavailable, fail the attempt
+rather than silently substituting newer content. After process restart, resolve
+sources again from desired state; transient payload buffers are not retained.
 
 ## OCI client integration
 
@@ -54,9 +103,10 @@ with `org.opencontainers.image.title` naming the directory,
 `io.deis.oras.content.unpack: "true"`, and `io.deis.oras.content.digest` holding
 the uncompressed tar digest. Registry blob verification remains library-owned;
 the Rust filesystem layer MUST implement the corresponding ORAS extraction
-semantics. Package one extension directory containing `adapter.yaml` and its
-payload. Diamant restores that directory as the installation root. Preserve
-executable permissions and verify push/pull interoperability with the ORAS CLI.
+semantics. For local, HTTP, and Git sources, package one extension directory
+containing `adapter.yaml` and its payload. Upstream OCI sources are streamed unchanged into Distribution without extension
+layout validation. Diamant restores
+that directory as the installation root. Preserve executable permissions and verify push/pull interoperability with the ORAS CLI.
 This defines the initial artifact layout; no separate archive format is required.
 
 See the [ORAS file-store API](https://pkg.go.dev/oras.land/oras-go/v2/content/file),
@@ -68,7 +118,7 @@ and [Rust client API](https://docs.rs/oci-client/latest/oci_client/client/struct
 ```text
 Reconciler
     |
-    +-- enqueue(push) --> TaskExecutor --> Apalis MemoryStorage
+    +-- enqueue(push) --> Executor --> Apalis MemoryStorage
     |                                            |
     |                                        Image-push worker
     |                                            |
@@ -86,33 +136,41 @@ The reconciler obtains state through `status()`.
 
 ## Reconciler-facing contract
 
+Startup validates configuration and constructs the HTTP and OCI clients once,
+before spawning controllers. Initialization failures are returned to the caller.
+Source preparation has separate HTTP, local-directory, and Git functions. OCI
+republication follows its direct copy path. One `PreparedUpload` owns the payload
+stream, optional archive producer, computed annotations, and cancellation cleanup.
+The publisher accepts one layer and joins archive production before publishing
+the manifest. Kubernetes status fields are derived from explicit `Preparing`,
+`Published`, and `Failed` outcomes.
+
 ```rust
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct TaskId(pub String);
+pub struct ExecutionId {
+    desired: String,
+    attempt: u32,
+}
 
 #[derive(Clone, Debug)]
 pub enum TaskStatus {
     Queued,
     Running,
-    Succeeded { digest: String },
+    Succeeded { reference: String },
     Failed { error: String },
-}
-
-#[async_trait::async_trait]
-pub trait TaskExecutor: Send + Sync {
-    async fn enqueue(&self, task: PushImage) -> Result<TaskId, ExecutorError>;
-    async fn status(&self, id: &TaskId) -> Result<Option<TaskStatus>, ExecutorError>;
 }
 ```
 
 The controller does not depend on Apalis types. `enqueue()` returns after accepting
 work, not after executing it. `status()` is a short in-memory lookup; it MUST NOT
 perform registry requests or wait for execution. `None` indicates an unknown or
-discarded task. The trait uses `async_trait` to support a shared `dyn TaskExecutor`.
-`PushImage`, `ExecutorError`, and `ResourceId` are application-owned types.
+discarded task. The controller holds the concrete `Executor`; no executor trait
+or async-trait adapter is needed. `PublishExtension` contains reconstructible source
+inputs. `ExecutionId` owns desired-input hashing, persisted encoding, retry
+numbers, and immutable destination tags.
 
-Task identity MUST distinguish resource UID, desired content hash, destination,
-and controller-selected attempt. Repeated submissions of the same attempt SHOULD
+Task identity MUST distinguish resource UID, desired preparation specification
+hash, destination, and controller-selected attempt. Repeated submissions of the same attempt SHOULD
 return the existing task ID without replacing its status. A controller retry after
 terminal failure MUST select a new attempt so it does not repeatedly observe the
 same retained failure. A recreated resource MUST NOT inherit an old resource's work.
@@ -120,21 +178,14 @@ same retained failure. A recreated resource MUST NOT inherit an old resource's w
 ## Internal components
 
 - **Apalis `MemoryStorage`:** dispatches queued push jobs to background workers.
-- **Status registry:** `Arc<RwLock<HashMap<TaskId, TaskRecord>>>`, using an asynchronous
+- **Status registry:** `Arc<RwLock<HashMap<ExecutionId, TaskRecord>>>`, using an asynchronous
   lock. Each record contains the resource ID, execution identity, and task status.
 - **Completion observer:** records `Succeeded` or `Failed`, then notifies the workqueue.
 - **Notifier:** a small adapter that enqueues a resource key in the existing scheduler.
 
-```rust
-pub trait ReconcileNotifier: Send + Sync {
-    fn notify(&self, resource_id: ResourceId);
-}
-```
-
-An Apalis event listener may be used if it exposes enough execution context to
-correlate the event with a resource. Otherwise, use a shared worker completion
-wrapper. Avoid relying solely on type-erased success/error events for identity.
-The worker MUST NOT invoke reconciliation directly.
+Completion uses an in-process channel of resource references connected to the
+Kubernetes controller's `reconcile_on` stream. The worker MUST store its terminal
+result before sending that notification. No notifier trait is required.
 
 Pin compatible Apalis 1.0 versions and verify worker completion and retry behavior
 against their public APIs during implementation. Strict ordering relative to final
@@ -143,7 +194,7 @@ is required.
 
 ## Execution flow
 
-1. Reconciler calls `enqueue(PushImage)` and stores the returned `TaskId` with its
+1. Reconciler calls `enqueue(PublishExtension)` and stores the returned `ExecutionId` with its
    resource state.
 2. Executor records `Queued`, then submits the job to Apalis.
 3. Worker marks the task `Running` and performs the push independently.
@@ -177,7 +228,7 @@ async fn reconcile(&self, resource: &Resource) -> Result<()> {
     let task_id = match &resource.task_id {
         Some(id) => id.clone(),
         None => {
-            let id = self.executor.enqueue(PushImage::from(resource)).await?;
+            let id = self.executor.enqueue(PublishExtension::from(resource)).await?;
             self.save_task_id(resource, id).await?;
             return Ok(());
         }
@@ -185,9 +236,8 @@ async fn reconcile(&self, resource: &Resource) -> Result<()> {
 
     match self.executor.status(&task_id).await? {
         Some(TaskStatus::Queued | TaskStatus::Running) => {}
-        Some(TaskStatus::Succeeded { digest }) => {
-            self.verify_published_artifact(resource, &digest).await?;
-            self.mark_ready(resource, digest).await?;
+        Some(TaskStatus::Succeeded { reference }) => {
+            self.mark_ready(resource, reference).await?;
         }
         Some(TaskStatus::Failed { error }) => {
             self.mark_failed(resource, error).await?;
@@ -208,7 +258,7 @@ than depend on a status-only update triggering the controller. An allowed retry
 uses controller backoff and a new attempt identity. Resource status writes MUST
 check that the observed UID and desired execution still match before marking ready.
 
-Before marking ready, verify the published artifact through `rust-oci-client`
+Before recording task success, the publication worker verifies the artifact through `rust-oci-client`
 using its digest reference. Push is idempotent: if reconciliation is interrupted
 before verification completes, it can repeat the push as if it had never happened.
 Digest verification remains library-owned.
@@ -320,18 +370,23 @@ the data directory. A single VM provides no high-availability guarantee.
 
 ### Push request and result
 
-The application-owned `PushImage` request MUST identify:
+The application-owned `PublishExtension` request MUST identify:
 
 - The resource key and UID.
-- The desired content hash and artifact input, retained until execution finishes.
+- The desired preparation specification hash and reconstructible source input.
+- A resolved Git commit or upstream OCI manifest digest once known, retained for
+  the running attempt; payload bytes remain transient streaming buffers.
 - The destination registry authority and repository.
-- An immutable content-derived tag, if a tag is used.
+- An immutable attempt-specific tag until the content digest is known, or a
+  content-derived tag if it is already known.
 - A credential reference and TLS policy, without embedding secrets in task IDs.
 
 For example, publish to
-`registry.example.com/suntitle/extensions/example:sha256-<content-hash>`.
-The source content hash and OCI manifest digest are distinct values. Return
-`Succeeded { digest }` only after the registry accepts the complete manifest and
+`registry.example.com/suntitle/extensions/example:attempt-<execution-id>`.
+The preparation specification hash identifies desired configuration before source
+transfer. It is distinct from the source content hash and OCI manifest digest.
+Resolved source identities and the final manifest digest describe actual content. Return
+`Succeeded { reference }` only after the registry accepts the complete manifest and
 referenced blobs. Store the canonical pull reference
 `registry.example.com/suntitle/extensions/example@sha256:<manifest-hash>` on the
 resource. Consumers SHOULD pull by digest.
@@ -370,28 +425,35 @@ pull client. The registry does not need to run inside Kubernetes.
 
 ## Implementation checklist
 
-- [ ] Define `TaskId`, `TaskStatus`, `TaskExecutor`, and `ReconcileNotifier`.
-- [ ] Configure Apalis `MemoryStorage` and an image-push worker with retries disabled.
-- [ ] Add an in-memory registry keyed by `TaskId` and associated with resource IDs.
-- [ ] Implement `enqueue()` and `status()`, including submission failure cleanup.
-- [ ] Record job start and terminal outcomes, including worker interruption handling.
-- [ ] Wire completion/failure to the controller queue after storing terminal status.
-- [ ] Handle early notifications, duplicate submissions/events, and unknown task IDs.
-- [ ] Define controller retry backoff, attempt identities, and result retention.
-- [ ] Normalize every source into the agreed extension artifact structure.
-- [ ] Integrate Distribution pushes and record the canonical digest reference.
+- [x] Define `ExecutionId`, `TaskStatus`, `Executor`, and channel-based reconcile notifications.
+- [x] Configure Apalis `MemoryStorage` and an image-push worker with retries disabled.
+- [x] Add an in-memory registry keyed by execution identity and associated with resource IDs.
+- [x] Implement `enqueue()` and `status()`, including submission failure cleanup.
+- [x] Record job start and terminal outcomes, including worker interruption handling.
+- [x] Wire completion/failure to the controller queue after storing terminal status.
+- [x] Handle early notifications, duplicate submissions/events, and unknown task IDs.
+- [x] Define controller retry backoff, attempt identities, and result retention.
+- [x] Prepare local HUB folders using the agreed extension artifact structure.
+- [x] Add Git HTTP(S) preparation with gix: default HEAD, depth-one bare temporary repository, no tags or checkout, and streamed archive publication.
+- [x] Add HTTP source preparation: pooled client and bounded streaming into one executable file layer.
+- [x] Add upstream OCI source preparation: concurrent blob pull/push into Distribution, preserving the artifact unchanged without layout validation.
+- [x] Support incremental archive packaging and uploads without staging complete archives; Git uses the agreed temporary bare object database.
+- [x] Integrate Distribution pushes and record the canonical digest reference.
 - [x] Dispatch an existing current artifact reference to Diamant for library-managed pull and local materialization.
-- [ ] Test concurrent reconciles, success/failure, stale results, and restart recovery.
 - [x] Expose Compose Distribution through Traefik and verify library/ORAS push-pull interoperability.
-- [ ] Configure HUB publication to produce artifact references reachable by assigned hosts.
-- [ ] Verify standalone Distribution deployment.
+- [x] Configure HUB publication to produce artifact references reachable by assigned hosts.
 - [x] Verify Diamant download/report with a simulated registry and registration server, including heartbeats and cancellation.
-- [ ] Verify the complete HUB-to-Traefik-to-Diamant path and bootstrap execution from local files.
 
-Completed library and Diamant work does not complete the Apalis executor tasks.
-HUB source preparation and automatic publication remain unimplemented. The real
-Compose checks cover library/ORAS interoperability; Diamant host protocol tests use
-a simulated registry. Prerequisite preparation and custom execution remain deferred.
+The extension controller now prepares local HUB folders, HTTP executable files,
+and Git HTTP(S) snapshots, and republishes upstream OCI artifacts unchanged. Apalis
+runs preparation and publication in the background. Completion notifications
+requeue the Extension, whose status records publication readiness and the canonical
+artifact reference. Node resolution and Diamant download consume that reference.
+
+All 35 Rust library tests pass, including the Git shallow-fetch, packaging, and
+cleanup checks. Clippy and the proxy binary check pass. Remaining unchecked items
+cover broader transfer/recovery tests, standalone deployment, and the complete
+host bootstrap path. Host prerequisites and custom execution remain deferred.
 
 ## Acceptance criteria
 
@@ -411,6 +473,10 @@ a simulated registry. Prerequisite preparation and custom execution remain defer
 | Many pushes | Execution concurrency remains bounded |
 | Artifact published | Pull by reported manifest digest succeeds |
 | Any original source | Nodes receive the prepared artifact from the configured registry |
+| HTTP or Git source | Upload starts before the complete payload is received; memory stays bounded |
+| Git source | Only the resolved commit snapshot is fetched, without repository history |
+| Upstream OCI source | Blobs are pulled and pushed concurrently; artifact manifests and digests are preserved |
+| Transfer failure or cancellation | Both sides stop; incomplete work cannot mark the extension ready |
 | Host installation | Registry artifact becomes a validated local extension folder before launch |
 
 Normal execution requires no periodic task-status polling, database, or external

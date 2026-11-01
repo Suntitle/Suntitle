@@ -107,8 +107,11 @@ its source contract and frontend MUST be aligned with these four source types.
 
 The configured Distribution registry MUST be both the destination for prepared
 extensions and the source for distributing them to custom nodes. Every original
-source, including local HUB folders, HTTP, Git, and upstream OCI, passes through
-HUB preparation into a structured artifact containing the adapter and payload.
+source, including local HUB folders, HTTP, Git, and upstream OCI, is published
+by the extension controller into Distribution. Local and Git payloads are packaged with the adapter; HTTP responses are
+published as single executable files with the adapter retained in the Extension spec; upstream OCI artifacts are streamed directly
+into Distribution. Source transfer and publication follow the
+[extension reconciler plan](extension-reconciler-plan.md#source-preparation-and-streaming-publication).
 Nodes MUST obtain extension payloads from this registry rather than the original
 source.
 
@@ -227,7 +230,9 @@ status:
 ```
 
 `adapter` contains the extension specification described below. HUB MUST package
-it as `adapter.yaml` at the extension directory root alongside the source payload.
+it as `adapter.yaml` at the extension directory root alongside local and Git
+payloads. HTTP responses are single executable file artifacts; their adapter
+remains in the Extension specification. Upstream OCI content is republished as-is.
 Relative entry points and working directories resolve from that root; the default
 working directory is the installed extension root.
 
@@ -495,8 +500,9 @@ before implementation, following the project workflow.
 ## Implementation progress
 
 Remaining work is listed in implementation order. Start with local HUB sources to
-complete one working lifecycle, then add the other source providers. Background
-preparation follows the [extension reconciler plan](extension-reconciler-plan.md).
+complete one working lifecycle. Source provider preparation and streaming
+publication belong to the extension controller and are tracked in the
+[extension reconciler plan](extension-reconciler-plan.md#source-preparation-and-streaming-publication).
 
 - [x] Add Extension and custom Node CRD fields, including adapter settings and argument bindings.
 - [x] Include Extension in CRD generation, bootstrap, and RBAC.
@@ -505,12 +511,12 @@ preparation follows the [extension reconciler plan](extension-reconciler-plan.md
   resolve defaults and node overrides, and populate Node status with the resolved
   adapter and published artifact reference.
 - [ ] Use the extension's pipeline type for node input compatibility.
-- [ ] Add the background preparation executor and controller completion notifications.
-- [ ] Prepare local HUB folder sources.
+- [x] Add the background preparation executor and controller completion notifications.
+- [x] Prepare local HUB folder sources.
 - [x] Add library packaging of prepared files and directories using the ORAS convention.
 - [x] Add library push/pull support and verify interoperability with ORAS through Compose Distribution.
-- [ ] Integrate adapter.yaml generation and payload packaging into HUB source preparation.
-- [ ] Publish prepared artifacts from the HUB reconciler and record their digest references.
+- [x] Generate adapter.yaml for local and Git directory artifacts; publish HTTP as a single executable file and OCI content unchanged.
+- [x] Publish prepared artifacts from the HUB reconciler and record their digest references.
 - [x] Expose Distribution through Traefik for assigned hosts.
 - [x] Dispatch the resolved artifact reference to Diamant for download.
 - [x] Pull artifacts and materialize extension folders on Diamant hosts.
@@ -524,9 +530,6 @@ preparation follows the [extension reconciler plan](extension-reconciler-plan.md
 - [ ] Prepare host prerequisites and record installation results on the Node.
 - [ ] Build arguments from resolved settings and runtime values.
 - [ ] Launch custom executables and explicit Python entry points under Diamant supervision.
-- [ ] Add Git source preparation.
-- [ ] Add HTTP source preparation.
-- [ ] Add upstream OCI source preparation.
 - [ ] Document the type-specific WebSocket contracts and runnable plugin examples.
 - [ ] Update the Extensions and node configuration UI, including mock payloads and Cypress coverage.
 
@@ -534,10 +537,10 @@ The extension controller watches Node and Extension changes, resolves defaults
 and overrides for current published extensions, and records the resolved adapter
 and artifact reference in Node status. Missing or stale publications clear those
 fields. Diamant downloads the current artifact and reports the result without
-claiming installation or readiness. Artifact preparation, host prerequisites, and
-custom execution remain unimplemented. Library packaging and registry transport are
-implemented; HUB source preparation has not yet integrated them. Advanced argument
-forms can follow the basic value/switch bindings once the local-source lifecycle works.
+claiming installation or readiness. Background source preparation and automatic
+registry publication are implemented for local, HTTP, Git HTTP(S), and upstream
+OCI sources. Host prerequisites and custom execution remain unimplemented. Advanced
+argument forms can follow the basic value/switch bindings.
 
 ## Validation
 

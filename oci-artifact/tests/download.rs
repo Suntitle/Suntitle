@@ -1,3 +1,7 @@
+use oci_artifact::constants::{
+    ANNOTATION_UNPACK, IMAGE_LAYER_GZIP_MEDIA_TYPE, MediaType, OCI_IMAGE_MEDIA_TYPE,
+    ORG_OPENCONTAINERS_IMAGE_TITLE,
+};
 use oci_artifact::{DownloadRequest, Downloader, Error, client::TransportOptions};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -35,6 +39,7 @@ impl Registry {
         let count = requests.clone();
         let manifest = serde_json::to_vec(&manifest).unwrap();
         let worker = thread::spawn(move || {
+            let empty_json_media_type = MediaType::EmptyJSON;
             while !shutdown.load(Ordering::Relaxed) {
                 let Ok((mut socket, _)) = listener.accept() else {
                     thread::sleep(Duration::from_millis(2));
@@ -62,13 +67,9 @@ impl Registry {
                 let request = String::from_utf8_lossy(&request);
                 let path = request.split_whitespace().nth(1).unwrap_or("");
                 let (status, content, media) = if path.contains("/manifests/") {
-                    (
-                        200,
-                        manifest.as_slice(),
-                        "application/vnd.oci.image.manifest.v1+json",
-                    )
+                    (200, manifest.as_slice(), OCI_IMAGE_MEDIA_TYPE)
                 } else if path.ends_with(&digest(b"{}")) {
-                    (200, &b"{}"[..], "application/vnd.oci.empty.v1+json")
+                    (200, &b"{}"[..], empty_json_media_type.as_ref())
                 } else if path.contains("/blobs/") {
                     if count.fetch_add(1, Ordering::Relaxed) == 0 && fail_first && !interrupted {
                         (503, &b"temporary"[..], "text/plain")
@@ -183,7 +184,7 @@ fn archive() -> Vec<u8> {
     tar.into_inner().unwrap().finish().unwrap()
 }
 fn manifest(blob: &[u8]) -> Value {
-    json!({"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.empty.v1+json","size":2,"digest":digest(b"{}")},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","size":blob.len(),"digest":digest(blob),"annotations":{"org.opencontainers.image.title":"payload","io.deis.oras.content.unpack":"true"}}]})
+    json!({"schemaVersion":2,"mediaType":OCI_IMAGE_MEDIA_TYPE,"config":{"mediaType":MediaType::EmptyJSON.as_ref(),"size":2,"digest":digest(b"{}")},"layers":[{"mediaType":IMAGE_LAYER_GZIP_MEDIA_TYPE,"size":blob.len(),"digest":digest(blob),"annotations":{(ORG_OPENCONTAINERS_IMAGE_TITLE):"payload",(ANNOTATION_UNPACK):"true"}}]})
 }
 fn downloader() -> Downloader {
     Downloader::new(TransportOptions {
@@ -563,7 +564,7 @@ async fn raw_files_preserve_bytes_and_names() {
         ("empty", Vec::new()),
     ] {
         let mut m = manifest(&bytes);
-        m["layers"][0]["annotations"] = json!({"org.opencontainers.image.title":name});
+        m["layers"][0]["annotations"] = json!({(ORG_OPENCONTAINERS_IMAGE_TITLE):name});
         let registry = Registry::new(m, bytes.clone(), false);
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("out");
@@ -589,7 +590,7 @@ async fn raw_file_names_cannot_escape_destination() {
     for name in ["../escape", "/escape", "nested/../../escape", ".", ""] {
         let bytes = b"bytes".to_vec();
         let mut m = manifest(&bytes);
-        m["layers"][0]["annotations"] = json!({"org.opencontainers.image.title":name});
+        m["layers"][0]["annotations"] = json!({(ORG_OPENCONTAINERS_IMAGE_TITLE):name});
         let registry = Registry::new(m, bytes, false);
         let root = tempfile::tempdir().unwrap();
         assert!(matches!(
@@ -666,7 +667,7 @@ async fn oras_single_file_round_trip() {
             index["manifests"][0]["digest"].as_str().unwrap(),
         ))
         .unwrap();
-        assert!(m["layers"][0]["annotations"]["io.deis.oras.content.unpack"].is_null());
+        assert!(m["layers"][0]["annotations"][ANNOTATION_UNPACK].is_null());
         let blob = read_blob(m["layers"][0]["digest"].as_str().unwrap());
         assert_eq!(blob, bytes);
         let registry = Registry::new(m, blob, false);
