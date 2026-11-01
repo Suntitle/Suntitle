@@ -1,0 +1,30 @@
+{
+  "name": "custom-transcriber",
+  "spec": {
+    "name": "Custom transcriber",
+    "sourceType": "local",
+    "source": "/opt/suntitle/extensions/custom-transcriber",
+    "adapter": {
+      "type": "transcriber",
+      "execution": {
+        "runtime": "executable",
+        "executable": "./bin/transcriber"
+      },
+      "settings": {
+        "language": {
+          "default": "en"
+        }
+      },
+      "arguments": [
+        {
+          "flag": "--server",
+          "source": "runtime.websocketUrl"
+        },
+        {
+          "flag": "--language",
+          "source": "settings.language"
+        }
+      ]
+    }
+  }
+}

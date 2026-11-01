@@ -1,15 +1,15 @@
 use super::errors::{ApiError, ApiResult, ErrorEnvelope};
 use crate::kubernetes::{
-    resources::SuntitleNode,
-    store::{HostList, NodeCreate, ResourceStore},
+    resources::{SuntitleHost, SuntitleNode},
+    store::{NodeCreate, ResourceList, ResourceStore},
 };
 use actix_web::{HttpResponse, get, post, web};
 use kube::ResourceExt;
 
 #[utoipa::path(get, path = "/hosts", tag = "Hosts", operation_id = "listHosts",
-    responses((status = 200, body = HostList), (status = 503, body = ErrorEnvelope)))]
+    responses((status = 200, body = ResourceList<SuntitleHost>), (status = 503, body = ErrorEnvelope)))]
 #[get("/hosts")]
-pub async fn list_hosts(store: web::Data<ResourceStore>) -> ApiResult<HostList> {
+pub async fn list_hosts(store: web::Data<ResourceStore>) -> ApiResult<ResourceList<SuntitleHost>> {
     Ok(web::Json(store.list_hosts().await?))
 }
 

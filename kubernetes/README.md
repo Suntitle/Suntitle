@@ -1,7 +1,7 @@
 # Kubernetes resources and Control API
 
 Phase 2 switches Control API resource handlers to Kubernetes. The selected API is
-`control.suntitle.io/v1alpha1`, kinds `SuntitleHost` and `SuntitleNode`. The proxy,
+`control.suntitle.io/v1alpha1`, kinds `SuntitleHost`, `SuntitleNode`, and `SuntitleExtension`. The proxy,
 Diamant, and UI integration remain in later phases. Node deletion is phase 4.
 
 From the repository root, with the existing Compose Kine/API server running:
@@ -26,9 +26,9 @@ cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- --kubeconfig 
 
 `SUNTITLE_API_KUBECONFIG` also selects the credentials; `--namespace` or
 `SUNTITLE_KUBERNETES_NAMESPACE` selects the managed namespace (default `suntitle`).
-The API does not initialize PostgreSQL. Startup and `GET /readyz` require both
-CRDs to be established and both resource collections to be readable. Bootstrap
-installs a ClusterRole allowing only GET on these two CRDs for readiness.
+The API does not initialize PostgreSQL. Startup and `GET /readyz` require all three
+CRDs to be established and all three resource collections to be readable. Bootstrap
+installs a ClusterRole allowing only GET on these three CRDs for readiness.
 `--bootstrap-kubeconfig` remains an optional, separate CRD installation identity.
 
 Host/node list responses contain `items` and an opaque `resourceVersion`.
@@ -38,6 +38,20 @@ accepts `{spec: ...}` and replaces only the complete desired spec. Restart has n
 request body and patches only a fresh restart token, returning 202. Neither write
 uses a resource-version precondition or a preliminary resource read. Metadata and
 status are preserved by these patches.
+
+Extension list responses also contain `items` and `resourceVersion`.
+`GET /api/v1/extensions/{name}` returns the stored resource, including status.
+`POST /api/v1/extensions` accepts `{name?, spec}` and returns 201 with Location.
+The optional `name` is the Kubernetes name; `spec.name` is the display name.
+Omitting `name` generates an `extension-<UUID>` name. The required spec fields
+are `name`, `sourceType` (`local`, `git`, `oci`, or `http`), `source`, and `adapter`.
+`POST /api/v1/extensions/{name}/refresh` patches a fresh `spec.refreshToken` and
+returns 202. It preserves metadata and publication status; compare
+`status.observedGeneration` to `metadata.generation` before treating status as
+current. Preparation and installation are separate controller work.
+The Extensions frontend and its legacy mock endpoints still use the older package
+contract; migrating them is a separate UI task. Resource API examples are in
+`mockserver/fixtures/kubernetes/extension*.json`.
 
 Kubernetes schemas and CEL validate desired fields and immutable changes. The
 API does not check input references or deletion timestamps.

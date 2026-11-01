@@ -69,6 +69,10 @@ pub struct SuntitleExtensionSpec {
     pub source_type: ExtensionSourceType,
     #[schemars(length(min = 1))]
     pub source: String,
+    /// Opaque token whose change requests extension preparation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 128))]
+    pub refresh_token: Option<String>,
     #[schemars(schema_with = "reported_metadata_schema")]
     pub adapter: BTreeMap<String, Value>,
 }
@@ -412,5 +416,6 @@ openapi_schema!(
     SuntitleHost,
     SuntitleNode,
     SuntitleNodeSpec,
-    SuntitleExtension
+    SuntitleExtension,
+    SuntitleExtensionSpec
 );

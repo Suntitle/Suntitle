@@ -14,7 +14,7 @@ use tokio::time::{Instant, sleep, timeout};
 use uuid::Uuid;
 use ws_proxy::kubernetes::{
     resources::{Presence, SuntitleHost},
-    store::HostList,
+    store::ResourceList,
 };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -182,7 +182,7 @@ async fn wait_for_registered_host(
     }
 }
 
-async fn list_hosts() -> Result<HostList, Box<dyn Error>> {
+async fn list_hosts() -> Result<ResourceList<SuntitleHost>, Box<dyn Error>> {
     let mut stream = TcpStream::connect("127.0.0.1:3031").await?;
     stream
         .write_all(

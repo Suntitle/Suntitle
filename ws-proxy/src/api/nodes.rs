@@ -1,14 +1,14 @@
 use super::errors::{ApiError, ApiResult, ErrorEnvelope};
 use crate::kubernetes::{
     resources::SuntitleNode,
-    store::{NodeList, NodeUpdate, ResourceStore},
+    store::{NodeUpdate, ResourceList, ResourceStore},
 };
 use actix_web::{HttpResponse, delete, get, post, put, web};
 
 #[utoipa::path(get, path = "/nodes", tag = "Nodes", operation_id = "listNodes",
-    responses((status = 200, body = NodeList), (status = 503, body = ErrorEnvelope)))]
+    responses((status = 200, body = ResourceList<SuntitleNode>), (status = 503, body = ErrorEnvelope)))]
 #[get("/nodes")]
-pub async fn list_nodes(store: web::Data<ResourceStore>) -> ApiResult<NodeList> {
+pub async fn list_nodes(store: web::Data<ResourceStore>) -> ApiResult<ResourceList<SuntitleNode>> {
     Ok(web::Json(store.list_nodes().await?))
 }
 

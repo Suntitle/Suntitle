@@ -217,12 +217,12 @@ fn variant_schemas_keep_models_and_defaults_independent() {
 
 #[test]
 fn phase_two_api_fixtures_use_resource_contracts() {
-    use ws_proxy::kubernetes::store::{HostList, NodeCreate, NodeList, NodeUpdate};
-    let hosts: HostList = serde_json::from_str(include_str!(
+    use ws_proxy::kubernetes::store::{NodeCreate, NodeUpdate, ResourceList};
+    let hosts: ResourceList<SuntitleHost> = serde_json::from_str(include_str!(
         "../../mockserver/fixtures/kubernetes/hosts.json"
     ))
     .unwrap();
-    let nodes: NodeList = serde_json::from_str(include_str!(
+    let nodes: ResourceList<SuntitleNode> = serde_json::from_str(include_str!(
         "../../mockserver/fixtures/kubernetes/nodes.json"
     ))
     .unwrap();
@@ -365,4 +365,28 @@ fn built_in_settings_forbid_extension_ref_and_cannot_change_to_custom() {
         changed["settings"]["custom"] = json!({"threads":4});
         SuntitleNodeSpec::validate_cel(&changed, Some(&custom)).unwrap();
     }
+}
+
+#[test]
+fn extension_api_fixtures_match_resource_contracts() {
+    use ws_proxy::kubernetes::store::{ExtensionCreate, ResourceList};
+    let create: ExtensionCreate = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/extension-create.json"
+    ))
+    .unwrap();
+    let extension: SuntitleExtension = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/extension.json"
+    ))
+    .unwrap();
+    let list: ResourceList<SuntitleExtension> = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/extensions.json"
+    ))
+    .unwrap();
+    assert_eq!(create.name, extension.metadata.name);
+    assert_eq!(
+        serde_json::to_value(create.spec).unwrap(),
+        serde_json::to_value(extension.spec).unwrap()
+    );
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.resource_version, "10");
 }

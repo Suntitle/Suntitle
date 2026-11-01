@@ -16,20 +16,28 @@ pub struct ResourceStore {
     client: Client,
     hosts: Api<SuntitleHost>,
     nodes: Api<SuntitleNode>,
+    extensions: Api<SuntitleExtension>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct HostList {
-    pub items: Vec<SuntitleHost>,
+pub struct ResourceList<T> {
+    #[schema(schema_with = resource_items_schema::<T>)]
+    pub items: Vec<T>,
     pub resource_version: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeList {
-    pub items: Vec<SuntitleNode>,
-    pub resource_version: String,
+fn resource_items_schema<T: ToSchema>() -> utoipa::openapi::schema::Array {
+    utoipa::openapi::schema::ArrayBuilder::new()
+        .items(utoipa::openapi::Ref::from_schema_name(T::name()))
+        .build()
+}
+
+#[derive(Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionCreate {
+    pub name: Option<String>,
+    pub spec: SuntitleExtensionSpec,
 }
 
 #[derive(Deserialize, Serialize, ToSchema)]
@@ -46,11 +54,11 @@ pub struct NodeUpdate {
 }
 
 impl ResourceStore {
-
     pub fn new(client: Client, namespace: &str) -> Self {
         Self {
             hosts: Api::namespaced(client.clone(), namespace),
             nodes: Api::namespaced(client.clone(), namespace),
+            extensions: Api::namespaced(client.clone(), namespace),
             client,
         }
     }
@@ -60,6 +68,7 @@ impl ResourceStore {
         for name in [
             "suntitlehosts.control.suntitle.io",
             "suntitlenodes.control.suntitle.io",
+            "suntitleextensions.control.suntitle.io",
         ] {
             let crd = crds.get(name).await?;
             if !crd
@@ -74,12 +83,15 @@ impl ResourceStore {
         }
         self.hosts.list(&ListParams::default().limit(1)).await?;
         self.nodes.list(&ListParams::default().limit(1)).await?;
+        self.extensions
+            .list(&ListParams::default().limit(1))
+            .await?;
         Ok(())
     }
 
-    pub async fn list_hosts(&self) -> Result<HostList, ApiError> {
-        let list = self.hosts.list(&ListParams::default()).await?;
-        Ok(HostList {
+    pub async fn list_extensions(&self) -> Result<ResourceList<SuntitleExtension>, ApiError> {
+        let list = self.extensions.list(&ListParams::default()).await?;
+        Ok(ResourceList {
             items: list.items,
             resource_version: list
                 .metadata
@@ -88,9 +100,46 @@ impl ResourceStore {
         })
     }
 
-    pub async fn list_nodes(&self) -> Result<NodeList, ApiError> {
+    pub async fn extension(&self, name: &str) -> Result<SuntitleExtension, ApiError> {
+        Ok(self.extensions.get(name).await?)
+    }
+
+    pub async fn create_extension(
+        &self,
+        request: ExtensionCreate,
+    ) -> Result<SuntitleExtension, ApiError> {
+        let name = request
+            .name
+            .unwrap_or_else(|| format!("extension-{}", Uuid::new_v4()));
+        let extension = SuntitleExtension::new(&name, request.spec);
+        Ok(self
+            .extensions
+            .create(&PostParams::default(), &extension)
+            .await?)
+    }
+
+    pub async fn refresh_extension(&self, name: &str) -> Result<SuntitleExtension, ApiError> {
+        let patch = json!({"spec": {"refreshToken": Uuid::new_v4().to_string()}});
+        Ok(self
+            .extensions
+            .patch(name, &PatchParams::default(), &Patch::Merge(&patch))
+            .await?)
+    }
+
+    pub async fn list_hosts(&self) -> Result<ResourceList<SuntitleHost>, ApiError> {
+        let list = self.hosts.list(&ListParams::default()).await?;
+        Ok(ResourceList {
+            items: list.items,
+            resource_version: list
+                .metadata
+                .resource_version
+                .ok_or_else(ApiError::unavailable)?,
+        })
+    }
+
+    pub async fn list_nodes(&self) -> Result<ResourceList<SuntitleNode>, ApiError> {
         let list = self.nodes.list(&ListParams::default()).await?;
-        Ok(NodeList {
+        Ok(ResourceList {
             items: list.items,
             resource_version: list
                 .metadata
