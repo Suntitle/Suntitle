@@ -28,6 +28,7 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
         auth::logout,
         auth::get_current_user,
         extensions::list_extensions,
+        extensions::get_extension,
         extensions::create_extension,
         extensions::refresh_extension,
         hosts::list_hosts,
@@ -42,15 +43,17 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
     components(
         schemas(
             LoginRequest, LoginResponse, User,
-            extensions::Extension, extensions::ExtensionCreate, extensions::ExtensionSourceType,
+            crate::kubernetes::resources::SuntitleExtension,
+            crate::kubernetes::store::ExtensionCreate,
+            crate::kubernetes::store::ResourceList<crate::kubernetes::resources::SuntitleExtension>,
             NodeType, NodeSettingValue, NodeSettingOption, NodeSettingDefinition,
             NodeTypeDefinition, NodeTypeDefinitionList,
             AudioSourceSettings, TranscriberSettings, TranslatorSettings, DisplaySettings,
             LanguageTag, errors::ErrorEnvelope,
             crate::kubernetes::resources::SuntitleHost,
             crate::kubernetes::resources::SuntitleNode,
-            crate::kubernetes::store::HostList,
-            crate::kubernetes::store::NodeList,
+            crate::kubernetes::store::ResourceList<crate::kubernetes::resources::SuntitleHost>,
+            crate::kubernetes::store::ResourceList<crate::kubernetes::resources::SuntitleNode>,
             crate::kubernetes::store::NodeCreate,
             crate::kubernetes::store::NodeUpdate
         ),
@@ -72,7 +75,6 @@ pub struct ApiDoc;
 struct SecurityAddon;
 
 impl Modify for SecurityAddon {
-
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         openapi.info.license = None;
         if let Some(login) = openapi.paths.paths.get_mut("/auth/login")
@@ -154,6 +156,7 @@ pub fn configure_with_store(
             .service(auth::logout)
             .service(auth::get_current_user)
             .service(extensions::list_extensions)
+            .service(extensions::get_extension)
             .service(extensions::create_extension)
             .service(extensions::refresh_extension)
             .service(hosts::list_hosts)
@@ -181,14 +184,17 @@ mod tests {
             document["components"]["schemas"]["SuntitleNode"]["properties"]["metadata"].is_object()
         );
         assert!(document["paths"]["/nodes/{name}/restart"]["post"]["responses"]["202"].is_object());
-        assert_eq!(
-            document["components"]["schemas"]["Extension"]["required"],
-            serde_json::json!(["name", "version", "description", "source", "sourceType"])
+        assert!(
+            document["components"]["schemas"]["SuntitleExtension"]["properties"]["metadata"]
+                .is_object()
         );
-        assert_eq!(
-            document["components"]["schemas"]["ExtensionSourceType"]["enum"],
-            serde_json::json!(["local", "git", "zip"])
-        );
+        for resource in ["SuntitleHost", "SuntitleNode", "SuntitleExtension"] {
+            let list = format!("ResourceList_{resource}");
+            assert_eq!(
+                document["components"]["schemas"][list]["properties"]["items"]["items"],
+                serde_json::json!({"$ref": format!("#/components/schemas/{resource}")})
+            );
+        }
         assert!(document["paths"]["/extensions"]["get"].is_object());
         assert!(document["paths"]["/extensions"]["post"].is_object());
         assert!(document["paths"]["/extensions/{name}/refresh"]["post"].is_object());

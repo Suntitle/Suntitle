@@ -70,6 +70,8 @@ async fn unavailable_and_malformed_requests_have_safe_errors() {
     for uri in [
         "/api/v1/nodes",
         "/api/v1/hosts",
+        "/api/v1/extensions",
+        "/api/v1/extensions/example",
         "/api/v1/nodes/example",
         "/readyz",
     ] {
@@ -293,7 +295,10 @@ async fn readiness_rejects_unestablished_crds() {
 
 #[actix_web::test]
 async fn installation_resolves_host_uid_from_each_list_request() {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use warp::Filter;
 
     let lists = Arc::new(AtomicUsize::new(0));
@@ -324,14 +329,267 @@ async fn installation_resolves_host_uid_from_each_list_request() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
-    let client = Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap();
+    let client = Client::try_from(kube::Config::new(
+        format!("http://{address}").parse().unwrap(),
+    ))
+    .unwrap();
     let store = ResourceStore::new(client, "suntitle");
     let body = json!({"spec":{"name":"Screen","hostRef":{"name":"ignored"},"settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}}});
     for uid in ["target-uid", "target-uid", "target-host", "missing-uid"] {
         let status = if uid == "target-uid" { 201 } else { 404 };
-        expect(&store, Method::POST, &format!("/api/v1/hosts/{uid}/nodes"), Some(body.clone()), status).await;
+        expect(
+            &store,
+            Method::POST,
+            &format!("/api/v1/hosts/{uid}/nodes"),
+            Some(body.clone()),
+            status,
+        )
+        .await;
     }
     assert_eq!(lists.load(Ordering::SeqCst), 4);
     assert_eq!(creates.load(Ordering::SeqCst), 2);
     server.abort();
+}
+
+#[actix_web::test]
+async fn extension_requests_persist_resources_and_refresh_only_the_request_token() {
+    use std::sync::{Arc, Mutex};
+    use warp::Filter;
+    let stored = Arc::new(Mutex::new(None::<Value>));
+    let tokens = Arc::new(Mutex::new(Vec::<String>::new()));
+    let state = stored.clone();
+    let refresh_tokens = tokens.clone();
+    let route = warp::method().and(warp::path::full()).and(warp::body::bytes())
+        .map(move |method: warp::http::Method, path: warp::path::FullPath, body: actix_web::web::Bytes| {
+            let base = "/apis/control.suntitle.io/v1alpha1/namespaces/test/suntitleextensions";
+            let mut state = state.lock().unwrap();
+            let (status, value) = match method {
+                warp::http::Method::POST => {
+                    assert_eq!(path.as_str(), base);
+                    let mut value: Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(value["kind"], "SuntitleExtension");
+                    assert!(value.get("status").is_none() || value["status"].is_null());
+                    if let Some(previous) = state.as_ref() {
+                        assert_ne!(value["metadata"]["name"], previous["metadata"]["name"]);
+                        let name = value["metadata"]["name"].as_str().unwrap();
+                        assert!(name.starts_with("extension-"));
+                        Uuid::parse_str(name.strip_prefix("extension-").unwrap()).unwrap();
+                    }
+                    value["metadata"]["uid"] = json!("extension-uid");
+                    value["metadata"]["resourceVersion"] = json!("1");
+                    value["metadata"]["generation"] = json!(1);
+                    *state = Some(value.clone());
+                    (201, value)
+                },
+                warp::http::Method::GET if path.as_str() == base => (200,
+                    json!({"apiVersion":"control.suntitle.io/v1alpha1", "kind":"SuntitleExtensionList",
+                        "metadata":{"resourceVersion":"12"}, "items":state.iter().cloned().collect::<Vec<_>>()})),
+                warp::http::Method::GET => {
+                    let value = state.as_ref().unwrap();
+                    assert_eq!(path.as_str(), format!("{base}/{}", value["metadata"]["name"].as_str().unwrap()));
+                    (200, value.clone())
+                },
+                warp::http::Method::PATCH => {
+                    let value = state.as_mut().unwrap();
+                    assert_eq!(path.as_str(), format!("{base}/{}", value["metadata"]["name"].as_str().unwrap()));
+                    let patch: Value = serde_json::from_slice(&body).unwrap();
+                    let token = patch["spec"]["refreshToken"].as_str().unwrap();
+                    Uuid::parse_str(token).unwrap();
+                    assert_eq!(patch, json!({"spec":{"refreshToken":token}}));
+                    refresh_tokens.lock().unwrap().push(token.into());
+                    value["spec"]["refreshToken"] = json!(token);
+                    value["metadata"]["generation"] = json!(value["metadata"]["generation"].as_i64().unwrap() + 1);
+                    (200, value.clone())
+                },
+                other => panic!("unexpected method: {other}"),
+            };
+            warp::reply::with_status(warp::reply::json(&value), warp::http::StatusCode::from_u16(status).unwrap())
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+    let client = Client::try_from(kube::Config::new(
+        format!("http://{address}").parse().unwrap(),
+    ))
+    .unwrap();
+    let store = ResourceStore::new(client, "test");
+    let empty = expect(&store, Method::GET, "/api/v1/extensions", None, 200).await;
+    assert_eq!(empty["items"], json!([]));
+    assert_eq!(empty["resourceVersion"], "12");
+    let body: Value = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/extension-create.json"
+    ))
+    .unwrap();
+    let (status, created, location) = request(
+        &store,
+        Method::POST,
+        "/api/v1/extensions",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        location.as_deref(),
+        Some("/api/v1/extensions/custom-transcriber")
+    );
+    assert_eq!(created["spec"], body["spec"]);
+    let publication = json!({"observedGeneration":1,"taskId":"old-task","artifactReference":"registry/example@sha256:old"});
+    stored.lock().unwrap().as_mut().unwrap()["status"] = publication.clone();
+    let fetched = expect(&store, Method::GET, location.as_deref().unwrap(), None, 200).await;
+    assert_eq!(fetched["status"], publication);
+    let list = expect(&store, Method::GET, "/api/v1/extensions", None, 200).await;
+    assert_eq!(list["items"], json!([fetched]));
+    for generation in [2, 3] {
+        let refreshed = expect(
+            &store,
+            Method::POST,
+            "/api/v1/extensions/custom-transcriber/refresh",
+            None,
+            202,
+        )
+        .await;
+        assert_eq!(refreshed["metadata"]["generation"], generation);
+        assert_eq!(refreshed["metadata"]["uid"], created["metadata"]["uid"]);
+        assert_eq!(refreshed["status"], publication);
+        let mut spec = refreshed["spec"].clone();
+        spec.as_object_mut().unwrap().remove("refreshToken");
+        assert_eq!(spec, body["spec"]);
+    }
+    {
+        let tokens = tokens.lock().unwrap();
+        assert_ne!(tokens[0], tokens[1]);
+    }
+    let mut generated = body;
+    generated.as_object_mut().unwrap().remove("name");
+    let (status, resource, location) =
+        request(&store, Method::POST, "/api/v1/extensions", Some(generated)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        location.unwrap(),
+        format!(
+            "/api/v1/extensions/{}",
+            resource["metadata"]["name"].as_str().unwrap()
+        )
+    );
+    server.abort();
+}
+
+#[actix_web::test]
+async fn extension_api_preserves_kubernetes_errors_and_rejects_malformed_requests() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use warp::Filter;
+    let body: Value = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/extension-create.json"
+    ))
+    .unwrap();
+    for code in [403, 404, 409, 422, 503] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let upstream = json!({"apiVersion":"v1", "kind":"Status", "status":"Failure",
+            "reason":"ServerReason", "message":"Extension storage error", "details":{"name":"plugin"}, "code":code});
+        let reply = upstream.clone();
+        let route = warp::any().map(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            warp::reply::with_status(
+                warp::reply::json(&reply),
+                warp::http::StatusCode::from_u16(code).unwrap(),
+            )
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+        let mut config = kube::Config::new(format!("http://{address}").parse().unwrap());
+        config.default_retry = false;
+        let store = ResourceStore::new(Client::try_from(config).unwrap(), "test");
+        for (index, (method, uri, body)) in [
+            (Method::GET, "/api/v1/extensions", None),
+            (Method::GET, "/api/v1/extensions/plugin", None),
+            (Method::POST, "/api/v1/extensions", Some(body.clone())),
+            (Method::POST, "/api/v1/extensions/plugin/refresh", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let result = expect(&store, method, uri, body, code).await;
+            assert_eq!(result["error"]["code"], upstream["reason"]);
+            assert_eq!(result["error"]["message"], upstream["message"]);
+            assert_eq!(result["error"]["details"], upstream["details"]);
+            assert_eq!(calls.load(Ordering::SeqCst), index + 1);
+        }
+        for malformed in [
+            json!({}),
+            json!({"source":"legacy","sourceType":"git"}),
+            json!({"spec":{"name":"Missing adapter","sourceType":"git","source":"example"}}),
+        ] {
+            expect(
+                &store,
+                Method::POST,
+                "/api/v1/extensions",
+                Some(malformed),
+                400,
+            )
+            .await;
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        server.abort();
+    }
+}
+
+#[actix_web::test]
+async fn readiness_requires_extension_crd_and_readable_collection() {
+    use std::sync::{Arc, Mutex};
+    use warp::Filter;
+    for failure in ["crd", "collection", "none"] {
+        let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let requests = paths.clone();
+        let route = warp::path::full().map(move |path: warp::path::FullPath| {
+            let path = path.as_str();
+            requests.lock().unwrap().push(path.into());
+            let (code, value) = if path.contains("/customresourcedefinitions/") {
+                let name = path.rsplit('/').next().unwrap();
+                (200, json!({"apiVersion":"apiextensions.k8s.io/v1", "kind":"CustomResourceDefinition",
+                    "metadata":{"name":name}, "spec":{"group":"control.suntitle.io", "names":{"kind":"SuntitleExtension","plural":"suntitleextensions"},"scope":"Namespaced","versions":[]},
+                    "status":{"conditions":[{"type":"Established","status":if failure == "crd" && name.starts_with("suntitleextensions.") {"False"} else {"True"}}]}}))
+            } else if failure == "collection" && path.ends_with("/suntitleextensions") {
+                (403, json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","message":"Cannot list extensions","code":403}))
+            } else {
+                let kind = if path.ends_with("suntitlehosts") {"SuntitleHostList"}
+                    else if path.ends_with("suntitlenodes") {"SuntitleNodeList"} else {"SuntitleExtensionList"};
+                (200, json!({"apiVersion":"control.suntitle.io/v1alpha1","kind":kind,"metadata":{"resourceVersion":"1"},"items":[]}))
+            };
+            warp::reply::with_status(warp::reply::json(&value), warp::http::StatusCode::from_u16(code).unwrap())
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+        let client = Client::try_from(kube::Config::new(
+            format!("http://{address}").parse().unwrap(),
+        ))
+        .unwrap();
+        let store = ResourceStore::new(client, "test");
+        let (status, _, _) = request(&store, Method::GET, "/readyz", None).await;
+        assert_eq!(
+            status.as_u16(),
+            match failure {
+                "crd" => 503,
+                "collection" => 403,
+                _ => 200,
+            }
+        );
+        let paths = paths.lock().unwrap();
+        assert!(paths.iter().any(|p| {
+            p.ends_with("/customresourcedefinitions/suntitleextensions.control.suntitle.io")
+        }));
+        if failure != "crd" {
+            assert!(
+                paths
+                    .iter()
+                    .any(|p| p.ends_with("/namespaces/test/suntitleextensions"))
+            );
+        }
+        server.abort();
+    }
 }

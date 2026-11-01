@@ -1,0 +1,38 @@
+{
+  "apiVersion": "control.suntitle.io/v1alpha1",
+  "kind": "SuntitleExtension",
+  "metadata": {
+    "name": "custom-transcriber",
+    "namespace": "suntitle",
+    "uid": "extension-uid",
+    "generation": 1,
+    "resourceVersion": "10"
+  },
+  "spec": {
+    "name": "Custom transcriber",
+    "sourceType": "local",
+    "source": "/opt/suntitle/extensions/custom-transcriber",
+    "adapter": {
+      "type": "transcriber",
+      "execution": {
+        "runtime": "executable",
+        "executable": "./bin/transcriber"
+      },
+      "settings": {
+        "language": {
+          "default": "en"
+        }
+      },
+      "arguments": [
+        {
+          "flag": "--server",
+          "source": "runtime.websocketUrl"
+        },
+        {
+          "flag": "--language",
+          "source": "settings.language"
+        }
+      ]
+    }
+  }
+}

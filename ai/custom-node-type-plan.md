@@ -199,6 +199,7 @@ spec:
   name: Custom transcriber
   sourceType: local # local | git | oci | http
   source: /opt/suntitle/extensions/custom-transcriber
+  refreshToken: <optional-refresh-request-token>
   adapter:
     type: transcriber
     execution:
@@ -229,6 +230,12 @@ status:
 it as `adapter.yaml` at the extension directory root alongside the source payload.
 Relative entry points and working directories resolve from that root; the default
 working directory is the installed extension root.
+
+The API accepts `{name?, spec}` for registration and returns the created resource.
+Lists return `{items, resourceVersion}`. Refresh patches `spec.refreshToken` with
+an opaque new value and returns 202; this requests preparation without claiming
+that publication or host installation has finished. Reconciliation MUST account
+for the new generation, including refreshes with unchanged source contents.
 
 Extension status uses the existing condition design. `Ready` means publication
 only. While preparing, it is `False` with reason `Preparing`; on failure it is
@@ -470,7 +477,9 @@ before implementation, following the project workflow.
 - [x] Include Extension in generated CRDs, bootstrap, and API/controller RBAC.
 - [x] Add arbitrary `settings.custom` and CRD rules requiring `extensionRef`
   for custom nodes, forbidding it for built-ins, and keeping the settings variant immutable.
-- [ ] Back the placeholder Extensions API with Kubernetes resources.
+- [x] Back the placeholder Extensions API with Kubernetes resources, including
+  resource list/get/create and refresh requests persisted as `spec.refreshToken`.
+- [ ] Align the Extensions frontend and its mock endpoints with resource API payloads.
 - [ ] Finalize the adapter CRD schema and ordered argument binding syntax.
 - [ ] Resolve local HUB folder sources into preparation inputs.
 - [ ] Resolve Git sources into preparation inputs.

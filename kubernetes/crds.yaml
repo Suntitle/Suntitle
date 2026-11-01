@@ -514,6 +514,12 @@ spec:
                 maxLength: 128
                 minLength: 1
                 type: string
+              refreshToken:
+                description: Opaque token whose change requests extension preparation.
+                maxLength: 128
+                minLength: 1
+                nullable: true
+                type: string
               source:
                 minLength: 1
                 type: string
