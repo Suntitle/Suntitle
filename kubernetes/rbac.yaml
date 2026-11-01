@@ -9,7 +9,7 @@ rules:
     resources: [suntitlehosts]
     verbs: [get, list]
   - apiGroups: [control.suntitle.io]
-    resources: [suntitlenodes]
+    resources: [suntitlenodes, suntitleextensions]
     verbs: [get, list, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -19,10 +19,10 @@ metadata:
   namespace: suntitle
 rules:
   - apiGroups: [control.suntitle.io]
-    resources: [suntitlehosts, suntitlenodes]
+    resources: [suntitlehosts, suntitlenodes, suntitleextensions]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [control.suntitle.io]
-    resources: [suntitlehosts/status, suntitlenodes/status]
+    resources: [suntitlehosts/status, suntitlenodes/status, suntitleextensions/status]
     verbs: [get, update, patch]
   - apiGroups: [control.suntitle.io]
     resources: [suntitlehosts/finalizers, suntitlenodes/finalizers]

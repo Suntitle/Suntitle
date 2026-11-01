@@ -68,7 +68,6 @@ struct ChildProcess {
 }
 
 impl ChildProcess {
-
     fn spawn(spec: &CommandSpec) -> io::Result<Self> {
         let mut command = Command::new(&spec.executable);
         command
@@ -156,7 +155,6 @@ impl ChildProcess {
 }
 
 impl Drop for ChildProcess {
-
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
             let _ = self.force_kill();
@@ -182,7 +180,6 @@ pub struct NodeProcessManager {
     nodes: HashMap<String, ManagedNode>,
 }
 impl NodeProcessManager {
-
     pub fn new(
         project_dir: PathBuf,
         uv_bin: PathBuf,
@@ -237,12 +234,9 @@ impl NodeProcessManager {
             }
         }
         let (child, status, message) = if spec.enabled {
-            match ChildProcess::spawn(&command_spec(
-                &self.uv_bin,
-                &self.project_dir,
-                &self.endpoints,
-                &spec,
-            )) {
+            match command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &spec)
+                .and_then(|command| ChildProcess::spawn(&command))
+            {
                 Ok(child) => (Some(child), NodeRuntimeStatus::Running, None),
                 Err(error) => (
                     None,
@@ -346,12 +340,8 @@ impl NodeProcessManager {
             .nodes
             .values()
             .map(|node| {
-                let command = command_spec(
-                    &self.uv_bin,
-                    &self.project_dir,
-                    &self.endpoints,
-                    &node.spec,
-                );
+                let command =
+                    command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &node.spec);
                 NodeSnapshot {
                     name: node.spec.name.clone(),
                     node_type: match &node.spec.settings {
@@ -359,13 +349,18 @@ impl NodeProcessManager {
                         NodeSettings::Transcriber(_) => "Transcriber",
                         NodeSettings::Translator(_) => "Translator",
                         NodeSettings::Display(_) => "Display",
+                        NodeSettings::Custom(_) => "Custom",
                     },
                     status: node.status.as_str(),
                     parameters: command
-                        .args
-                        .iter()
-                        .map(|value| value.to_string_lossy().into_owned())
-                        .collect(),
+                        .map(|command| {
+                            command
+                                .args
+                                .iter()
+                                .map(|value| value.to_string_lossy().into_owned())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     message: node.message.clone(),
                 }
             })
@@ -389,6 +384,7 @@ fn runtime_spec(spec: &SuntitleNodeSpec) -> serde_json::Value {
         spec.enabled,
         spec.settings,
         spec.input_ref,
+        spec.extension_ref,
         spec.restart_token
     ])
 }
@@ -447,7 +443,6 @@ pub struct NodeEndpoints {
 }
 
 impl NodeEndpoints {
-
     pub fn new(base: &Url) -> Result<Self, String> {
         validate_data_plane_url(base)?;
         Ok(Self {
@@ -458,25 +453,31 @@ impl NodeEndpoints {
     }
 }
 
-/// Builds arguments for settings already validated at API submission.
+/// Builds a command for an implemented node runtime.
 pub fn command_spec(
     uv_bin: &Path,
     project_dir: &Path,
     endpoints: &NodeEndpoints,
     update: &SuntitleNodeSpec,
-) -> CommandSpec {
+) -> io::Result<CommandSpec> {
     let mut args: Vec<OsString> = vec!["uv".into(), "run".into(), "python".into()];
     args.extend(match &update.settings {
         NodeSettings::AudioSource(settings) => settings.command_args(&endpoints.audio),
         NodeSettings::Transcriber(settings) => settings.command_args(&endpoints.transcriber),
         NodeSettings::Translator(settings) => settings.command_args(&endpoints.authority),
         NodeSettings::Display(settings) => settings.command_args(&endpoints.authority),
+        NodeSettings::Custom(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "custom extension execution is not implemented",
+            ));
+        }
     });
-    CommandSpec {
+    Ok(CommandSpec {
         executable: uv_bin.to_path_buf(),
         args,
         current_dir: project_dir.to_path_buf(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -514,6 +515,35 @@ mod tests {
             &NodeEndpoints::new(&Url::parse("wss://example.test:9443/prefix/").unwrap()).unwrap(),
             &update,
         )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn custom_execution_reports_unsupported_without_spawning() {
+        let mut manager = NodeProcessManager::new(
+            std::env::current_dir().unwrap(),
+            PathBuf::from("/does-not-exist"),
+            Url::parse("ws://localhost/").unwrap(),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        let custom: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({
+            "name":"Custom", "hostRef":{"name":"host"}, "extensionRef":{"name":"plugin"},
+            "settings":{"custom":{}}
+        }))
+        .unwrap();
+        let events = manager.apply(test_identity(), custom).await;
+        assert_eq!(events[0].status, NodeRuntimeStatus::Failed);
+        assert!(
+            events[0]
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("custom extension execution is not implemented")
+        );
+        let snapshots = manager.snapshots();
+        assert_eq!(snapshots[0].node_type, "Custom");
+        assert!(snapshots[0].parameters.is_empty());
     }
 
     #[test]

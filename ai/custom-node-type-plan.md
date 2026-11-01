@@ -462,6 +462,41 @@ required runtime values map to the plugin's arguments. Any UI design change
 requires a shadcn/ui proposal in the Suntitle Figma file and explicit approval
 before implementation, following the project workflow.
 
+## Implementation progress
+
+- [x] Add namespaced `SuntitleExtension` CRD with `local`, `git`, `oci`, and
+  `http` source types, adapter object, and publication status fields.
+- [x] Add optional same-namespace `extensionRef` to `SuntitleNode`.
+- [x] Include Extension in generated CRDs, bootstrap, and API/controller RBAC.
+- [x] Add arbitrary `settings.custom` and CRD rules requiring `extensionRef`
+  for custom nodes, forbidding it for built-ins, and keeping the settings variant immutable.
+- [ ] Back the placeholder Extensions API with Kubernetes resources.
+- [ ] Finalize the adapter CRD schema and ordered argument binding syntax.
+- [ ] Resolve local HUB folder sources into preparation inputs.
+- [ ] Resolve Git sources into preparation inputs.
+- [ ] Resolve HTTP download sources into preparation inputs.
+- [ ] Resolve upstream OCI sources into preparation inputs.
+- [ ] Package the adapter and payload using the ORAS directory convention.
+- [ ] Add the in-memory preparation executor and completion notifications.
+- [ ] Reconcile Extension preparation tasks, retries, and obsolete results.
+- [ ] Push prepared artifacts to Distribution and record publication status.
+- [ ] Configure Distribution access through Traefik.
+- [ ] Deliver published artifact references to assigned Diamant hosts.
+- [ ] Pull artifacts and materialize extension folders on Diamant hosts.
+- [ ] Prepare host prerequisites and report the Node `Installed` condition.
+- [ ] Resolve custom node pipeline types from referenced extensions for input compatibility.
+- [ ] Construct ordered arguments from instance settings and runtime context.
+- [ ] Launch custom executables under the existing Diamant process supervisor.
+- [ ] Launch explicitly selected Python scripts or modules.
+- [ ] Verify ORAS interoperability and the complete custom node lifecycle.
+
+Validation MUST use regular CRD schema constraints. Do not add a separate adapter
+validation layer. The initial adapter field preserves arbitrary JSON properties;
+its detailed schema and CLI binding syntax remain pending. Custom nodes now use
+`settings.custom` and MUST reference an extension. Diamant reports unsupported
+custom execution until extension installation and launch are implemented.
+The Extension CRD stores desired state and status; it does not prepare artifacts.
+
 ## Implementation sequence
 
 1. Review the proposed Extension and Node YAML contracts above. Finalize the
