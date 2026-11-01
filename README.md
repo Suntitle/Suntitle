@@ -33,7 +33,8 @@ just setup
 ## Local stack
 
 Docker Compose runs PostgreSQL, Kine, kube-apiserver, the control API, and the
-WebSocket proxy/controller, and the UI development server. Diamant runs on the host.
+WebSocket proxy/controller, Distribution OCI registry, and the UI development server.
+Diamant runs on the host.
 
 ```bash
 just generate-certs  # once before the first launch; requires mkcert and OpenSSL
@@ -69,13 +70,52 @@ After generating certificates and kubeconfigs, the container stack can also run 
 
 ```bash
 docker compose --env-file .env.local build kubernetes-bootstrap ui
-docker compose --env-file .env.local up -d --wait traefik api ws-proxy ui
+docker compose --env-file .env.local up -d --wait
 ```
 
 Standalone clients can use `localhost:80` instead of `localhost:3030` for
 the WebSocket proxy, and `http://localhost/api` for the control API.
 Commands that access Kubernetes on host port 6443 require separate connectivity;
 that port is no longer published by the stack.
+
+### Extension artifact registry
+
+Distribution 3 stores OCI artifacts in the persistent `registry-data` volume,
+independently of Kubernetes. Traefik routes `registry.localhost` to its private
+port 5000. Set `REGISTRY_HOST` in `.env.local` to override the hostname. Clients
+MUST use that reachable authority in artifact references, for example
+`registry.localhost/suntitle/extensions/example:smoke`.
+
+Traefik depends on the registry, API, proxy, and UI being healthy. Starting it
+also starts those services and their dependencies. After preparing certificates
+and building the images as above, check the OCI API:
+
+```bash
+docker compose --env-file .env.local up -d --wait
+curl --resolve registry.localhost:80:127.0.0.1 -fsS http://registry.localhost/v2/
+```
+
+With ORAS installed, verify artifact push and pull through Traefik:
+
+```bash
+(
+  cd "$(mktemp -d)"
+  printf 'registry smoke test\n' > smoke.txt
+  oras push --plain-http registry.localhost/suntitle/extensions/example:smoke \
+    smoke.txt:text/plain
+  oras pull --plain-http registry.localhost/suntitle/extensions/example:smoke \
+    --output pulled
+  cmp smoke.txt pulled/smoke.txt
+)
+```
+
+The local endpoint uses HTTP without authentication. Deployed environments MUST
+configure HTTPS and authentication at Traefik or Distribution, use a hostname
+reachable by assigned Diamant hosts, and pin a tested registry patch version or
+image digest. Changing `REGISTRY_HOST` alone does not enable TLS or authentication.
+Back up `registry-data`; container replacement and ordinary Compose shutdown
+preserve it. `docker compose down --volumes` (including `just db-drop-volume`)
+also erases registry artifacts.
 
 For a local backup, capture a PostgreSQL custom-format dump:
 
