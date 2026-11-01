@@ -29,15 +29,17 @@ do not require an extension reference.
 The lifecycle is:
 
 1. Register an extension and its installation source.
-2. Read and validate the extension's adapter specification.
-3. Install the selected plugin and prepare its prerequisites on the assigned host.
+2. Resolve the source, validate the adapter, and prepare a structured extension artifact.
+3. Publish the prepared artifact to the configured Distribution registry.
 4. Create or configure a node referencing that extension.
-5. Launch the node through Diamant after host preparation succeeds.
+5. Have Diamant obtain the prepared artifact and materialize a local folder
+   on the assigned host, then prepare its prerequisites.
+6. Launch the node through Diamant after host preparation succeeds.
 
 Extension specifications SHOULD be reusable across nodes. Execution details and
 CLI mappings belong to the extension; node-specific values belong to the instance.
-The installation mechanism and extension update behavior still require concrete
-contracts. Success and failure MUST be recorded in the corresponding CR status:
+The artifact representation and proposed resource contracts are defined below.
+Host installation details and extension update behavior still require concrete contracts. Success and failure MUST be recorded in the corresponding CR status:
 extension preparation results on the Extension CR and node execution results on
 the Node CR.
 
@@ -101,6 +103,38 @@ HTTP identifies the download mechanism; an archive format such as ZIP is not a
 separate source type. The existing stub API exposes local, Git, and ZIP sources;
 its source contract and frontend MUST be aligned with these four source types.
 
+## Registry distribution and local installation
+
+The configured Distribution registry MUST be both the destination for prepared
+extensions and the source for distributing them to custom nodes. Every original
+source, including local HUB folders, HTTP, Git, and upstream OCI, passes through
+HUB preparation into a structured artifact containing the adapter and payload.
+Nodes MUST obtain extension payloads from this registry rather than the original
+source.
+
+```text
+Original source (local / HTTP / Git / OCI / ...)
+    -> HUB preparation
+    -> Structured artifact in Distribution
+    -> Traefik registry endpoint
+    -> Diamant installation on the assigned host
+    -> Local extension folder
+    -> Prerequisite preparation and custom node execution
+```
+
+Distribution is accessible to Diamant through Traefik. HUB supplies a prepared
+artifact reference using that reachable registry endpoint. Diamant downloads the
+artifact through Traefik to bootstrap the extension on its host. It installs its
+contents as a real local folder before preparing prerequisites and launching the
+custom node. Entry points and working directories resolve against that installation
+according to the adapter contract. OCI distribution does not imply container execution.
+
+Publication, host installation, and node execution have separate outcomes.
+Installation failure MUST prevent launch and expose an actionable error.
+
+The [extension reconciler plan](extension-reconciler-plan.md) defines background
+preparation, OCI client integration, and Distribution deployment details.
+
 ## Registration, preparation, and execution sequence
 
 ```mermaid
@@ -108,6 +142,8 @@ sequenceDiagram
     participant USER
     participant HUB
     participant HOST
+    participant TRAEFIK
+    participant REGISTRY
     participant NET
 
     Note over NET: Bootstrap HUB
@@ -121,8 +157,15 @@ sequenceDiagram
 
     Note over HUB,HOST: Node EXT
 
-    HUB->>HUB: INIT EXT
-    HUB->>HOST: Bootstrap / prepare
+    HUB->>HUB: Resolve source, validate, and package EXT
+    HUB->>REGISTRY: Push structured extension artifact
+    REGISTRY-->>HUB: Published artifact reference
+    HUB->>HOST: Prepare EXT using published artifact reference
+    HOST->>TRAEFIK: Obtain prepared extension artifact
+    TRAEFIK->>REGISTRY: Forward registry request
+    REGISTRY-->>TRAEFIK: Extension artifact
+    TRAEFIK-->>HOST: Extension artifact
+    HOST->>HOST: Install local extension folder and prepare prerequisites
     HOST->>HUB: Preparation response
     HUB-->>USER: OK EXT
 
@@ -137,6 +180,120 @@ sequenceDiagram
 It MUST NOT be interpreted as process startup or successful execution. Success
 and failure are always reported through the corresponding Extension or Node CR
 status; acknowledgements do not replace those status updates.
+
+## Proposed Extension and Node contracts for review
+
+These YAML examples define the proposed resource and API fields. Implementation
+MUST reuse the existing Kubernetes resource, API model, and condition patterns.
+They are additions to the current Node contract, not a replacement lifecycle.
+
+### Extension
+
+```yaml
+apiVersion: control.suntitle.io/v1alpha1
+kind: SuntitleExtension
+metadata:
+  name: custom-transcriber
+  namespace: suntitle
+spec:
+  name: Custom transcriber
+  sourceType: local # local | git | oci | http
+  source: /opt/suntitle/extensions/custom-transcriber
+  adapter:
+    type: transcriber
+    execution:
+      runtime: executable
+      executable: ./bin/transcriber
+    settings:
+      language:
+        default: en
+    arguments:
+      - flag: --server
+        source: runtime.websocketUrl
+      - flag: --language
+        source: settings.language
+status:
+  observedGeneration: 1
+  taskId: <preparation-task-id>
+  artifactReference: registry.example.com/suntitle/extensions/custom-transcriber@sha256:<manifest-hash>
+  conditions:
+    - type: Ready
+      status: "True"
+      observedGeneration: 1
+      reason: ArtifactPublished
+      message: Prepared extension artifact is available in the registry.
+      lastTransitionTime: "2026-11-01T10:00:05Z"
+```
+
+`adapter` contains the extension specification described below. HUB MUST package
+it as `adapter.yaml` at the extension directory root alongside the source payload.
+Relative entry points and working directories resolve from that root; the default
+working directory is the installed extension root.
+
+Extension status uses the existing condition design. `Ready` means publication
+only. While preparing, it is `False` with reason `Preparing`; on failure it is
+`False` with an actionable reason and message. `artifactReference` is present only
+for a successfully published current desired preparation. `taskId` connects the
+resource to the in-memory executor; unknown tasks are resubmitted as described in
+the reconciler plan. It is not a host installation status.
+
+### Custom Node additions
+
+```yaml
+apiVersion: control.suntitle.io/v1alpha1
+kind: SuntitleNode
+metadata:
+  name: transcription
+  namespace: suntitle
+spec:
+  name: Transcription
+  hostRef:
+    name: worker-1
+  enabled: true
+  inputRef:
+    name: microphone
+  extensionRef:
+    name: custom-transcriber
+  settings:
+    custom:
+      language: en
+status:
+  observedGeneration: 1
+  phase: Running
+  message: Custom transcriber process is running.
+  conditions:
+    - type: Installed
+      status: "True"
+      observedGeneration: 1
+      reason: PreparationSucceeded
+      message: Extension files and prerequisites are ready on the assigned host.
+      lastTransitionTime: "2026-11-01T10:01:05Z"
+```
+
+`extensionRef` follows the existing same-namespace `ResourceRef` pattern.
+`settings.custom` adds arbitrary instance values alongside the existing built-in
+settings variants. Custom nodes MUST require `extensionRef`; built-in variants
+MUST omit it. The referenced adapter supplies the pipeline type, execution, and
+argument mappings. Input compatibility MUST use that pipeline type.
+
+The Node depends on the referenced Extension being published and installed on its
+assigned host before launch. Add only the `Installed` condition to the existing
+Node status. It is `False` while preparing or after installation failure, with an
+actionable reason and message. Built-in nodes omit it. Each referencing Node
+records its assigned host's installation outcome; installation MAY be shared
+internally without adding per-host results to the Extension.
+
+Existing `dispatch`, `reportingSession`, `acknowledgedRestartToken`, phases, and
+`Ready`/`Updated` conditions remain in use; the example omits unchanged fields.
+Do not add separate installation or execution state objects. Preparation uses
+`Pending`; installation failure uses `Failed`. Acceptance of `INIT NODE` alone
+MUST NOT set `Running` or `Ready=True`; subsequent runtime observations determine
+execution status using the existing Node status design.
+
+HUB writes CR status from executor and Diamant observations. Existing resource,
+operation, and session identity checks MUST also apply to extension preparation
+and installation results. Conditions follow the existing Kubernetes condition
+schema and MUST identify the observed resource generation.
 
 ## Independent configuration concerns
 
@@ -307,17 +464,18 @@ before implementation, following the project workflow.
 
 ## Implementation sequence
 
-1. Finalize the extension adapter specification, argument binding model, and
-   type contracts. Define node references to reusable extensions and instance
-   setting overrides. Decide the concrete API and Kubernetes representation while
-   retaining independent type and execution concerns.
+1. Review the proposed Extension and Node YAML contracts above. Finalize the
+   remaining argument binding syntax and type contracts while retaining
+   independent type and execution concerns.
 2. Extend API models, node-type metadata, Kubernetes schemas, validation, and mock
    fixtures. Add the Extension custom resource backing the stub Extensions API
    and controller reconciliation logic. Align source types with Git, OCI, local
    HUB folders, and HTTP downloads.
    Validate input compatibility using the selected pipeline type.
-3. Implement extension source handling, plugin discovery, installation on assigned
-   hosts, prerequisite preparation, and installation status reporting.
+3. Implement extension source handling, plugin discovery, structured artifact
+   publication to Distribution, and Diamant pull/materialization on assigned hosts.
+   Add prerequisite preparation and separate publication/installation status reporting.
+   Follow the [extension reconciler plan](extension-reconciler-plan.md).
 4. Extend Diamant command construction with direct executable and explicit Python
    execution paths, runtime context resolution, and declarative argument binding.
 5. Publish the type-specific WebSocket reference and verify example exchanges.
@@ -331,6 +489,10 @@ before implementation, following the project workflow.
   actionable installation error.
 - Verify Git, OCI, local HUB folder, and HTTP download sources. Local paths MUST
   resolve on HUB, and downloaded archive formats MUST NOT be source types.
+- Verify every original source produces a structured artifact in the configured
+  registry, and Diamant uses that registry rather than the original source.
+- Verify the prepared artifact becomes a usable local extension folder before
+  launch. Publication alone MUST NOT report host installation as successful.
 - Verify multiple nodes can reference a reusable extension while keeping
   their setting values independent.
 - Verify built-in nodes need no extension reference and custom nodes require one.
