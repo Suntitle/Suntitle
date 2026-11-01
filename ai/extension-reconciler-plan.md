@@ -1,0 +1,429 @@
+# In-Memory Asynchronous Reconciliation with Apalis
+
+## Goal
+
+Use Apalis 1.0 with in-memory storage to run long-running image pushes without
+blocking reconciliation. When a push succeeds or fails, notify the controller's
+workqueue to requeue the affected resource. On the next reconciliation, read the
+outcome from an in-memory status store.
+
+Task execution requires no database or external queue service. Distribution is
+still required as the destination artifact service and may run on the same VM.
+Duplicate pushes of the same content hash are acceptable.
+
+This is an initial extension reconciler design, not an implemented API contract.
+Proposed resource fields are defined in the custom node plan; artifact packaging
+follows the ORAS directory convention below. OCI operations use
+`rust-oci-client` (the `oci-client` crate).
+
+## Distribution contract
+
+Every original source (local HUB folder, HTTP, Git, upstream OCI, or a future
+source) MUST be prepared into a structured extension artifact in the configured
+Distribution registry. That registry is always the source for custom node
+installation. Source resolution, packaging, and pushing run in the background task.
+The reconciler records the published artifact reference and manifest digest.
+
+The [custom node plan](custom-node-type-plan.md#registry-distribution-and-local-installation)
+defines the complete source-to-registry-to-local-folder lifecycle. Publication
+success means the artifact is available for distribution, not that host installation
+or node execution has succeeded.
+
+## OCI client integration
+
+Use [rust-oci-client](https://github.com/oras-project/rust-oci-client) (`oci-client`)
+for registry push and pull operations. Digest verification belongs to the library;
+application code MUST NOT implement a separate digest-verification workflow. Pass
+the published digest reference to the client and handle its success or error.
+
+The application owns extension packaging, expected artifact structure, and
+materialization into a local folder. This includes safe extraction and resolving
+adapter entry points and working directories against the installed files. These
+are separate from the library's registry transport and digest handling.
+
+ORAS's Go `content/file` store already supports directory round trips: it archives
+and compresses a directory, records its name with
+`org.opencontainers.image.title`, and marks the blob for extraction with ORAS
+unpack annotations. Pulling into that store restores the directory. This is a
+client-side convention, not directory storage implemented by Distribution.
+`rust-oci-client` provides registry transport, manifests, and blob APIs, but no
+equivalent directory file store that automatically packages and restores folders.
+It is sufficient for transport; using it requires a packaging/materialization
+layer. Use the ORAS Go v2 / CLI directory convention: a gzip-compressed tar layer
+with `org.opencontainers.image.title` naming the directory,
+`io.deis.oras.content.unpack: "true"`, and `io.deis.oras.content.digest` holding
+the uncompressed tar digest. Registry blob verification remains library-owned;
+the Rust filesystem layer MUST implement the corresponding ORAS extraction
+semantics. Package one extension directory containing `adapter.yaml` and its
+payload. Diamant restores that directory as the installation root. Preserve
+executable permissions and verify push/pull interoperability with the ORAS CLI.
+This defines the initial artifact layout; no separate archive format is required.
+
+See the [ORAS file-store API](https://pkg.go.dev/oras.land/oras-go/v2/content/file),
+[directory representation](https://github.com/oras-project/oras-go/blob/main/docs/Targets.md#file-store),
+and [Rust client API](https://docs.rs/oci-client/latest/oci_client/client/struct.Client.html).
+
+## Architecture
+
+```text
+Reconciler
+    |
+    +-- enqueue(push) --> TaskExecutor --> Apalis MemoryStorage
+    |                                            |
+    |                                        Image-push worker
+    |                                            |
+    |                                      Save terminal result
+    |                                            |
+    |                                      Notify(resource_id)
+    |                                            |
+    +<------------------------------- Controller reconcile queue
+    |
+    +-- status(task_id) --> In-memory status registry
+```
+
+The notification is a **wake-up signal**, not the source of truth for the result.
+The reconciler obtains state through `status()`.
+
+## Reconciler-facing contract
+
+```rust
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub struct TaskId(pub String);
+
+#[derive(Clone, Debug)]
+pub enum TaskStatus {
+    Queued,
+    Running,
+    Succeeded { digest: String },
+    Failed { error: String },
+}
+
+#[async_trait::async_trait]
+pub trait TaskExecutor: Send + Sync {
+    async fn enqueue(&self, task: PushImage) -> Result<TaskId, ExecutorError>;
+    async fn status(&self, id: &TaskId) -> Result<Option<TaskStatus>, ExecutorError>;
+}
+```
+
+The controller does not depend on Apalis types. `enqueue()` returns after accepting
+work, not after executing it. `status()` is a short in-memory lookup; it MUST NOT
+perform registry requests or wait for execution. `None` indicates an unknown or
+discarded task. The trait uses `async_trait` to support a shared `dyn TaskExecutor`.
+`PushImage`, `ExecutorError`, and `ResourceId` are application-owned types.
+
+Task identity MUST distinguish resource UID, desired content hash, destination,
+and controller-selected attempt. Repeated submissions of the same attempt SHOULD
+return the existing task ID without replacing its status. A controller retry after
+terminal failure MUST select a new attempt so it does not repeatedly observe the
+same retained failure. A recreated resource MUST NOT inherit an old resource's work.
+
+## Internal components
+
+- **Apalis `MemoryStorage`:** dispatches queued push jobs to background workers.
+- **Status registry:** `Arc<RwLock<HashMap<TaskId, TaskRecord>>>`, using an asynchronous
+  lock. Each record contains the resource ID, execution identity, and task status.
+- **Completion observer:** records `Succeeded` or `Failed`, then notifies the workqueue.
+- **Notifier:** a small adapter that enqueues a resource key in the existing scheduler.
+
+```rust
+pub trait ReconcileNotifier: Send + Sync {
+    fn notify(&self, resource_id: ResourceId);
+}
+```
+
+An Apalis event listener may be used if it exposes enough execution context to
+correlate the event with a resource. Otherwise, use a shared worker completion
+wrapper. Avoid relying solely on type-erased success/error events for identity.
+The worker MUST NOT invoke reconciliation directly.
+
+Pin compatible Apalis 1.0 versions and verify worker completion and retry behavior
+against their public APIs during implementation. Strict ordering relative to final
+job acknowledgment is not required initially; storing the outcome before notifying
+is required.
+
+## Execution flow
+
+1. Reconciler calls `enqueue(PushImage)` and stores the returned `TaskId` with its
+   resource state.
+2. Executor records `Queued`, then submits the job to Apalis.
+3. Worker marks the task `Running` and performs the push independently.
+4. Completion integration saves the terminal outcome in the registry.
+5. **Only after saving the outcome**, it calls `notify(resource_id)`.
+6. The controller queues another reconciliation for that resource.
+7. Reconciler calls `status(task_id)` and updates resource state accordingly.
+
+If queue submission fails, the executor MUST remove or finalize its provisional
+record and return an error. It MUST NOT leave a permanently `Queued` task with no
+job. Coordinate concurrent submissions without holding the registry lock across
+queue submission or image execution.
+
+Disable automatic job retries initially, so a failure represents a terminal
+attempt. Let the controller determine if and when to resubmit. If Apalis retries
+are enabled later, notify only after terminal success/failure. Duplicate completion
+callbacks MUST NOT regress terminal state. Worker panics or cancellation while the
+process stays alive MUST produce a failure notification or trigger supervised
+recovery; they MUST NOT leave an unobservable, permanently `Running` task.
+
+## Reconciliation pseudocode
+
+```rust
+async fn reconcile(&self, resource: &Resource) -> Result<()> {
+    if self.execution_is_obsolete(resource) {
+        self.reset_execution(resource).await?;
+        self.schedule_reconcile(resource);
+        return Ok(());
+    }
+
+    let task_id = match &resource.task_id {
+        Some(id) => id.clone(),
+        None => {
+            let id = self.executor.enqueue(PushImage::from(resource)).await?;
+            self.save_task_id(resource, id).await?;
+            return Ok(());
+        }
+    };
+
+    match self.executor.status(&task_id).await? {
+        Some(TaskStatus::Queued | TaskStatus::Running) => {}
+        Some(TaskStatus::Succeeded { digest }) => {
+            self.verify_published_artifact(resource, &digest).await?;
+            self.mark_ready(resource, digest).await?;
+        }
+        Some(TaskStatus::Failed { error }) => {
+            self.mark_failed(resource, error).await?;
+            self.schedule_retry_if_allowed(resource).await?;
+        }
+        None => {
+            self.reset_execution(resource).await?;
+            self.schedule_reconcile(resource);
+        }
+    }
+
+    Ok(())
+}
+```
+
+Helpers are illustrative. Resetting execution MUST schedule another pass, rather
+than depend on a status-only update triggering the controller. An allowed retry
+uses controller backoff and a new attempt identity. Resource status writes MUST
+check that the observed UID and desired execution still match before marking ready.
+
+Before marking ready, verify the published artifact through `rust-oci-client`
+using its digest reference. Push is idempotent: if reconciliation is interrupted
+before verification completes, it can repeat the push as if it had never happened.
+Digest verification remains library-owned.
+
+**Race to handle:** a job may complete between `enqueue()` and persisting its task
+ID. Derive the task ID from stable execution inputs and retain/coalesce notifications
+arriving during reconciliation. Stable IDs alone do not guarantee a subsequent
+reconcile: the scheduler MUST retain a pending pass for an already-running key.
+If saving the task ID fails, controller error recovery MUST retry reconciliation;
+resubmission of the same attempt can recover the existing result.
+
+## Concurrency and lifecycle
+
+- Reconciliation MUST NOT await an image push or hold a lock across it.
+- Scheduling MUST coalesce repeated notifications and serialize reconciliation of
+  the same key while allowing independent resource keys to run concurrently.
+- Notifications MUST NOT be silently dropped under channel backpressure. Retain
+  pending keys or use an equivalent reliable in-process queue adapter.
+- Configure Apalis concurrency separately from controller concurrency. Bound pushes
+  and registry request timeouts to protect CPU, memory, network, and registry capacity.
+- All task state is lost on process exit. At startup, reconcile managed resources
+  again and resubmit missing tasks. Artifact inputs MUST be reconstructible from
+  managed desired state or another retained source for restart recovery.
+- Keep artifact inputs available until execution completes. Ignore results from
+  obsolete desired content or destinations. Use immutable push references so stale
+  workers cannot replace the current artifact under a shared mutable tag.
+- Keep terminal results until the controller has observed them. Define cleanup from
+  managed resource state or conservative retention without adding executor methods.
+- Initially run one controller/executor process. Coordination between multiple
+  replicas with independent in-memory registries is outside this design.
+
+## Distribution as the push destination
+
+
+Use CNCF Distribution 3 as a minimal OCI registry. It runs as a Docker container or
+standalone `registry` binary and supports filesystem storage without a database.
+It is independent of the in-memory task executor and of the Kubernetes cluster.
+
+The registry is a separate artifact service. The requirement for no external
+infrastructure applies to task execution; pushing artifacts still requires a
+reachable registry. Distribution may run on the same VM as the application.
+
+### Access through Traefik
+
+Distribution MUST be exposed through Traefik so Diamant can reach the registry
+from assigned hosts. HUB supplies an artifact reference using this externally
+reachable registry authority. Diamant uses `rust-oci-client` to download the
+artifact through Traefik, then materializes its files locally to bootstrap the
+extension. It does not download extension payloads through the control API or
+WebSocket proxy.
+
+```text
+Diamant -> Traefik -> Distribution
+        <- OCI artifact contents <-
+Diamant -> local extension folder -> extension bootstrap
+```
+
+Traefik routes the registry's OCI HTTP API to Distribution's internal port 5000.
+Use a dedicated registry hostname, for example `registry.example.com`, with HTTPS
+and configured authentication. Keep Distribution's backend port private. In Docker,
+Traefik and Distribution share a network; in standalone deployments, Traefik forwards
+to the registry's private or loopback listener. The local examples below show the
+backend service and a direct smoke check; external clients use the Traefik endpoint.
+
+### Shared configuration
+
+Save as `registry-config.yml`:
+
+```yaml
+version: 0.1
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+http:
+  addr: :5000
+```
+
+### Docker deployment
+
+```bash
+docker run -d --name suntitle-registry --restart unless-stopped \
+  -p 127.0.0.1:5000:5000 \
+  -v suntitle-registry-data:/var/lib/registry \
+  -v "$PWD/registry-config.yml:/etc/distribution/config.yml:ro" \
+  registry:3 /etc/distribution/config.yml
+```
+
+Pin a tested patch version or image digest for a deployed environment. The named
+volume MUST persist across container replacement.
+
+### Standalone deployment
+
+Download the matching platform binary from Distribution's official releases.
+Install it as `/usr/local/bin/registry`, install the configuration as
+`/etc/distribution/config.yml`, and create a persistent `/var/lib/registry`
+directory writable by a dedicated service user.
+
+```bash
+/usr/local/bin/registry serve /etc/distribution/config.yml
+```
+
+Run this command under systemd or an equivalent service manager with automatic
+restart. For a local-only standalone endpoint, set `http.addr` to
+`127.0.0.1:5000`. No Docker daemon is needed for this deployment.
+
+For external access, expose Distribution through Traefik as described above.
+Configure authentication and HTTPS at the appropriate service boundary. Back up
+the data directory. A single VM provides no high-availability guarantee.
+
+### Push request and result
+
+The application-owned `PushImage` request MUST identify:
+
+- The resource key and UID.
+- The desired content hash and artifact input, retained until execution finishes.
+- The destination registry authority and repository.
+- An immutable content-derived tag, if a tag is used.
+- A credential reference and TLS policy, without embedding secrets in task IDs.
+
+For example, publish to
+`registry.example.com/suntitle/extensions/example:sha256-<content-hash>`.
+The source content hash and OCI manifest digest are distinct values. Return
+`Succeeded { digest }` only after the registry accepts the complete manifest and
+referenced blobs. Store the canonical pull reference
+`registry.example.com/suntitle/extensions/example@sha256:<manifest-hash>` on the
+resource. Consumers SHOULD pull by digest.
+
+Push through `rust-oci-client`; the reconciler MUST NOT depend on the
+Distribution process API or shell out to Docker. Use explicit credentials and
+certificate trust settings. Permit
+plain HTTP only through an explicit local-development option.
+
+Registry timeouts and temporary unavailability are retryable within a bounded
+policy. Invalid artifacts and denied access require actionable error messages.
+Never place credentials in resource status, result messages, or logs.
+
+### Manual OCI artifact smoke check
+
+With ORAS installed and the local Docker registry running, push an existing
+`extension.tar.gz` as a generic OCI artifact:
+
+```bash
+oras push --plain-http localhost:5000/suntitle/extensions/example:dev \
+  --artifact-type application/vnd.suntitle.extension.v1 \
+  extension.tar.gz:application/gzip
+
+oras pull --plain-http localhost:5000/suntitle/extensions/example:dev \
+  --output ./pulled-extension
+```
+
+The media type is a proposed application convention, not an existing contract.
+This example validates generic artifact storage; runnable container images require
+their own OCI image manifest and layers. Production pushes use HTTPS, configured
+credentials, and immutable references.
+
+From another container or a Kubernetes worker, `localhost` refers to that machine
+or container. Configure a registry DNS name reachable by every actual push and
+pull client. The registry does not need to run inside Kubernetes.
+
+## Implementation checklist
+
+- [ ] Define `TaskId`, `TaskStatus`, `TaskExecutor`, and `ReconcileNotifier`.
+- [ ] Configure Apalis `MemoryStorage` and an image-push worker with retries disabled.
+- [ ] Add an in-memory registry keyed by `TaskId` and associated with resource IDs.
+- [ ] Implement `enqueue()` and `status()`, including submission failure cleanup.
+- [ ] Record job start and terminal outcomes, including worker interruption handling.
+- [ ] Wire completion/failure to the controller queue after storing terminal status.
+- [ ] Handle early notifications, duplicate submissions/events, and unknown task IDs.
+- [ ] Define controller retry backoff, attempt identities, and result retention.
+- [ ] Normalize every source into the agreed extension artifact structure.
+- [ ] Integrate Distribution pushes and record the canonical digest reference.
+- [ ] Supply that reference to Diamant for library-managed pull and local materialization.
+- [ ] Test concurrent reconciles, success/failure, stale results, and restart recovery.
+- [ ] Expose Distribution through Traefik and supply its reachable artifact references.
+- [ ] Verify Distribution push/pull in Docker and standalone deployments.
+- [ ] Verify Diamant downloads through Traefik and bootstraps from the local files.
+
+## Acceptance criteria
+
+| Situation | Expected behavior |
+|---|---|
+| Push enqueued | Reconciler returns without waiting for execution |
+| Queue submission fails | Error returned; no orphaned queued record |
+| Push running | Other resources continue reconciling |
+| Push succeeds | Result stored, resource requeued, status observable |
+| Push fails | Error stored, resource requeued, status observable |
+| Worker interrupted | Failure or supervised recovery prevents a stuck task |
+| Controller retries | New attempt runs after controller backoff |
+| Duplicate notification | Reconcile remains idempotent |
+| Early notification | Another pass remains queued after saving the task ID |
+| Desired state changes | Obsolete result cannot mark the current resource ready |
+| Process restart | Lost tasks detected; reconstructible work may be resubmitted |
+| Many pushes | Execution concurrency remains bounded |
+| Artifact published | Pull by reported manifest digest succeeds |
+| Any original source | Nodes receive the prepared artifact from the configured registry |
+| Host installation | Registry artifact becomes a validated local extension folder before launch |
+
+Normal execution requires no periodic task-status polling, database, or external
+queue service. Distribution remains the artifact destination.
+
+## Design boundary
+
+The reconciler only calls **`enqueue()`** and **`status()`** on the executor. Apalis
+owns background execution; the in-memory registry owns queryable outcomes; the
+completion observer notifies the existing reconcile scheduler. SQLite persistence
+and distributed execution are outside the initial implementation.
+
+## References
+
+
+- [Apalis 1.0](https://docs.rs/crate/apalis/1.0.0)
+- [Apalis middleware](https://apalis.dev/docs/guides/workers/middleware)
+- [Distribution configuration](https://distribution.github.io/distribution/about/configuration/)
+- [Distribution releases](https://github.com/distribution/distribution/releases)
+- [ORAS push and pull](https://oras.land/docs/how_to_guides/pushing_and_pulling/)
+- [ORAS pull options](https://oras.land/docs/commands/oras_pull/)
+
+- [rust-oci-client](https://github.com/oras-project/rust-oci-client)
