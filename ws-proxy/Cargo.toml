@@ -9,6 +9,15 @@ default = []
 gui = ["dep:diamant-ui"]
 
 [dependencies]
+apalis = { version = "=1.0.0", default-features = false, features = ["limit"] }
+gix = { version = "=0.87.1", default-features = false, features = ["sha1", "blocking-http-transport-reqwest-rust-tls"] }
+base64 = "0.22"
+futures-channel = "0.3"
+sha2 = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json"] }
+tokio-util = { version = "0.7", features = ["io", "io-util", "rt"] }
+tar = "0.4"
+flate2 = "1"
 oci-artifact = { path = "../oci-artifact" }
 dirs = "6"
 tempfile = "3"
@@ -42,9 +51,6 @@ warp = { version = "0.4.2", features = ["websocket", "server"] }
 clap_reverse = "0.1.1"
 
 [dev-dependencies]
-sha2 = "0.10"
-tar = "0.4"
-flate2 = "1"
 warp = { version = "0.4.2", features = ["websocket", "server", "test"] }
 
 [profile.dev]

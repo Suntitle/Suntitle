@@ -39,6 +39,8 @@ impl TransportOptions {
             },
             accept_invalid_certificates: self.skip_certificate_verification,
             extra_root_certificates: certificates.into_iter().collect(),
+            read_timeout: Some(std::time::Duration::from_secs(60)),
+            connect_timeout: Some(std::time::Duration::from_secs(10)),
             ..Default::default()
         })
     }

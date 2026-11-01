@@ -3,7 +3,9 @@ pub mod client;
 pub mod constants;
 mod download;
 mod error;
+mod streaming;
 mod upload;
+pub use streaming::{PayloadStream, PreparedUpload, Publisher};
 
 pub use download::{DownloadRequest, DownloadResult, Downloader};
 pub use error::Error;

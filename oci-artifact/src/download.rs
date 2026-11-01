@@ -106,7 +106,16 @@ impl Downloader {
         }
 
         match artifact.restoration {
-            Restoration::File { name } => restore_file(&blob, &output_path, name).await?,
+            Restoration::File { name } => {
+                restore_file(
+                    &blob,
+                    &output_path,
+                    name,
+                    annotation(artifact.descriptor, crate::constants::ANNOTATION_EXECUTABLE)
+                        == Some("true"),
+                )
+                .await?
+            }
             Restoration::Directory => {
                 restore_directory(&blob, &output_path, &artifact.descriptor.media_type).await?;
             }
@@ -115,7 +124,6 @@ impl Downloader {
         if request.cancellation.is_cancelled() {
             return Err(Error::Cancelled);
         }
-
         Ok(DownloadResult {
             manifest_digest,
             output_path,
@@ -239,7 +247,7 @@ fn artifact_layer(manifest: &OciImageManifest) -> Result<ArtifactLayer<'_>, Erro
     })
 }
 
-async fn restore_file(blob: &Path, tree: &Path, name: &str) -> Result<(), Error> {
+async fn restore_file(blob: &Path, tree: &Path, name: &str, executable: bool) -> Result<(), Error> {
     let path = tree.join(name);
     tokio::fs::create_dir_all(path.parent().unwrap()).await?;
     let mut source = tokio::fs::File::open(blob).await?;
@@ -256,6 +264,15 @@ async fn restore_file(blob: &Path, tree: &Path, name: &str) -> Result<(), Error>
     tokio::io::copy(&mut source, &mut output).await?;
     output.flush().await?;
     output.shutdown().await?;
+    #[cfg(unix)]
+    if executable {
+        use std::os::unix::fs::PermissionsExt;
+        output
+            .set_permissions(std::fs::Permissions::from_mode(0o755))
+            .await?;
+    }
+    #[cfg(not(unix))]
+    let _ = executable;
     Ok(())
 }
 
@@ -305,8 +322,33 @@ mod tests {
         std::fs::create_dir(&tree).unwrap();
         std::fs::write(tree.join("file"), b"original").unwrap();
 
-        restore_file(&blob, &tree, "file").await.unwrap();
+        restore_file(&blob, &tree, "file", false).await.unwrap();
         assert_eq!(std::fs::read(tree.join("file")).unwrap(), b"new");
+    }
+
+    /// Executable metadata MUST produce a launchable Unix file without changing its bytes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn executable_file_restores_launch_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let blob = root.path().join("blob");
+        std::fs::write(&blob, b"#!/bin/sh\nexit 0\n").unwrap();
+        restore_file(&blob, root.path(), "plugin", true)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(root.path().join("plugin"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("plugin")).unwrap(),
+            b"#!/bin/sh\nexit 0\n"
+        );
     }
 
     #[cfg(unix)]
@@ -324,7 +366,7 @@ mod tests {
         std::os::unix::fs::symlink(&missing, tree.join("dangling")).unwrap();
 
         for name in ["existing", "dangling"] {
-            restore_file(&blob, &tree, name).await.unwrap();
+            restore_file(&blob, &tree, name, false).await.unwrap();
             assert!(!tree.join(name).symlink_metadata().unwrap().is_symlink());
             assert_eq!(std::fs::read(tree.join(name)).unwrap(), b"new");
         }

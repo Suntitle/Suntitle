@@ -16,7 +16,9 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - control-plane
+      control-plane:
+        aliases:
+          - ${REGISTRY_HOST:-registry.localhost}
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
@@ -174,6 +176,9 @@ services:
 
   ws-proxy:
     image: suntitle-control:local
+    environment:
+      SUNTITLE_EXTENSION_REGISTRY: ${REGISTRY_HOST:-registry.localhost}/suntitle/extensions
+      SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP: "true"
     depends_on:
       kubernetes-bootstrap:
         condition: service_completed_successfully
