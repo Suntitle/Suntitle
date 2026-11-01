@@ -1,0 +1,28 @@
+[package]
+name = "oci-artifact"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[features]
+default = ["rust-tls"]
+rust-tls = ["oci-client/rustls-tls"]
+native-tls = ["oci-client/native-tls"]
+
+[dependencies]
+oci-client = { version = "0.18", default-features = false }
+ocirender = "=0.3.0"
+xz2 = { version = "0.1", features = ["static"] }
+backon = "1.6"
+futures-util = "0.3"
+tokio = { version = "1", features = ["fs", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+thiserror = "2"
+tempfile = "3"
+
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+sha2 = "0.10"
+tar = "0.4"
+flate2 = "1"
