@@ -1,4 +1,5 @@
 //! Kubernetes client, resource storage, and bootstrap.
+pub mod adapter;
 pub mod resources;
 pub mod store;
 

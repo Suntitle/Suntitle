@@ -297,6 +297,10 @@ Do not add separate installation or execution state objects. Preparation uses
 MUST NOT set `Running` or `Ready=True`; subsequent runtime observations determine
 execution status using the existing Node status design.
 
+The extension controller resolves defaults and node overrides and records the
+resolved adapter and published artifact reference in Node status. Host dispatch
+consumes that status.
+
 HUB writes CR status from executor and Diamant observations. Existing resource,
 operation, and session identity checks MUST also apply to extension preparation
 and installation results. Conditions follow the existing Kubernetes condition
@@ -362,7 +366,8 @@ settings:
     default: 4
   useGpu:
     default: true
-  language: {}
+  language:
+    required: true
   device:
     required: false
 
@@ -400,8 +405,11 @@ Settings have three cases:
 | Declaration | Behavior when the node omits the setting |
 | --- | --- |
 | `default` provided | Use the default; the node MAY override it |
-| No default and `required` omitted or `true` | Reject the missing required value |
-| No default and `required: false` | Leave the setting absent and omit its argument binding |
+| No default and `required: true` | Reject the missing required value |
+| No default and `required` omitted or `false` | Leave the setting absent and omit its argument binding |
+
+`required` defaults to false. Declaring a default supplies a value without
+`required: true`; defaults apply regardless of the required flag.
 
 An absent optional setting MUST omit both its flag and value. Explicit null,
 `false`, zero, and empty strings MUST NOT be treated as absence. In particular,
@@ -422,9 +430,24 @@ they MUST NOT silently become strings. Missing values MUST remain distinguishabl
 from `false`, zero, and empty strings. Boolean switch mode emits the flag for
 `true` and omits it for `false`.
 
-Bindings MUST preserve their configured order. Unknown references, missing
-required values, and incompatible value types MUST fail validation before launch.
+The current CRD represents `arguments` as a list; it adds no ordering indices or
+sorting rules. Final ordering guarantees and advanced conversion modes remain open.
+The initial schema supports `source`, optional `flag`, and `mode: value | switch`.
+The default mode is `value`. Omitting `flag` represents a positional value;
+`switch` requires a flag through a CRD CEL rule. Sources use
+`settings.<key>` or `runtime.websocketUrl`. Source keys are exact setting names.
+Literal, joined, repeated, and explicit JSON argument conversion remain pending.
 Values containing spaces or shell characters MUST remain individual arguments.
+
+Extension settings and arguments belong to the extension; nodes supply only
+`settings.custom` overrides. Execution resolution overlays those values on
+extension defaults without writing inherited values into the Node CR. Mappings,
+pipeline type, and execution configuration come from the extension. Resolution
+reports missing required settings; omitted optional settings omit their mappings.
+Explicit null defaults and overrides remain present, as do false, zero, and empty
+strings. Undeclared instance keys remain unrestricted custom settings. Resolving
+defaults does not generate CLI strings or launch a process; host dispatch integration
+and argument conversion remain separate tasks.
 
 Diamant supplies a reserved runtime context independently of plugin settings.
 Initially, it MUST provide the full type-specific `runtime.websocketUrl`,
@@ -471,60 +494,38 @@ before implementation, following the project workflow.
 
 ## Implementation progress
 
-- [x] Add namespaced `SuntitleExtension` CRD with `local`, `git`, `oci`, and
-  `http` source types, adapter object, and publication status fields.
-- [x] Add optional same-namespace `extensionRef` to `SuntitleNode`.
-- [x] Include Extension in generated CRDs, bootstrap, and API/controller RBAC.
-- [x] Add arbitrary `settings.custom` and CRD rules requiring `extensionRef`
-  for custom nodes, forbidding it for built-ins, and keeping the settings variant immutable.
-- [x] Back the placeholder Extensions API with Kubernetes resources, including
-  resource list/get/create and refresh requests persisted as `spec.refreshToken`.
-- [ ] Align the Extensions frontend and its mock endpoints with resource API payloads.
-- [ ] Finalize the adapter CRD schema and ordered argument binding syntax.
-- [ ] Resolve local HUB folder sources into preparation inputs.
-- [ ] Resolve Git sources into preparation inputs.
-- [ ] Resolve HTTP download sources into preparation inputs.
-- [ ] Resolve upstream OCI sources into preparation inputs.
+Remaining work is listed in implementation order. Start with local HUB sources to
+complete one working lifecycle, then add the other source providers. Background
+preparation follows the [extension reconciler plan](extension-reconciler-plan.md).
+
+- [x] Add Extension and custom Node CRD fields, including adapter settings and argument bindings.
+- [x] Include Extension in CRD generation, bootstrap, and RBAC.
+- [x] Back the Extensions API with Kubernetes resources and persisted refresh requests.
+- [ ] Implement the extension controller: reconcile extension/node dependencies,
+  resolve defaults and node overrides, and populate Node status with the resolved
+  adapter and published artifact reference.
+- [ ] Use the extension's pipeline type for node input compatibility.
+- [ ] Add the background preparation executor and controller completion notifications.
+- [ ] Prepare local HUB folder sources.
 - [ ] Package the adapter and payload using the ORAS directory convention.
-- [ ] Add the in-memory preparation executor and completion notifications.
-- [ ] Reconcile Extension preparation tasks, retries, and obsolete results.
-- [ ] Push prepared artifacts to Distribution and record publication status.
-- [ ] Configure Distribution access through Traefik.
-- [ ] Deliver published artifact references to assigned Diamant hosts.
+- [ ] Publish prepared artifacts to Distribution.
+- [ ] Expose Distribution through Traefik for assigned hosts.
+- [ ] Dispatch Node status to Diamant.
 - [ ] Pull artifacts and materialize extension folders on Diamant hosts.
-- [ ] Prepare host prerequisites and report the Node `Installed` condition.
-- [ ] Resolve custom node pipeline types from referenced extensions for input compatibility.
-- [ ] Construct ordered arguments from instance settings and runtime context.
-- [ ] Launch custom executables under the existing Diamant process supervisor.
-- [ ] Launch explicitly selected Python scripts or modules.
-- [ ] Verify ORAS interoperability and the complete custom node lifecycle.
+- [ ] Define execution and prerequisite CRD fields.
+- [ ] Prepare host prerequisites and record installation results on the Node.
+- [ ] Build arguments from resolved settings and runtime values.
+- [ ] Launch custom executables and explicit Python entry points under Diamant supervision.
+- [ ] Add Git source preparation.
+- [ ] Add HTTP source preparation.
+- [ ] Add upstream OCI source preparation.
+- [ ] Document the type-specific WebSocket contracts and runnable plugin examples.
+- [ ] Update the Extensions and node configuration UI, including mock payloads and Cypress coverage.
 
-Validation MUST use regular CRD schema constraints. Do not add a separate adapter
-validation layer. The initial adapter field preserves arbitrary JSON properties;
-its detailed schema and CLI binding syntax remain pending. Custom nodes now use
-`settings.custom` and MUST reference an extension. Diamant reports unsupported
-custom execution until extension installation and launch are implemented.
-The Extension CRD stores desired state and status; it does not prepare artifacts.
-
-## Implementation sequence
-
-1. Review the proposed Extension and Node YAML contracts above. Finalize the
-   remaining argument binding syntax and type contracts while retaining
-   independent type and execution concerns.
-2. Extend API models, node-type metadata, Kubernetes schemas, validation, and mock
-   fixtures. Add the Extension custom resource backing the stub Extensions API
-   and controller reconciliation logic. Align source types with Git, OCI, local
-   HUB folders, and HTTP downloads.
-   Validate input compatibility using the selected pipeline type.
-3. Implement extension source handling, plugin discovery, structured artifact
-   publication to Distribution, and Diamant pull/materialization on assigned hosts.
-   Add prerequisite preparation and separate publication/installation status reporting.
-   Follow the [extension reconciler plan](extension-reconciler-plan.md).
-4. Extend Diamant command construction with direct executable and explicit Python
-   execution paths, runtime context resolution, and declarative argument binding.
-5. Publish the type-specific WebSocket reference and verify example exchanges.
-6. Propose the extension and node configuration UI in Figma. After approval,
-   implement it with shadcn/ui and update relevant Cypress coverage.
+The default/override resolver exists as a helper; integrating it belongs to the
+extension controller task. Artifact preparation, host installation, and custom
+execution are not implemented. Advanced argument forms can follow the basic
+value/switch bindings once the local-source lifecycle works.
 
 ## Validation
 

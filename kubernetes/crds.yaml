@@ -508,8 +508,57 @@ spec:
           spec:
             properties:
               adapter:
+                properties:
+                  arguments:
+                    items:
+                      properties:
+                        flag:
+                          description: Omit the flag for a positional value.
+                          minLength: 1
+                          nullable: true
+                          type: string
+                        mode:
+                          default: value
+                          enum:
+                          - value
+                          - switch
+                          type: string
+                        source:
+                          pattern: ^(runtime\.websocketUrl|settings\..+)$
+                          type: string
+                      required:
+                      - source
+                      type: object
+                      x-kubernetes-validations:
+                      - message: switch arguments require a flag
+                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+                    type: array
+                  execution:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  settings:
+                    additionalProperties:
+                      properties:
+                        default:
+                          description: Explicit null MUST remain distinct from an omitted default.
+                          nullable: true
+                          x-kubernetes-preserve-unknown-fields: true
+                        required:
+                          default: false
+                          type: boolean
+                      type: object
+                    type: object
+                  type:
+                    enum:
+                    - audio_source
+                    - transcriber
+                    - translator
+                    - display
+                    type: string
+                required:
+                - execution
+                - type
                 type: object
-                x-kubernetes-preserve-unknown-fields: true
               name:
                 maxLength: 128
                 minLength: 1

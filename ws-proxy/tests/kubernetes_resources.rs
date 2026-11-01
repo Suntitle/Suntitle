@@ -258,10 +258,26 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     );
     assert_eq!(spec["properties"]["source"]["minLength"], 1);
     assert_eq!(spec["properties"]["adapter"]["type"], "object");
+    let adapter_schema = &spec["properties"]["adapter"]["properties"];
     assert_eq!(
-        spec["properties"]["adapter"]["x-kubernetes-preserve-unknown-fields"],
+        adapter_schema["type"]["enum"],
+        json!(["audio_source", "transcriber", "translator", "display"])
+    );
+    let setting = &adapter_schema["settings"]["additionalProperties"];
+    assert_eq!(setting["properties"]["required"]["type"], "boolean");
+    assert_eq!(setting["properties"]["required"]["default"], false);
+    assert_eq!(
+        setting["properties"]["default"]["x-kubernetes-preserve-unknown-fields"],
         true
     );
+    assert_eq!(setting["properties"]["default"]["nullable"], true);
+    let binding = &adapter_schema["arguments"]["items"];
+    assert_eq!(
+        binding["properties"]["mode"]["enum"],
+        json!(["value", "switch"])
+    );
+    assert_eq!(binding["properties"]["mode"]["default"], "value");
+    assert_eq!(binding["required"], json!(["source"]));
     let adapter = json!({"type":"transcriber", "execution":{"runtime":"executable", "executable":"./run"},
         "settings":{"nested":{"default":{"values":[null, false, 0, ""]}}},
         "arguments":[{"flag":"--server", "source":"runtime.websocketUrl"}]});
@@ -272,7 +288,13 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
         let extension: SuntitleExtension = serde_json::from_value(document).unwrap();
         assert_eq!(
             serde_json::to_value(extension).unwrap()["spec"]["adapter"],
-            adapter
+            serde_json::to_value(
+                serde_json::from_value::<ws_proxy::kubernetes::adapter::ExtensionAdapter>(
+                    adapter.clone()
+                )
+                .unwrap()
+            )
+            .unwrap()
         );
     }
 }
