@@ -8,17 +8,14 @@ use backon::{ExponentialBuilder, Retryable};
 use futures_util::TryStreamExt;
 use oci_client::{
     Client, Reference,
+    annotations::ORG_OPENCONTAINERS_IMAGE_TITLE as ANNOTATION_TITLE,
     errors::OciDistributionError,
-    manifest::{OciDescriptor, OciImageManifest, OciManifest},
+    manifest::{IMAGE_LAYER_GZIP_MEDIA_TYPE, OciDescriptor, OciImageManifest, OciManifest},
     secrets::RegistryAuth,
 };
 use tokio::io::AsyncWriteExt;
 
-use crate::{CancellationToken, Error, client::TransportOptions};
-
-const ANNOTATION_TITLE: &str = "org.opencontainers.image.title";
-const ANNOTATION_UNPACK: &str = "io.deis.oras.content.unpack";
-const DIRECTORY_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
+use crate::{CancellationToken, Error, client::TransportOptions, constants::ANNOTATION_UNPACK};
 
 /// Registry source, local output, and caller-supplied credentials.
 pub struct DownloadRequest {
@@ -226,7 +223,7 @@ fn artifact_layer(manifest: &OciImageManifest) -> Result<ArtifactLayer<'_>, Erro
         return Err(Error::Unsupported("negative layer size".into()));
     }
     let restoration = if annotation(layer, ANNOTATION_UNPACK) == Some("true") {
-        if layer.media_type != DIRECTORY_MEDIA_TYPE {
+        if layer.media_type != IMAGE_LAYER_GZIP_MEDIA_TYPE {
             return Err(Error::Unsupported(
                 "expected a gzip directory layer for unpacking".into(),
             ));
