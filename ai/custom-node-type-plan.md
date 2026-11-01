@@ -501,7 +501,7 @@ preparation follows the [extension reconciler plan](extension-reconciler-plan.md
 - [x] Add Extension and custom Node CRD fields, including adapter settings and argument bindings.
 - [x] Include Extension in CRD generation, bootstrap, and RBAC.
 - [x] Back the Extensions API with Kubernetes resources and persisted refresh requests.
-- [ ] Implement the extension controller: reconcile extension/node dependencies,
+- [x] Implement the extension controller: reconcile extension/node dependencies,
   resolve defaults and node overrides, and populate Node status with the resolved
   adapter and published artifact reference.
 - [ ] Use the extension's pipeline type for node input compatibility.
@@ -522,8 +522,11 @@ preparation follows the [extension reconciler plan](extension-reconciler-plan.md
 - [ ] Document the type-specific WebSocket contracts and runnable plugin examples.
 - [ ] Update the Extensions and node configuration UI, including mock payloads and Cypress coverage.
 
-The default/override resolver exists as a helper; integrating it belongs to the
-extension controller task. Artifact preparation, host installation, and custom
+The extension controller watches Node and Extension changes, resolves defaults
+and overrides for current published extensions, and records the resolved adapter
+and artifact reference in Node status. Missing or stale publications clear those
+fields. Custom dispatch remains blocked until host installation and dispatch
+integration are implemented. Artifact preparation, host installation, and custom
 execution are not implemented. Advanced argument forms can follow the basic
 value/switch bindings once the local-source lifecycle works.
 

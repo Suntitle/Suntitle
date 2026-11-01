@@ -2,6 +2,7 @@
 mod conditions;
 mod dispatch;
 mod gc;
+mod extension;
 mod host;
 mod runtime;
 mod session;
@@ -86,7 +87,8 @@ impl Controller {
     /// Start reconciliation loops and return their shutdown task.
     pub fn start(client: Client, namespace: &str) -> (Self, JoinHandle<()>) {
         let hosts_api = Api::namespaced(client.clone(), namespace);
-        let nodes_api = Api::namespaced(client, namespace);
+        let nodes_api = Api::namespaced(client.clone(), namespace);
+        let extensions_api = Api::namespaced(client, namespace);
         let context = Arc::new(Context {
             stopping: AtomicBool::new(false),
             stopped: Notify::new(),
@@ -102,6 +104,7 @@ impl Controller {
                 _ = host::run(hosts_api.clone(), run_context.clone()) => {},
                 _ = gc::run(hosts_api.clone(), run_context.clone()) => {},
                 _ = dispatch::run(nodes_api.clone(), run_context.clone()) => {},
+                _ = extension::run(nodes_api.clone(), extensions_api, run_context.clone()) => {},
                 _ = runtime::run(nodes_api.clone(), hosts_api.clone(), run_context.clone()) => {},
                 _ = run_context.stopped.notified() => {},
             }

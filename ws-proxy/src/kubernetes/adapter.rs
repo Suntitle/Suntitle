@@ -81,12 +81,14 @@ impl ArgumentMode {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedAdapter {
     #[serde(rename = "type")]
     pub node_type: NodeType,
+    #[schemars(schema_with = "super::resources::reported_metadata_schema")]
     pub execution: BTreeMap<String, Value>,
+    #[schemars(schema_with = "super::resources::reported_metadata_schema")]
     pub settings: BTreeMap<String, Value>,
     pub arguments: Vec<ArgumentBinding>,
 }

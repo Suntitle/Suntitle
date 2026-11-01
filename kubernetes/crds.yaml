@@ -392,6 +392,9 @@ spec:
                 description: Latest restart token acknowledged by the runtime.
                 nullable: true
                 type: string
+              artifactReference:
+                nullable: true
+                type: string
               conditions:
                 description: Node health observations keyed by condition type.
                 items:
@@ -478,6 +481,52 @@ spec:
                 description: Host UID that produced this status.
                 nullable: true
                 type: string
+              resolvedAdapter:
+                nullable: true
+                properties:
+                  arguments:
+                    items:
+                      properties:
+                        flag:
+                          description: Omit the flag for a positional value.
+                          minLength: 1
+                          nullable: true
+                          type: string
+                        mode:
+                          default: value
+                          enum:
+                          - value
+                          - switch
+                          type: string
+                        source:
+                          pattern: ^(runtime\.websocketUrl|settings\..+)$
+                          type: string
+                      required:
+                      - source
+                      type: object
+                      x-kubernetes-validations:
+                      - message: switch arguments require a flag
+                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+                    type: array
+                  execution:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  settings:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  type:
+                    enum:
+                    - audio_source
+                    - transcriber
+                    - translator
+                    - display
+                    type: string
+                required:
+                - arguments
+                - execution
+                - settings
+                - type
+                type: object
             type: object
         required:
         - spec
