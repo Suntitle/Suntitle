@@ -1,6 +1,8 @@
 //! Runtime dispatch, acknowledgement evaluation, and node finalization.
 use super::{
-    Context, ReconcileError, dispatch, error_policy, finalizer_error,
+    Context, ReconcileError, error_policy, finalizer_error,
+    lifecycle::set_phase,
+    plan::Plan,
     session::{State, identity},
 };
 use crate::{
@@ -20,11 +22,7 @@ use kube::{
 use std::sync::Arc;
 
 /// Observe node status and host sessions independently of spec revisions.
-pub(super) async fn run(
-    nodes: Api<SuntitleNode>,
-    hosts: Api<SuntitleHost>,
-    context: Arc<Context>,
-) {
+pub(super) async fn run(nodes: Api<SuntitleNode>, hosts: Api<SuntitleHost>, context: Arc<Context>) {
     let controller = KubeController::new(nodes, watcher::Config::default());
     let store = controller.store();
     controller
@@ -75,12 +73,11 @@ async fn reconcile(node: Arc<SuntitleNode>, ctx: Arc<Context>) -> Result<Action,
     .map_err(finalizer_error)
 }
 impl State {
-
     /// Track dispatches on the current connection to resynchronize after reconnect.
-    async fn reconcile_runtime(&mut self, node: &SuntitleNode) -> Result<(), Error> {
-        if node.spec.extension_ref.is_some() && node.metadata.deletion_timestamp.is_none() {
+    pub(super) async fn reconcile_runtime(&mut self, node: &SuntitleNode) -> Result<(), Error> {
+        let Some(plan) = Plan::for_node(node) else {
             return Ok(());
-        }
+        };
         let Some(dispatch) = node
             .status
             .as_ref()
@@ -88,30 +85,20 @@ impl State {
         else {
             return Ok(());
         };
-        if dispatch.generation != node.metadata.generation.unwrap()
-            || dispatch.operation != dispatch::operation(node)
-        {
+        if !plan.matches(node, dispatch) {
             return Ok(());
         }
-        let removing = dispatch.operation == Operation::Remove;
         let host = self.hosts_api.get(&node.spec.host_ref.name).await?;
         let host_uid = host.metadata.uid.as_deref().unwrap();
         if !host.finalizers().iter().any(|f| f == HOST_FINALIZER)
-            || (host.metadata.deletion_timestamp.is_some() && !removing)
+            || (host.metadata.deletion_timestamp.is_some() && !plan.is_removal())
         {
             return Ok(());
         }
         let mut node = node.clone();
         let previous = node.status.clone();
         let Some(session) = self.active_session(&host) else {
-            set_phase(
-                &mut node,
-                if removing {
-                    NodePhase::Terminating
-                } else {
-                    NodePhase::Disconnected
-                },
-            );
+            set_phase(&mut node, plan.offline_phase());
             return self.node_status(&mut node, &previous).await;
         };
         let status = node.status.as_mut().unwrap();
@@ -124,17 +111,8 @@ impl State {
             )
         {
             if let Some(success) = dispatch.success {
-                if success {
-                    status.observed_generation = Some(dispatch.generation);
-                    status.reporting_session = Some(session);
-                    status.acknowledged_restart_token = node.spec.restart_token.clone();
-                }
-                let phase = if removing {
-                    NodePhase::Terminating
-                } else {
-                    NodePhase::from_acknowledgement(success, node.spec.enabled)
-                };
-                set_phase(&mut node, phase);
+                let operation = dispatch.operation;
+                super::lifecycle::acknowledge(&mut node, operation, success);
                 self.node_status(&mut node, &previous).await?;
             }
             return Ok(());
@@ -151,42 +129,16 @@ impl State {
             operation_id: dispatch.operation_id.clone(),
         };
         status.message = None;
-        set_phase(
-            &mut node,
-            if removing {
-                NodePhase::Terminating
-            } else {
-                NodePhase::Pending
-            },
-        );
+        set_phase(&mut node, plan.pending_phase());
         let operation_id = identity.operation_id.clone();
         let node_uid = identity.target.uid.clone();
         self.node_status(&mut node, &previous).await?;
-        let message = if removing {
-            RegistrationServerMessage::Remove { identity }
-        } else {
-            RegistrationServerMessage::Apply {
-                identity,
-                spec: Box::new(node.spec),
-            }
-        };
+        let message = plan.into_message(identity, node.spec);
         self.dispatch(host_uid, &session, message);
-        self.connections.mark_dispatched(host_uid, node_uid, operation_id);
+        self.connections
+            .mark_dispatched(host_uid, node_uid, operation_id);
         Ok(())
     }
-}
-
-/// Update the node phase and readiness conditions.
-fn set_phase(node: &mut SuntitleNode, phase: NodePhase) {
-    let generation = node.metadata.generation.unwrap();
-    let status = node.status.as_mut().unwrap();
-    status
-        .conditions
-        .push(phase.ready_condition(generation, status.message.as_deref()));
-    status
-        .conditions
-        .push(phase.updated_condition(generation, status.message.as_deref()));
-    status.phase = Some(phase);
 }
 
 /// An apply acknowledgement cannot complete cleanup.

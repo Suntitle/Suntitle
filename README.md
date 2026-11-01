@@ -500,3 +500,37 @@ responses.
 Backend service logs and Cypress screenshots/videos are uploaded on failure.
 The backend workflow also supports manual runs. To enforce these checks before
 merging, select the three check names above in the repository's branch rules.
+
+### Diamant artifact downloads
+
+Once an extension has a published artifact reference for its current generation,
+HUB resolves it into `SuntitleNode.status.artifactReference`. Diamant receives a
+`download_artifact` command and downloads from that reference using `oci-artifact`.
+The reference contains the registry and repository; the client supplies the standard
+OCI `/v2/` API path. No registry suffix needs configuration. Published digest
+references are preferred so the downloaded content is immutable.
+
+Downloads use anonymous access and verified HTTPS by default. For the local
+Compose registry, run Diamant with `--artifact-plain-http` or
+`SUNTITLE_ARTIFACT_PLAIN_HTTP=true`. Artifact storage is configured with
+`--artifact-dir` or `SUNTITLE_ARTIFACT_DIR`. The default is the OS local data directory:
+
+- Linux: `$XDG_DATA_HOME/suntitle/diamant/artifacts`, normally
+  `~/.local/share/suntitle/diamant/artifacts`.
+- macOS: `~/Library/Application Support/suntitle/diamant/artifacts`.
+
+Each operation downloads into a private staging directory and publishes a unique
+payload directory only after success. Download reports include its absolute path.
+Failed or cancelled downloads clean up staging. Completed payloads are retained;
+automatic cache reuse and garbage collection are deferred. Reconnecting downloads
+the current artifact again. Storage is independent of the Python project directory.
+
+Downloads run in the background so heartbeats continue. Removal, replacement,
+disconnect, and shutdown cancel outstanding work and await renderer cleanup.
+Reports are checked against node, generation, operation, artifact, and host session.
+
+This stage downloads and reports only. Success leaves the node `Pending` with
+`Installed=False`, `Ready=False`, and `Updated=False`, reason `ArtifactDownloaded`.
+Failure sets `Failed`, reason `ArtifactDownloadFailed`. Prerequisite preparation
+and custom execution are deferred. Existing agents must be upgraded to understand
+the new registration command before extension downloads can be dispatched to them.

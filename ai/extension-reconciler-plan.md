@@ -380,11 +380,18 @@ pull client. The registry does not need to run inside Kubernetes.
 - [ ] Define controller retry backoff, attempt identities, and result retention.
 - [ ] Normalize every source into the agreed extension artifact structure.
 - [ ] Integrate Distribution pushes and record the canonical digest reference.
-- [ ] Supply that reference to Diamant for library-managed pull and local materialization.
+- [x] Dispatch an existing current artifact reference to Diamant for library-managed pull and local materialization.
 - [ ] Test concurrent reconciles, success/failure, stale results, and restart recovery.
-- [ ] Expose Distribution through Traefik and supply its reachable artifact references.
-- [ ] Verify Distribution push/pull in Docker and standalone deployments.
-- [ ] Verify Diamant downloads through Traefik and bootstraps from the local files.
+- [x] Expose Compose Distribution through Traefik and verify library/ORAS push-pull interoperability.
+- [ ] Configure HUB publication to produce artifact references reachable by assigned hosts.
+- [ ] Verify standalone Distribution deployment.
+- [x] Verify Diamant download/report with a simulated registry and registration server, including heartbeats and cancellation.
+- [ ] Verify the complete HUB-to-Traefik-to-Diamant path and bootstrap execution from local files.
+
+Completed library and Diamant work does not complete the Apalis executor tasks.
+HUB source preparation and automatic publication remain unimplemented. The real
+Compose checks cover library/ORAS interoperability; Diamant host protocol tests use
+a simulated registry. Prerequisite preparation and custom execution remain deferred.
 
 ## Acceptance criteria
 

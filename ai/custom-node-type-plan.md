@@ -507,11 +507,19 @@ preparation follows the [extension reconciler plan](extension-reconciler-plan.md
 - [ ] Use the extension's pipeline type for node input compatibility.
 - [ ] Add the background preparation executor and controller completion notifications.
 - [ ] Prepare local HUB folder sources.
-- [ ] Package the adapter and payload using the ORAS directory convention.
-- [ ] Publish prepared artifacts to Distribution.
-- [ ] Expose Distribution through Traefik for assigned hosts.
-- [ ] Dispatch Node status to Diamant.
-- [ ] Pull artifacts and materialize extension folders on Diamant hosts.
+- [x] Add library packaging of prepared files and directories using the ORAS convention.
+- [x] Add library push/pull support and verify interoperability with ORAS through Compose Distribution.
+- [ ] Integrate adapter.yaml generation and payload packaging into HUB source preparation.
+- [ ] Publish prepared artifacts from the HUB reconciler and record their digest references.
+- [x] Expose Distribution through Traefik for assigned hosts.
+- [x] Dispatch the resolved artifact reference to Diamant for download.
+- [x] Pull artifacts and materialize extension folders on Diamant hosts.
+- [x] Report download outcomes without claiming installation or execution readiness.
+- [x] Reject stale artifact, generation, operation, and session reports; redispatch on reconnect.
+- [x] Keep downloads off the heartbeat loop and await cancelled task cleanup.
+- [x] Configure artifact storage and explicit plain-HTTP registry access.
+- [x] Centralize dispatch planning and document ordered lifecycle transitions.
+- [ ] Dispatch the resolved adapter for custom execution.
 - [ ] Define execution and prerequisite CRD fields.
 - [ ] Prepare host prerequisites and record installation results on the Node.
 - [ ] Build arguments from resolved settings and runtime values.
@@ -525,10 +533,11 @@ preparation follows the [extension reconciler plan](extension-reconciler-plan.md
 The extension controller watches Node and Extension changes, resolves defaults
 and overrides for current published extensions, and records the resolved adapter
 and artifact reference in Node status. Missing or stale publications clear those
-fields. Custom dispatch remains blocked until host installation and dispatch
-integration are implemented. Artifact preparation, host installation, and custom
-execution are not implemented. Advanced argument forms can follow the basic
-value/switch bindings once the local-source lifecycle works.
+fields. Diamant downloads the current artifact and reports the result without
+claiming installation or readiness. Artifact preparation, host prerequisites, and
+custom execution remain unimplemented. Library packaging and registry transport are
+implemented; HUB source preparation has not yet integrated them. Advanced argument
+forms can follow the basic value/switch bindings once the local-source lifecycle works.
 
 ## Validation
 
@@ -574,3 +583,31 @@ conversion remains a separate capability.
 - [WebSocket proxy routes](../ws-proxy/src/main.rs)
 - [Extension API contracts and placeholder handlers](../ws-proxy/src/api/extensions.rs)
 - [Extensions frontend](../ui/src/pages/extensions-page.tsx)
+
+## Initial Diamant download contract
+
+The first host integration downloads and reports only. It does not prepare
+prerequisites or launch custom processes. A published current-generation extension
+reference resolves into Node status. Dispatch waits for that reference and sends
+`download_artifact` with the existing `ApplyIdentity` plus `reference`. The reference
+contains the registry and repository; the OCI client supplies `/v2/`. Authentication
+is initially anonymous; HTTPS is the default, with explicit host configuration for
+plain HTTP. Registry credentials are a later host-configuration addition.
+
+Dispatch records operation `download` and an `artifactReference` snapshot. A changed
+reference creates a new operation even without a Node generation change. Reports
+use the existing acknowledgement envelope with operation `download`; stale resource,
+generation, operation, artifact, and session reports MUST be rejected. Missing or
+stale publication MUST block dispatch. Unchanged resolution MUST preserve host
+observations. Download success MUST NOT set `Installed`, `Ready`, or `Updated` true.
+It leaves the Node `Pending`, reason `ArtifactDownloaded`; failure uses `Failed`,
+reason `ArtifactDownloadFailed`. The acknowledgement message records the absolute
+payload path on success or a diagnostic on failure.
+
+Diamant uses configurable persistent local artifact storage, defaulting to the OS
+local data directory under `suntitle/diamant/artifacts`. Every download uses private
+staging and publishes a unique directory after completion. Failed/cancelled staging
+MUST be removed after renderer shutdown. Completed downloads are retained. Cache
+reuse and garbage collection are deferred; reconnect redownloads the current
+reference. Background download jobs MUST NOT block registration heartbeats and
+MUST be cancelled and awaited on removal, replacement, disconnect, or shutdown.

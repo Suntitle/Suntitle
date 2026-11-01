@@ -3,6 +3,8 @@ WORKDIR /build
 ENV CARGO_PROFILE_DEV_DEBUG=0
 COPY ws-proxy/Cargo.toml ws-proxy/Cargo.lock ./ws-proxy/
 COPY ws-proxy/src ./ws-proxy/src
+COPY oci-artifact/Cargo.toml oci-artifact/README.md ./oci-artifact/
+COPY oci-artifact/src ./oci-artifact/src
 COPY kubernetes ./kubernetes
 COPY specs ./specs
 RUN cargo build --locked --manifest-path ws-proxy/Cargo.toml --bin control_api --bin ws-proxy

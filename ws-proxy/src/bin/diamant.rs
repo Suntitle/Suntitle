@@ -20,6 +20,7 @@ use tokio_tungstenite::{
     tungstenite::{Error as WebSocketError, Message},
 };
 use url::Url;
+use ws_proxy::diamant::artifacts::{ArtifactDownloads, ArtifactOptions};
 use ws_proxy::diamant::nodes::{
     NodeEvent, NodeProcessManager, NodeRuntimeStatus, data_plane_url_from_registration,
 };
@@ -77,6 +78,14 @@ struct Config {
     /// Repository directory containing pyproject.toml and the Python entry points.
     #[arg(long, env = "SUNTITLE_PROJECT_DIR", default_value = ".")]
     project_dir: PathBuf,
+
+    /// Persistent directory for downloaded extension artifacts. Defaults to OS local data storage.
+    #[arg(long, env = "SUNTITLE_ARTIFACT_DIR")]
+    artifact_dir: Option<PathBuf>,
+
+    /// Use plain HTTP for artifact registry downloads.
+    #[arg(long, env = "SUNTITLE_ARTIFACT_PLAIN_HTTP")]
+    artifact_plain_http: bool,
 
     /// WebSocket data-plane base URL. Defaults to the registration URL without /register.
     #[arg(long, env = "SUNTITLE_DATA_PLANE_URL")]
@@ -139,7 +148,14 @@ async fn main() -> Result<ExitCode, MainReport> {
     }
     #[cfg(feature = "gui")]
     if !config.cli {
-        return Ok(diamant_ui::run(config.agent_config(), run_gui_agent));
+        let artifacts = ArtifactOptions {
+            directory: config.artifact_dir.clone(),
+            plain_http: config.artifact_plain_http,
+        };
+        return Ok(diamant_ui::run(
+            config.agent_config(),
+            move |config, stop, reporter| run_gui_agent(config, stop, reporter, artifacts.clone()),
+        ));
     }
 
     let _agent_lock = lock_host(&config.host_name)
@@ -156,9 +172,16 @@ async fn main() -> Result<ExitCode, MainReport> {
 }
 
 #[cfg(feature = "gui")]
-fn run_gui_agent(config: AgentConfig, stop: Arc<AtomicBool>, reporter: Reporter) {
+fn run_gui_agent(
+    config: AgentConfig,
+    stop: Arc<AtomicBool>,
+    reporter: Reporter,
+    artifacts: ArtifactOptions,
+) {
     let config = Config {
         cli: true,
+        artifact_dir: artifacts.directory,
+        artifact_plain_http: artifacts.plain_http,
         proxy_url: config.proxy_url,
         host_name: config.host_name,
         host_ip: config.host_ip,
@@ -345,11 +368,22 @@ async fn register(
     reap_interval.tick().await;
     let shutdown = shutdown_requested(stop);
     tokio::pin!(shutdown);
+    let mut artifacts = ArtifactDownloads::new(ArtifactOptions {
+        directory: config.artifact_dir.clone(),
+        plain_http: config.artifact_plain_http,
+    })
+    .context("failed to configure artifact downloads")?;
     let mut failure = None;
     let mut reconnect = true;
 
     loop {
         tokio::select! {
+            report = artifacts.next_report() => {
+                if let Err(error) = send_client_message(&mut write, &report).await {
+                    failure = Some(format!("failed to report artifact download: {error}"));
+                    break;
+                }
+            }
             _ = health_interval.tick() => {
                 if let Err(error) = send_client_message(&mut write, &health).await {
                     failure = Some(format!("failed to send health report: {error}"));
@@ -395,8 +429,14 @@ async fn register(
                                 if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace || spec.host_ref.name != host.name || identity.restart_token != spec.restart_token { break; }
                                 manager.apply(identity, *spec).await
                             },
+                            RegistrationServerMessage::DownloadArtifact { identity, reference } => {
+                                if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace { break; }
+                                artifacts.start(identity, reference);
+                                Vec::new()
+                            },
                             RegistrationServerMessage::Remove { identity } => {
                                 if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace { break; }
+                                artifacts.remove(&identity).await;
                                 let result = manager.remove(&identity).await;
                                 let acknowledgement = RegistrationClientMessage::Acknowledgement {
                                     identity, operation: Operation::Remove, success: result.is_ok(), message: result.err(),
@@ -433,6 +473,7 @@ async fn register(
         }
     }
 
+    artifacts.shutdown().await;
     let _ = send_events(&mut write, manager.shutdown_all().await).await;
     #[cfg(feature = "gui")]
     if let Some(reporter) = reporter {

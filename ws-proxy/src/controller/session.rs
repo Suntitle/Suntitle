@@ -26,7 +26,6 @@ pub(super) struct State {
 }
 
 impl State {
-
     /// Close the matching session and persist offline status.
     pub(super) async fn disconnect(&mut self, uid: &str, session: &str) -> Result<(), Error> {
         let Some(identity) = self.connections.host(uid) else {
@@ -96,9 +95,8 @@ impl State {
                     || dispatch.operation != operation
                     || dispatch.session_id.as_deref() != Some(session_id)
                     || !matches_identity(&node, &identity)
-                    || (operation == Operation::Apply && node.metadata.deletion_timestamp.is_some())
-                    || (operation == Operation::Remove
-                        && node.metadata.deletion_timestamp.is_none())
+                    || !super::plan::Plan::for_node(&node)
+                        .is_some_and(|plan| plan.matches(&node, dispatch))
                     || node.spec.host_ref.name != host.name_any()
                 {
                     return Ok(());

@@ -41,6 +41,7 @@ pub(super) async fn run(
                     "metadata":{"uid":node.uid(),"resourceVersion":node.resource_version()},
                     "status":{
                         "resolvedAdapter":status.resolved_adapter,
+                        "dispatch":status.dispatch,
                         "artifactReference":status.artifact_reference,
                         "phase":status.phase,
                         "message":status.message,
@@ -57,8 +58,6 @@ pub(super) async fn run(
 
 fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
     let status = node.status.get_or_insert_default();
-    status.resolved_adapter = None;
-    status.artifact_reference = None;
     let outcome = (|| {
         let extension = extension
             .filter(|e| e.metadata.deletion_timestamp.is_none())
@@ -91,6 +90,15 @@ fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
     })();
     let (reason, message, phase) = match outcome {
         Ok((resolved, reference)) => {
+            let unchanged = status.artifact_reference.as_ref() == Some(&reference)
+                && serde_json::json!(status.resolved_adapter) == serde_json::json!(resolved)
+                && status.conditions.iter().any(|c| {
+                    c.type_ == "Installed" && c.observed_generation == node.metadata.generation
+                });
+            if unchanged {
+                return;
+            }
+            status.dispatch = None;
             status.resolved_adapter = resolved;
             status.artifact_reference = Some(reference);
             (
@@ -100,6 +108,9 @@ fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
             )
         }
         Err((reason, message)) => {
+            status.dispatch = None;
+            status.resolved_adapter = None;
+            status.artifact_reference = None;
             let phase = if reason == "InvalidExtensionSettings" {
                 NodePhase::Failed
             } else {
@@ -206,5 +217,25 @@ mod tests {
         node.spec.settings = serde_json::from_value(json!({"custom":{"language":"cs"}})).unwrap();
         resolve(&mut node, Some(&extension()));
         assert!(node.status.unwrap().artifact_reference.is_some());
+    }
+    #[test]
+    fn unchanged_resolution_preserves_download_report_and_new_artifacts_reset_it() {
+        let mut node = node();
+        let mut extension = extension();
+        resolve(&mut node, Some(&extension));
+        node.status.as_mut().unwrap().message = Some("download completed".into());
+        resolve(&mut node, Some(&extension));
+        assert_eq!(
+            node.status.as_ref().unwrap().message.as_deref(),
+            Some("download completed")
+        );
+        extension.status.as_mut().unwrap().artifact_reference =
+            Some("registry/extensions@sha256:def".into());
+        resolve(&mut node, Some(&extension));
+        assert_ne!(
+            node.status.as_ref().unwrap().message.as_deref(),
+            Some("download completed")
+        );
+        assert!(node.status.as_ref().unwrap().dispatch.is_none());
     }
 }

@@ -22,7 +22,6 @@ pub struct Envelope<T> {
     pub message: T,
 }
 impl<T> Envelope<T> {
-
     pub fn new(message: T) -> Self {
         Self {
             protocol_version: 1,
@@ -60,6 +59,7 @@ pub enum RegistrationClientMessage {
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
     Apply,
+    Download,
     Remove,
 }
 
@@ -78,6 +78,11 @@ pub enum RegistrationServerMessage {
         #[serde(flatten)]
         identity: ApplyIdentity,
         spec: Box<SuntitleNodeSpec>,
+    },
+    DownloadArtifact {
+        #[serde(flatten)]
+        identity: ApplyIdentity,
+        reference: String,
     },
     Remove {
         #[serde(flatten)]
