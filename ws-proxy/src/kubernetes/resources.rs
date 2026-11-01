@@ -327,6 +327,10 @@ pub struct DispatchStatus {
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_adapter: Option<super::adapter::ResolvedAdapter>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_reference: Option<String>,
     /// Desired dispatch and its latest runtime acknowledgement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch: Option<DispatchStatus>,

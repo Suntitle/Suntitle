@@ -52,6 +52,9 @@ impl State {
 
     /// Record intent only for a new generation or deletion.
     async fn reconcile_spec(&mut self, node: &SuntitleNode) -> Result<(), Error> {
+        if node.spec.extension_ref.is_some() && node.metadata.deletion_timestamp.is_none() {
+            return Ok(());
+        }
         let generation = node.metadata.generation.unwrap();
         let operation = operation(node);
         if node

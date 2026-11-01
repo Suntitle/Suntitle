@@ -78,6 +78,9 @@ impl State {
 
     /// Track dispatches on the current connection to resynchronize after reconnect.
     async fn reconcile_runtime(&mut self, node: &SuntitleNode) -> Result<(), Error> {
+        if node.spec.extension_ref.is_some() && node.metadata.deletion_timestamp.is_none() {
+            return Ok(());
+        }
         let Some(dispatch) = node
             .status
             .as_ref()
