@@ -1,5 +1,5 @@
 //! Generation/deletion-driven dispatch intent.
-use super::{Context, ReconcileError, error_policy, session::State};
+use super::{Context, ReconcileError, error_policy, plan::Plan, session::State};
 use crate::{
     kubernetes::{Error, resources::*},
     registration::Operation,
@@ -39,36 +39,23 @@ async fn reconcile(node: Arc<SuntitleNode>, ctx: Arc<Context>) -> Result<Action,
     Ok(Action::await_change())
 }
 
-/// Choose apply or removal from node deletion state.
-pub(super) fn operation(node: &SuntitleNode) -> Operation {
-    if node.metadata.deletion_timestamp.is_some() {
-        Operation::Remove
-    } else {
-        Operation::Apply
-    }
-}
-
 impl State {
-
     /// Record intent only for a new generation or deletion.
-    async fn reconcile_spec(&mut self, node: &SuntitleNode) -> Result<(), Error> {
-        if node.spec.extension_ref.is_some() && node.metadata.deletion_timestamp.is_none() {
+    pub(super) async fn reconcile_spec(&mut self, node: &SuntitleNode) -> Result<(), Error> {
+        let Some(plan) = Plan::for_node(node) else {
             return Ok(());
-        }
+        };
         let generation = node.metadata.generation.unwrap();
-        let operation = operation(node);
         if node
             .status
             .as_ref()
             .and_then(|status| status.dispatch.as_ref())
-            .is_some_and(|dispatch| {
-                dispatch.generation == generation && dispatch.operation == operation
-            })
+            .is_some_and(|dispatch| plan.matches(node, dispatch))
         {
             return Ok(());
         }
         let mut node = node.clone();
-        if operation == Operation::Remove {
+        if plan.is_removal() {
             if !node.finalizers().iter().any(|f| f == NODE_FINALIZER) {
                 return Ok(());
             }
@@ -77,7 +64,9 @@ impl State {
             if host.metadata.deletion_timestamp.is_some() {
                 return Ok(());
             }
-            if let Some(input) = &node.spec.input_ref {
+            if let Some(input) = &node.spec.input_ref
+                && plan.operation() == Operation::Apply
+            {
                 let upstream = self.nodes_api.get(&input.name).await?;
                 if upstream.metadata.deletion_timestamp.is_some()
                     || !upstream.spec.enabled
@@ -95,9 +84,11 @@ impl State {
             }
         }
         let previous = node.status.clone();
+        let artifact_reference = plan.artifact_reference().map(str::to_owned);
         node.status.get_or_insert_default().dispatch = Some(DispatchStatus {
+            artifact_reference,
             generation,
-            operation: self::operation(&node),
+            operation: plan.operation(),
             operation_id: uuid::Uuid::new_v4().to_string(),
             session_id: None,
             success: None,
@@ -107,7 +98,6 @@ impl State {
 }
 
 impl State {
-
     /// Record a validation failure in node status.
     async fn invalid(
         &mut self,

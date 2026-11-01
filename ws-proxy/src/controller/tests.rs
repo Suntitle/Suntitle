@@ -258,3 +258,273 @@ async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_execution() {
+    use warp::Filter;
+    let mut node = node();
+    node.spec.extension_ref = Some(ResourceRef {
+        name: "extension".into(),
+    });
+    node.spec.settings = NodeSettings::Custom(Default::default());
+    node.metadata.finalizers = Some(vec![NODE_FINALIZER.into()]);
+    let stored_node = Arc::new(std::sync::Mutex::new(node));
+    let host = Arc::new(std::sync::Mutex::new(SuntitleHost::new(
+        "host",
+        SuntitleHostSpec {
+            name: "Host".into(),
+        },
+    )));
+    {
+        let mut host = host.lock().unwrap();
+        host.metadata.namespace = Some("test".into());
+        host.metadata.uid = Some("host-uid".into());
+        host.metadata.finalizers = Some(vec![HOST_FINALIZER.into()]);
+    }
+    let nodes = stored_node.clone();
+    let hosts = host.clone();
+    let route = warp::method()
+        .and(warp::path::full())
+        .and(warp::body::bytes())
+        .map(
+            move |method: warp::http::Method,
+                  path: warp::path::FullPath,
+                  body: actix_web::web::Bytes| {
+                if path.as_str().contains("/suntitlenodes/") {
+                    let mut node = nodes.lock().unwrap();
+                    if method == warp::http::Method::PATCH {
+                        let patch: Value = serde_json::from_slice(&body).unwrap();
+                        node.status = serde_json::from_value(patch["status"].clone()).unwrap();
+                    }
+                    warp::reply::json(&*node)
+                } else {
+                    warp::reply::json(&*hosts.lock().unwrap())
+                }
+            },
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+    let mut state = state();
+    let client = Client::try_from(kube::Config::new(
+        format!("http://{address}").parse().unwrap(),
+    ))
+    .unwrap();
+    state.nodes_api = Api::namespaced(client.clone(), "test");
+    state.hosts_api = Api::namespaced(client, "test");
+    let mut connection = state
+        .connections
+        .open(identity(&host.lock().unwrap().metadata));
+    {
+        let mut host = host.lock().unwrap();
+        let status = host.status.get_or_insert_default();
+        status.session_id = Some(connection.session_id.clone());
+        status.last_heartbeat = Some(Utc::now());
+    }
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_spec(&current).await.unwrap();
+    assert!(
+        stored_node
+            .lock()
+            .unwrap()
+            .status
+            .as_ref()
+            .and_then(|s| s.dispatch.as_ref())
+            .is_none()
+    );
+    {
+        let mut node = stored_node.lock().unwrap();
+        let generation = node.metadata.generation;
+        let status = node.status.get_or_insert_default();
+        status.artifact_reference = Some("registry.test/extensions:v1".into());
+        status
+            .conditions
+            .push(k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition {
+                type_: "Installed".into(),
+                status: "False".into(),
+                reason: "Preparing".into(),
+                message: "Preparing".into(),
+                observed_generation: generation,
+                last_transition_time: k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                    k8s_openapi::jiff::Timestamp::now(),
+                ),
+            });
+    }
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_spec(&current).await.unwrap();
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_runtime(&current).await.unwrap();
+    let RegistrationServerMessage::DownloadArtifact {
+        identity,
+        reference,
+    } = connection.outbound.recv().await.unwrap()
+    else {
+        panic!("expected download")
+    };
+    assert_eq!(reference, "registry.test/extensions:v1");
+    let mut stale = identity.clone();
+    stale.generation += 1;
+    state
+        .report(
+            &identity.host_uid,
+            &identity.session_id,
+            RegistrationClientMessage::Acknowledgement {
+                identity: stale,
+                operation: Operation::Download,
+                success: true,
+                message: Some("stale".into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_node
+            .lock()
+            .unwrap()
+            .status
+            .as_ref()
+            .unwrap()
+            .dispatch
+            .as_ref()
+            .unwrap()
+            .success,
+        None
+    );
+    state
+        .report(
+            &identity.host_uid,
+            &identity.session_id,
+            RegistrationClientMessage::Acknowledgement {
+                identity: identity.clone(),
+                operation: Operation::Download,
+                success: true,
+                message: Some("Downloaded to /artifacts/example".into()),
+            },
+        )
+        .await
+        .unwrap();
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_runtime(&current).await.unwrap();
+    {
+        let node = stored_node.lock().unwrap();
+        let status = node.status.as_ref().unwrap();
+        assert!(matches!(status.phase, Some(NodePhase::Pending)));
+        assert!(
+            status
+                .conditions
+                .iter()
+                .filter(|c| ["Installed", "Ready", "Updated"].contains(&c.type_.as_str()))
+                .all(|c| c.status == "False" && c.reason == "ArtifactDownloaded")
+        );
+    }
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_spec(&current).await.unwrap();
+    state.reconcile_runtime(&current).await.unwrap();
+    assert!(connection.outbound.try_recv().is_err());
+    stored_node
+        .lock()
+        .unwrap()
+        .status
+        .as_mut()
+        .unwrap()
+        .artifact_reference = Some("registry.test/extensions:v2".into());
+    // Reports for an obsolete artifact MUST NOT overwrite the current result.
+    state
+        .report(
+            &identity.host_uid,
+            &identity.session_id,
+            RegistrationClientMessage::Acknowledgement {
+                identity: identity.clone(),
+                operation: Operation::Download,
+                success: false,
+                message: Some("obsolete failure".into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        stored_node
+            .lock()
+            .unwrap()
+            .status
+            .as_ref()
+            .unwrap()
+            .message
+            .as_deref(),
+        Some("obsolete failure")
+    );
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_spec(&current).await.unwrap();
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_runtime(&current).await.unwrap();
+    let RegistrationServerMessage::DownloadArtifact {
+        identity: next,
+        reference,
+    } = connection.outbound.recv().await.unwrap()
+    else {
+        panic!("expected replacement")
+    };
+    assert_eq!(reference, "registry.test/extensions:v2");
+    assert_ne!(identity.operation_id, next.operation_id);
+    state
+        .report(
+            &next.host_uid,
+            &next.session_id,
+            RegistrationClientMessage::Acknowledgement {
+                identity: next.clone(),
+                operation: Operation::Download,
+                success: false,
+                message: Some("registry unavailable".into()),
+            },
+        )
+        .await
+        .unwrap();
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_runtime(&current).await.unwrap();
+    assert!(matches!(
+        stored_node.lock().unwrap().status.as_ref().unwrap().phase,
+        Some(NodePhase::Failed)
+    ));
+    let mut replacement = state
+        .connections
+        .open(super::session::identity(&host.lock().unwrap().metadata));
+    host.lock().unwrap().status.as_mut().unwrap().session_id = Some(replacement.session_id.clone());
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_runtime(&current).await.unwrap();
+    let RegistrationServerMessage::DownloadArtifact {
+        identity: reconnect,
+        ..
+    } = replacement.outbound.recv().await.unwrap()
+    else {
+        panic!("expected reconnect download")
+    };
+    assert_eq!(reconnect.session_id, replacement.session_id);
+    assert_ne!(reconnect.operation_id, next.operation_id);
+    state
+        .report(
+            &next.host_uid,
+            &next.session_id,
+            RegistrationClientMessage::Acknowledgement {
+                identity: next.clone(),
+                operation: Operation::Download,
+                success: true,
+                message: Some("old session".into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_node
+            .lock()
+            .unwrap()
+            .status
+            .as_ref()
+            .unwrap()
+            .dispatch
+            .as_ref()
+            .unwrap()
+            .success,
+        None
+    );
+    server.abort();
+}

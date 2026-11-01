@@ -435,12 +435,17 @@ spec:
                 description: Desired dispatch and its latest runtime acknowledgement.
                 nullable: true
                 properties:
+                  artifactReference:
+                    description: Artifact selected for this download operation.
+                    nullable: true
+                    type: string
                   generation:
                     format: int64
                     type: integer
                   operation:
                     enum:
                     - apply
+                    - download
                     - remove
                     type: string
                   operationId:

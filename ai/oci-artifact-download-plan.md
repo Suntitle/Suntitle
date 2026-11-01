@@ -152,6 +152,30 @@ No failed operation may leave partial files looking like a completed pull.
 ocirender can leave partial directory output on failure; our staging cleanup
 owns that case.
 
+## Implementation progress
+
+The library now supports standalone files as well as directories. This checklist
+records implemented behavior; remaining items from the original design are not
+implied complete by successful directory round trips.
+
+- [x] Create the independent `oci-artifact` library and explicit transport/authentication options.
+- [x] Download and verify one named file or unpackable directory layer.
+- [x] Restore directory contents and ordinary permissions through `StreamingPacker`.
+- [x] Add bounded transient download retries and caller-driven cancellation.
+- [x] Package and upload prepared filesystem content using the ORAS convention.
+- [x] Use chunked uploads, with an empty-file fallback and single-pass tar hashing.
+- [x] Compare both clients' pushes and pulls against Compose Distribution with ORAS 1.3.2.
+- [x] Integrate reference-driven download/report into Diamant with private host staging.
+- [ ] Add index/platform selection.
+- [ ] Add the planned progress API and optional Docker credential lookup.
+- [ ] Add atomic no-replace publication to the library's own download API.
+- [ ] Complete the original cross-platform validation matrix.
+
+The library restores directly into its requested destination and can leave partial
+updates on extraction failure. Diamant supplies private staging and publishes only
+a successful download. HTTP/Git source resolution, in-memory source APIs, OCI
+registry relay, and HUB publication integration remain separate work.
+
 ## Implementation sequence
 
 1. Create the standalone package and include the transport functionality listed

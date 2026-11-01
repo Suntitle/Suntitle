@@ -4,6 +4,8 @@ mod dispatch;
 mod gc;
 mod extension;
 mod host;
+mod lifecycle;
+mod plan;
 mod runtime;
 mod session;
 #[cfg(test)]

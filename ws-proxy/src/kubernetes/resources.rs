@@ -246,14 +246,6 @@ pub enum NodePhase {
 }
 
 impl NodePhase {
-    pub fn from_acknowledgement(success: bool, enabled: bool) -> Self {
-        match (success, enabled) {
-            (true, true) => Self::Running,
-            (true, false) => Self::Disabled,
-            (false, _) => Self::Failed,
-        }
-    }
-
     pub fn ready_condition(&self, generation: i64, message: Option<&str>) -> Condition {
         self.condition("Ready", generation, message)
     }
@@ -317,6 +309,9 @@ impl NodePhase {
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchStatus {
+    /// Artifact selected for this download operation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_reference: Option<String>,
     pub generation: i64,
     pub operation: crate::registration::Operation,
     pub operation_id: String,

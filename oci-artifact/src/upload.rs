@@ -59,6 +59,7 @@ pub struct UploadResult {
 /// Registry client for publishing one file or directory per artifact.
 #[derive(Clone)]
 pub struct Uploader {
+    /// Shared transport and registry authentication state.
     client: Client,
 }
 
@@ -143,6 +144,7 @@ impl Uploader {
     }
 }
 
+/// Stop packaging before publishing more local or registry content.
 fn check_cancelled(token: &CancellationToken) -> Result<(), Error> {
     if token.is_cancelled() {
         Err(Error::Cancelled)
@@ -151,11 +153,15 @@ fn check_cancelled(token: &CancellationToken) -> Result<(), Error> {
     }
 }
 
+/// Reader that bounds cancellation latency during blocking file copies.
 struct CheckedReader<R> {
+    /// Local content stream being packaged.
     inner: R,
+    /// Caller-owned signal checked before every read.
     token: CancellationToken,
 }
 impl<R: Read> Read for CheckedReader<R> {
+    /// Reject further reads after cancellation.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.token.is_cancelled() {
             return Err(io::Error::other("packaging cancelled"));
@@ -164,6 +170,29 @@ impl<R: Read> Read for CheckedReader<R> {
     }
 }
 
+/// Hash accepted tar bytes while forwarding them to the gzip encoder.
+struct DigestWriter<W> {
+    /// Output receiving the same uncompressed bytes as the digest.
+    inner: W,
+    /// SHA-256 of bytes successfully accepted by the output.
+    digest: Sha256,
+}
+
+impl<W: Write> Write for DigestWriter<W> {
+    /// Hash only the accepted prefix when the underlying writer writes partially.
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(bytes)?;
+        self.digest.update(&bytes[..written]);
+        Ok(written)
+    }
+
+    /// Flush the encoder without adding bytes to the tar digest.
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Snapshot a prepared source into one blob and its ORAS layer metadata.
 fn package(
     source: PathBuf,
     token: &CancellationToken,
@@ -179,17 +208,17 @@ fn package(
     let mut annotations = BTreeMap::from([(ORG_OPENCONTAINERS_IMAGE_TITLE.into(), name.into())]);
     let media_type = if metadata.is_dir() {
         let encoder = GzEncoder::new(blob.as_file_mut(), Compression::default());
-        let mut archive = tar::Builder::new(encoder);
+        let mut archive = tar::Builder::new(DigestWriter {
+            inner: encoder,
+            digest: Sha256::new(),
+        });
         archive.follow_symlinks(false);
         append_tree(&mut archive, &source, std::path::Path::new(name), token)?;
-        archive.into_inner()?.finish()?;
-        blob.as_file_mut().rewind()?;
-        let mut decoder = CheckedReader {
-            inner: flate2::read::GzDecoder::new(blob.as_file_mut()),
-            token: token.clone(),
-        };
-        let mut digest = Sha256::new();
-        io::copy(&mut decoder, &mut digest)?;
+        let DigestWriter {
+            inner: encoder,
+            digest,
+        } = archive.into_inner()?;
+        encoder.finish()?;
         annotations.insert(
             ANNOTATION_DIGEST.into(),
             format!("sha256:{:x}", digest.finalize()),
@@ -218,10 +247,10 @@ fn package(
         annotations: Some(annotations),
         ..Default::default()
     };
-    blob.as_file_mut().rewind()?;
     Ok((blob, descriptor))
 }
 
+/// Archive regular files, directories, and symlinks without following links.
 fn append_tree<W: Write>(
     archive: &mut tar::Builder<W>,
     source: &std::path::Path,

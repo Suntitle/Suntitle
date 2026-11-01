@@ -9,6 +9,9 @@ default = []
 gui = ["dep:diamant-ui"]
 
 [dependencies]
+oci-artifact = { path = "../oci-artifact" }
+dirs = "6"
+tempfile = "3"
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs", "derive", "runtime", "unstable-runtime", "cel"] }
 k8s-openapi = { version = "0.28", features = ["v1_36", "schemars"] }
 schemars = { version = "1", features = ["chrono04"] }
@@ -39,6 +42,9 @@ warp = { version = "0.4.2", features = ["websocket", "server"] }
 clap_reverse = "0.1.1"
 
 [dev-dependencies]
+sha2 = "0.10"
+tar = "0.4"
+flate2 = "1"
 warp = { version = "0.4.2", features = ["websocket", "server", "test"] }
 
 [profile.dev]

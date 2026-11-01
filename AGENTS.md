@@ -32,3 +32,5 @@ After the user approves the solution, create a commit containing the task's comp
 ## Commenting in the code
 
 Short sentences. RFC 2119 keywords for obligations. Commit = imperative subject; body only for a fact the diff cannot show. Comments only where code needs clarification — never narration.
+
+New or changed types, structures, fields (including private and tuple fields), and methods MUST have documentation describing their purpose and relevant invariants. Document lifecycle transitions, their order, and terminal or deferred states at the module level. Use Rust doc comments for declarations. Keep implementation comments focused on non-obvious constraints.
