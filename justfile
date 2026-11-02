@@ -172,6 +172,28 @@ host-e2e: kubernetes-up
 node-e2e: kubernetes-up
     cargo run --locked --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
 
+# Build and retain the native development extension for the current host architecture.
+custom-node-fixtures:
+    cargo build --locked --manifest-path ws-proxy/Cargo.toml --target-dir ws-proxy/target --example custom_node_probe
+    cp ws-proxy/target/debug/examples/custom_node_probe ws-proxy/examples/custom_node_e2e/extensions/native/bin/probe
+
+# Verify local and OCI native, Python script, and Python module extensions through the API.
+custom-node-e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash scripts/generate-kubeconfigs.sh
+    compose=(docker compose -p suntitle-custom-e2e -f compose.yaml -f compose.e2e.yaml)
+    cleanup() {
+        status=$?
+        trap - EXIT
+        if (( status != 0 )); then "${compose[@]}" logs --no-color; fi
+        "${compose[@]}" down --volumes
+        exit "$status"
+    }
+    trap cleanup EXIT
+    "${compose[@]}" up -d --wait --wait-timeout 90 kube-apiserver distribution traefik
+    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example custom_node_e2e
+
 # Run Rust tests that do not require a Kubernetes server.
 test-rust:
     cargo test --locked --manifest-path ws-proxy/Cargo.toml

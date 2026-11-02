@@ -502,6 +502,7 @@ spec:
                           type: string
                         mode:
                           default: value
+                          description: Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
                           enum:
                           - value
                           - switch
@@ -515,7 +516,7 @@ spec:
                       type: object
                       x-kubernetes-validations:
                       - message: switch arguments require a flag
-                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && size(self.flag) > 0)'
                     type: array
                   execution:
                     description: Typed execution contract, unchanged by plugin setting resolution.
@@ -600,6 +601,7 @@ spec:
                           type: string
                         mode:
                           default: value
+                          description: Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
                           enum:
                           - value
                           - switch
@@ -613,7 +615,7 @@ spec:
                       type: object
                       x-kubernetes-validations:
                       - message: switch arguments require a flag
-                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && size(self.flag) > 0)'
                     type: array
                   execution:
                     description: Typed execution contract, unchanged by plugin setting resolution.

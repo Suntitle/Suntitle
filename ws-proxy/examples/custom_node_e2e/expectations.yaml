@@ -1,0 +1,13 @@
+# Values shared by all three runtime checks.
+arguments:
+  - --server
+  - ws://127.0.0.1:3030/transcribe
+  - --label
+  - default label
+  - --message
+  - "a value with spaces; $(literal)"
+  - --report
+  - "${RUN_ROOT}/${RUNTIME}.json"
+  - --finish
+  - "${RUN_ROOT}/finish"
+module: probe_module.__main__

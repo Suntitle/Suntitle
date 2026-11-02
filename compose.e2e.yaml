@@ -1,0 +1,13 @@
+# Isolated storage and registry. Application processes run in the Rust E2E harness.
+services:
+  kube-apiserver:
+    ports: !override
+      - "127.0.0.1:16443:6443"
+  traefik:
+    container_name: !reset null
+    depends_on: !reset {}
+    ports: !override
+      - "127.0.0.1:18080:80"
+  distribution:
+    labels:
+      traefik.http.routers.distribution.rule: Host(`127.0.0.1`)

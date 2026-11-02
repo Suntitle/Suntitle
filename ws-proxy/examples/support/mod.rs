@@ -8,7 +8,7 @@ use kube::{
 };
 use ws_proxy::kubernetes::{
     self, Error,
-    resources::{SuntitleHost, SuntitleNode},
+    resources::{SuntitleExtension, SuntitleHost, SuntitleNode},
 };
 
 #[allow(dead_code)]
@@ -18,38 +18,57 @@ pub fn require_free_ports() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Isolated resources and credentials owned by one E2E run.
 pub struct TestNamespace {
+    /// Namespace removed when this guard is dropped.
     name: String,
+    /// Bootstrap client used to create and remove test resources.
     client: Client,
-    root: PathBuf,
+    /// Directory containing explicit admin, API, and proxy kubeconfigs.
+    kubeconfigs: PathBuf,
 }
 
+#[allow(dead_code)]
 impl TestNamespace {
+    /// Bootstrap against the normal local Kubernetes endpoint.
     pub async fn new() -> Result<Self, Error> {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let kubeconfigs = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
-            .to_owned();
-        let client = kubernetes::client_from_kubeconfig(&root.join("pki/admin.kubeconfig")).await?;
+            .join("pki");
+        Self::with_kubeconfigs(kubeconfigs).await
+    }
+
+    /// Bootstrap against an explicitly selected test Kubernetes server.
+    pub async fn with_kubeconfigs(kubeconfigs: PathBuf) -> Result<Self, Error> {
+        let client =
+            kubernetes::client_from_kubeconfig(&kubeconfigs.join("admin.kubeconfig")).await?;
         let namespace = Self {
             name: format!("e2e-{}", uuid::Uuid::new_v4()),
             client,
-            root,
+            kubeconfigs,
         };
         kubernetes::bootstrap(namespace.client.clone(), &namespace.name).await?;
         Ok(namespace)
     }
 
+    /// Configure one application with namespace-scoped test credentials.
     pub fn command(&self, binary: PathBuf, role: &str) -> Command {
         let mut command = Command::new(binary);
         command
             .arg("--kubeconfig")
-            .arg(self.root.join(format!("pki/suntitle-{role}.kubeconfig")))
+            .arg(self.kubeconfigs.join(format!("suntitle-{role}.kubeconfig")))
             .arg("--namespace")
             .arg(&self.name);
         command
     }
 
+    /// Access node observations in this test's isolated namespace.
+    pub fn nodes(&self) -> Api<SuntitleNode> {
+        Api::namespaced(self.client.clone(), &self.name)
+    }
+
+    /// Remove owned resources before finalizing a namespace without a namespace controller.
     async fn cleanup(client: Client, name: String) -> Result<(), Error> {
         let nodes: Api<SuntitleNode> = Api::namespaced(client.clone(), &name);
         let hosts: Api<SuntitleHost> = Api::namespaced(client.clone(), &name);
@@ -64,6 +83,10 @@ impl TestNamespace {
             hosts.patch(&name, &PatchParams::default(), &patch).await?;
             hosts.delete(&name, &DeleteParams::default()).await?;
         }
+        let extensions: Api<SuntitleExtension> = Api::namespaced(client.clone(), &name);
+        extensions
+            .delete_collection(&DeleteParams::default(), &ListParams::default())
+            .await?;
         for plural in ["roles", "rolebindings"] {
             let resource = kube::api::ApiResource::from_gvk(&kube::core::GroupVersionKind::gvk(
                 "rbac.authorization.k8s.io",

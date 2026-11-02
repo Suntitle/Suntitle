@@ -1,0 +1,12 @@
+spec:
+  name: OCI python-script probe
+  hostRef:
+    name: "${HOST_NAME}"
+  extensionRef:
+    name: oci-python-script-probe
+  enabled: true
+  settings:
+    custom:
+      message: "a value with spaces; $(literal)"
+      report: "${RUN_ROOT}/oci-python-script.json"
+      finish: "${RUN_ROOT}/finish"

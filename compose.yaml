@@ -185,6 +185,10 @@ services:
     command: [ws-proxy, --kubeconfig, /etc/kubernetes/pki/suntitle-proxy.compose.kubeconfig, --namespace, suntitle]
     volumes:
       - ./pki:/etc/kubernetes/pki:ro
+      # Developers' local extension sources. Override the host directory in .env.local.
+      - ${LOCAL_EXTENSIONS_DIR:-./extensions}:/opt/suntitle/extensions:ro
+      # Bundled E2E fixtures, also available for manual development testing.
+      - ./ws-proxy/examples/custom_node_e2e/extensions:/opt/suntitle/example-extensions:ro
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ws-proxy.rule=Path(`/register`) || Path(`/transcribe`) || Path(`/translate`) || Path(`/display`) || (Path(`/`) && Header(`Upgrade`, `websocket`) && !Header(`Sec-WebSocket-Protocol`, `vite-hmr`))"

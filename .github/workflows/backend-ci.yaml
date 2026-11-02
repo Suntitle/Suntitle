@@ -96,6 +96,10 @@ jobs:
         timeout-minutes: 5
         run: just node-e2e
 
+      - name: Run custom extension E2E example
+        timeout-minutes: 5
+        run: just custom-node-e2e
+
       - name: Run WebSocket relay E2E example
         timeout-minutes: 2
         run: |
