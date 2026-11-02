@@ -1,3 +1,14 @@
+//! Shared E2E infrastructure. Recipes prepare binaries before harness startup.
+//! Application guards MUST stop children before namespace and temporary-file cleanup.
+#![allow(dead_code)]
+
+mod api;
+mod process;
+
+pub use api::ApiClient;
+#[allow(unused_imports)]
+pub use process::{ChildProcess, binary_directory, binary_path, fixture_python, wait_for_services};
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -11,7 +22,7 @@ use ws_proxy::kubernetes::{
     resources::{SuntitleExtension, SuntitleHost, SuntitleNode},
 };
 
-#[allow(dead_code)]
+/// Require exclusive local API and proxy ports before starting application children.
 pub fn require_free_ports() -> std::io::Result<()> {
     let _proxy = std::net::TcpListener::bind("127.0.0.1:3030")?;
     let _api = std::net::TcpListener::bind("127.0.0.1:3031")?;
@@ -28,7 +39,6 @@ pub struct TestNamespace {
     kubeconfigs: PathBuf,
 }
 
-#[allow(dead_code)]
 impl TestNamespace {
     /// Bootstrap against the normal local Kubernetes endpoint.
     pub async fn new() -> Result<Self, Error> {

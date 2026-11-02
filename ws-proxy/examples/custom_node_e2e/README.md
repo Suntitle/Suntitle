@@ -23,6 +23,15 @@ starts isolated Kubernetes storage, Distribution, and Traefik in a separate Comp
 project. Temporary kubeconfigs point to port 16443. The test uses an isolated host
 artifact directory. Test infrastructure and its volumes are removed on exit.
 
+Preparation is explicit: `custom-node-e2e` depends on `custom-node-fixtures`, which
+depends on `e2e-build`. Cargo builds application binaries and examples in
+`ws-proxy/target`; the fixture recipe copies the native probe into its retained
+source directory. The harness starts prepared binaries without invoking Cargo.
+For direct execution, run `just custom-node-fixtures` before
+`ws-proxy/target/debug/examples/custom_node_e2e` and provide the isolated services.
+Host and node harnesses use the same shared process/API helpers and also require
+`just e2e-build` before direct execution.
+
 The `*-extension.yaml` and `*-node.yaml` files are the complete API request bodies.
 `scenarios.yaml` enumerates cases; `expectations.yaml` contains expected process
 arguments. The harness replaces `${SOURCE_ROOT}`, `${HOST_NAME}`, and `${RUN_ROOT}`

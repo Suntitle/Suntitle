@@ -34,6 +34,45 @@ defines the complete source-to-registry-to-local-folder lifecycle. Publication
 success means the artifact is available for distribution, not that host installation
 or node execution has succeeded.
 
+## Registration and publication sequence
+
+The API persists desired extension state before the background worker prepares and
+publishes its source. The controller reports publication readiness only after the
+canonical digest reference resolves in Distribution.
+
+```mermaid
+sequenceDiagram
+    actor USER as API client
+    participant HUB as HUB (API and controllers)
+    participant WORKER as Publication worker
+    participant SOURCE as Original source
+    participant REGISTRY as Distribution
+
+    USER->>HUB: Register Extension source and adapter
+    HUB-->>USER: 201 Created (publication pending)
+    HUB->>WORKER: Queue background publication
+    alt Local HUB folder or Git HTTP(S)
+        WORKER->>SOURCE: Read folder or fetch depth-one Git HEAD
+        SOURCE-->>WORKER: Payload files
+        WORKER->>WORKER: Stream directory archive with adapter.yaml
+    else HTTP executable
+        WORKER->>SOURCE: Download executable
+        SOURCE-->>WORKER: File byte stream
+    else Upstream OCI artifact
+        WORKER->>SOURCE: Pull manifest and blobs
+        SOURCE-->>WORKER: Original manifest and blob streams
+    end
+    WORKER->>REGISTRY: Publish or mirror using oci-artifact
+    REGISTRY-->>WORKER: Canonical digest reference
+    WORKER->>REGISTRY: Verify digest reference resolves
+    REGISTRY-->>WORKER: Manifest available
+    WORKER-->>HUB: Publication succeeded
+    HUB->>HUB: Extension Ready=True for current generation
+```
+
+Host download, installation, and supervised execution follow the
+[custom-node sequence](custom-node-type-plan.md#registration-preparation-and-execution-sequence).
+
 ## Source preparation and streaming publication
 
 Git, HTTP, and upstream OCI source preparation belong to this plan. Custom node

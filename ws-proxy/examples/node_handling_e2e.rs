@@ -1,3 +1,5 @@
+//! Verify built-in node launch, process completion, and replay after service restart.
+//! Recipes prepare binaries. Fixtures exit before disconnect; shared guards own application shutdown.
 mod support;
 
 #[cfg(not(unix))]
@@ -8,116 +10,35 @@ fn main() {
 #[cfg(unix)]
 mod unix {
     use std::collections::BTreeSet;
-    use std::env;
     use std::error::Error;
-    use std::ffi::OsString;
     use std::fs;
     use std::io;
-    use std::path::{Path, PathBuf};
-    use std::process::{Child, Command, Stdio};
+    use std::path::Path;
+    use std::process::Command;
     use std::time::Duration;
 
-    use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
     use serde_json::{Value, json};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
-    use tokio::time::{Instant, sleep, timeout};
+    use tokio::time::{Instant, sleep};
     use uuid::Uuid;
 
-    const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
     const ACTION_TIMEOUT: Duration = Duration::from_secs(10);
     const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-    struct ChildProcess {
-        name: &'static str,
-        child: Child,
-    }
+    use crate::support::{
+        ApiClient, ChildProcess, binary_directory, binary_path, fixture_python, wait_for_services,
+    };
 
-    impl ChildProcess {
-        fn spawn(name: &'static str, command: &mut Command) -> io::Result<Self> {
-            let child = command
-                .stdin(Stdio::null())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn()?;
-            Ok(Self { name, child })
-        }
-
-        fn ensure_running(&mut self) -> io::Result<()> {
-            if let Some(status) = self.child.try_wait()? {
-                return Err(io::Error::other(format!(
-                    "{} exited before the E2E check completed: {status}",
-                    self.name
-                )));
-            }
-            Ok(())
-        }
-
-        fn terminate(&self) -> io::Result<()> {
-            let pid = i32::try_from(self.child.id())
-                .map_err(|_| io::Error::other("child process ID exceeds i32"))?;
-            kill(Pid::from_raw(pid), Signal::SIGTERM).map_err(io::Error::other)
-        }
-
-        async fn wait_for_exit(&mut self) -> io::Result<()> {
-            let deadline = Instant::now() + ACTION_TIMEOUT;
-            loop {
-                if let Some(status) = self.child.try_wait()? {
-                    if status.success() {
-                        return Ok(());
-                    }
-                    return Err(io::Error::other(format!(
-                        "{} exited unsuccessfully: {status}",
-                        self.name
-                    )));
-                }
-                if Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!("timed out waiting for {} to stop", self.name),
-                    ));
-                }
-                sleep(POLL_INTERVAL).await;
-            }
-        }
-    }
-
-    impl Drop for ChildProcess {
-        fn drop(&mut self) {
-            if self.child.try_wait().ok().flatten().is_none() {
-                let _ = self.child.kill();
-            }
-            let _ = self.child.wait();
-        }
-    }
-
-    struct TemporaryDirectory(PathBuf);
-
-    impl TemporaryDirectory {
-        fn new() -> io::Result<Self> {
-            let path = env::temp_dir().join(format!("suntitle-nodes-e2e-{}", Uuid::new_v4()));
-            fs::create_dir(&path)?;
-            Ok(Self(path))
-        }
-    }
-
-    impl Drop for TemporaryDirectory {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
+    /// Run built-in node launch and replay assertions using prepared application binaries.
     pub async fn run() -> Result<(), Box<dyn Error>> {
         crate::support::require_free_ports()?;
-        build_helpers()?;
         let binary_directory = binary_directory()?;
+        let client = ApiClient::new()?;
         let namespace = crate::support::TestNamespace::new()
             .await
             .map_err(io::Error::other)?;
-        let temporary_directory = TemporaryDirectory::new()?;
-        let process_log = temporary_directory.0.join("node-processes.log");
-        let project = temporary_directory.0.join("project with spaces");
+        let temporary_directory = tempfile::tempdir()?;
+        let process_log = temporary_directory.path().join("node-processes.log");
+        let project = temporary_directory.path().join("project with spaces");
         fs::create_dir(&project)?;
         fs::write(
             project.join("pyproject.toml"),
@@ -145,7 +66,7 @@ with log.open('a') as f:
             "ws-proxy",
             &mut namespace.command(binary_path(&binary_directory, "ws-proxy"), "proxy"),
         )?;
-        wait_for_proxy(&mut proxy).await?;
+        wait_for_services(&mut [&mut api, &mut proxy]).await?;
 
         let mut diamant_command = Command::new(binary_path(&binary_directory, "diamant"));
         diamant_command
@@ -166,45 +87,49 @@ with log.open('a') as f:
             .env("FAKE_NODE_LOG", &process_log);
         let mut diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
 
-        let host_id = wait_for_host(&host_name, "Online", &mut proxy, &mut diamant).await?;
-        let audio = request_json(
-            "POST",
-            &format!("/api/v1/hosts/{host_id}/nodes"),
-            Some(&audio_body(&host_name, "Studio microphone", 16_000)),
-            201,
-        )
-        .await?;
+        let host_id =
+            wait_for_host(&client, &host_name, "Online", &mut proxy, &mut diamant).await?;
+        let audio = client
+            .request(
+                "POST",
+                &format!("/api/v1/hosts/{host_id}/nodes"),
+                Some(&audio_body(&host_name, "Studio microphone", 16_000)),
+                201,
+            )
+            .await?;
         let audio_id = audio["metadata"]["name"]
             .as_str()
             .ok_or("missing node name")?
             .to_owned();
-        let display = request_json(
-            "POST",
-            &format!("/api/v1/hosts/{host_id}/nodes"),
-            Some(&display_body(&host_name, "Main display", 3)),
-            201,
-        )
-        .await?;
+        let display = client
+            .request(
+                "POST",
+                &format!("/api/v1/hosts/{host_id}/nodes"),
+                Some(&display_body(&host_name, "Main display", 3)),
+                201,
+            )
+            .await?;
         let display_id = display["metadata"]["name"]
             .as_str()
             .ok_or("missing node name")?
             .to_owned();
 
-        wait_for_nodes(2, true, &mut proxy, &mut diamant).await?;
+        wait_for_nodes(&client, 2, true, &mut proxy, &mut diamant).await?;
         wait_for_starts(&process_log, "suntitle-listener.py", 1).await?;
         wait_for_starts(&process_log, "suntitle.py", 1).await?;
 
-        wait_for_node(&audio_id, "Studio microphone", true).await?;
-        wait_for_node(&display_id, "Main display", true).await?;
+        wait_for_node(&client, &audio_id, "Studio microphone", true).await?;
+        wait_for_node(&client, &display_id, "Main display", true).await?;
 
-        request_json(
-            "POST",
-            &format!("/api/v1/hosts/{host_id}/nodes"),
-            Some(&display_body(&host_name, "Auxiliary display", 5)),
-            201,
-        )
-        .await?;
-        wait_for_nodes(3, true, &mut proxy, &mut diamant).await?;
+        client
+            .request(
+                "POST",
+                &format!("/api/v1/hosts/{host_id}/nodes"),
+                Some(&display_body(&host_name, "Auxiliary display", 5)),
+                201,
+            )
+            .await?;
+        wait_for_nodes(&client, 3, true, &mut proxy, &mut diamant).await?;
         wait_for_starts(&process_log, "suntitle.py", 2).await?;
 
         // Fixtures MUST exit before testing disconnect and replay.
@@ -212,8 +137,8 @@ with log.open('a') as f:
         wait_for_all_processes_to_stop(&process_log).await?;
         diamant.terminate()?;
         diamant.wait_for_exit().await?;
-        wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
-        wait_for_host(&host_name, "Offline", &mut proxy, &mut diamant).await?;
+        wait_for_nodes(&client, 3, false, &mut proxy, &mut diamant).await?;
+        wait_for_host(&client, &host_name, "Offline", &mut proxy, &mut diamant).await?;
         wait_for_all_processes_to_stop(&process_log).await?;
 
         // Restart both independent services with the same Kubernetes namespace. The API
@@ -228,21 +153,21 @@ with log.open('a') as f:
             "ws-proxy",
             &mut namespace.command(binary_path(&binary_directory, "ws-proxy"), "proxy"),
         )?;
-        wait_for_proxy(&mut proxy).await?;
+        wait_for_services(&mut [&mut api, &mut proxy]).await?;
         api.ensure_running()?;
-        wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
+        wait_for_nodes(&client, 3, false, &mut proxy, &mut diamant).await?;
         fs::remove_file(project.join("finish"))?;
         diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
-        wait_for_nodes(3, true, &mut proxy, &mut diamant).await?;
+        wait_for_nodes(&client, 3, true, &mut proxy, &mut diamant).await?;
         wait_for_starts(&process_log, "suntitle-listener.py", 2).await?;
         wait_for_starts(&process_log, "suntitle.py", 4).await?;
-        wait_for_node(&audio_id, "Studio microphone", true).await?;
+        wait_for_node(&client, &audio_id, "Studio microphone", true).await?;
         // Fixtures MUST exit before testing disconnect and replay.
         fs::write(project.join("finish"), "")?;
         wait_for_all_processes_to_stop(&process_log).await?;
         diamant.terminate()?;
         diamant.wait_for_exit().await?;
-        wait_for_nodes(3, false, &mut proxy, &mut diamant).await?;
+        wait_for_nodes(&client, 3, false, &mut proxy, &mut diamant).await?;
         wait_for_all_processes_to_stop(&process_log).await?;
 
         println!(
@@ -287,166 +212,64 @@ with log.open('a') as f:
         })?)?)
     }
 
-    fn fixture_python() -> io::Result<OsString> {
-        // On macOS /usr/bin/python3 is an Xcode launcher. Pin its actual
-        // interpreter so uv recognizes and reuses the created environment.
-        use std::os::unix::ffi::OsStringExt;
-        let output = Command::new("/usr/bin/python3")
-            .args(["-c", "import sys; print(sys.executable)"])
-            .output()?;
-        if !output.status.success() || output.stdout.is_empty() {
-            return Err(io::Error::other(
-                "could not locate the fixture Python interpreter",
-            ));
-        }
-        Ok(OsString::from_vec(
-            output
-                .stdout
-                .strip_suffix(b"\n")
-                .unwrap_or(&output.stdout)
-                .to_vec(),
-        ))
-    }
-
-    fn build_helpers() -> io::Result<()> {
-        let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-        let status = Command::new(cargo)
-            .arg("build")
-            .arg("--manifest-path")
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
-            .arg("--bins")
-            .arg("--target-dir")
-            .arg(
-                binary_directory()?
-                    .parent()
-                    .expect("debug directory has target parent"),
-            )
-            .status()?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(io::Error::other(format!(
-                "failed to build E2E binaries: {status}"
-            )))
-        }
-    }
-
-    fn binary_directory() -> io::Result<PathBuf> {
-        env::current_exe()?
-            .parent()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .ok_or_else(|| io::Error::other("could not determine Cargo target directory"))
-    }
-
-    fn binary_path(directory: &Path, name: &str) -> PathBuf {
-        directory.join(format!("{name}{}", env::consts::EXE_SUFFIX))
-    }
-
-    async fn wait_for_proxy(proxy: &mut ChildProcess) -> io::Result<()> {
-        let deadline = Instant::now() + STARTUP_TIMEOUT;
-        loop {
-            proxy.ensure_running()?;
-            if TcpStream::connect("127.0.0.1:3030").await.is_ok()
-                && TcpStream::connect("127.0.0.1:3031").await.is_ok()
-            {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "timed out waiting for proxy port 3030 and API port 3031",
-                ));
-            }
-            sleep(POLL_INTERVAL).await;
-        }
-    }
-
+    /// Resolve a host UID after shared presence polling.
     async fn wait_for_host(
+        client: &ApiClient,
         name: &str,
         status: &str,
         proxy: &mut ChildProcess,
         diamant: &mut ChildProcess,
     ) -> Result<Uuid, Box<dyn Error>> {
-        let deadline = Instant::now() + ACTION_TIMEOUT;
-        loop {
-            proxy.ensure_running()?;
-            if status == "Online" {
-                diamant.ensure_running()?;
-            }
-            if let Ok(hosts) = request_json("GET", "/api/v1/hosts", None, 200).await
-                && let Some(host) = hosts["items"].as_array().and_then(|items| {
-                    items.iter().find(|host| {
-                        host["spec"]["name"] == name
-                            && host["status"]["presence"].as_str() == Some(status)
-                    })
-                })
-            {
-                return value_uuid(&host["metadata"], "uid");
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("timed out waiting for host {name} to become {status}"),
-                )
-                .into());
-            }
-            sleep(POLL_INTERVAL).await;
+        let mut required = vec![proxy];
+        if status == "Online" {
+            required.push(diamant);
         }
+        let host = client
+            .wait_for_host(name, status, ACTION_TIMEOUT, &mut required)
+            .await?;
+        value_uuid(&host["metadata"], "uid")
     }
 
+    /// Wait for every desired node to reflect the expected connection state.
     async fn wait_for_nodes(
+        client: &ApiClient,
         total: usize,
         connected: bool,
         proxy: &mut ChildProcess,
         diamant: &mut ChildProcess,
     ) -> Result<(), Box<dyn Error>> {
-        let deadline = Instant::now() + ACTION_TIMEOUT;
-        loop {
-            proxy.ensure_running()?;
-            if connected {
-                diamant.ensure_running()?;
-            }
-            if let Ok(nodes) = request_json("GET", "/api/v1/nodes", None, 200).await
-                && nodes["items"].as_array().map(Vec::len) == Some(total)
-                && nodes["items"].as_array().is_some_and(|items| {
-                    items.iter().all(|node| {
-                        node["status"]["phase"]
-                            == if connected { "Running" } else { "Disconnected" }
-                    })
-                })
-            {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("timed out waiting for {total} API nodes"),
-                )
-                .into());
-            }
-            sleep(POLL_INTERVAL).await;
-        }
+        client
+            .wait_for("/api/v1/nodes", ACTION_TIMEOUT, |nodes| {
+                proxy.ensure_running()?;
+                if connected {
+                    diamant.ensure_running()?;
+                }
+                Ok(nodes["items"].as_array().is_some_and(|items| {
+                    items.len() == total
+                        && items.iter().all(|node| {
+                            node["status"]["phase"]
+                                == if connected { "Running" } else { "Disconnected" }
+                        })
+                }))
+            })
+            .await?;
+        Ok(())
     }
 
-    async fn wait_for_node(id: &str, name: &str, connected: bool) -> Result<(), Box<dyn Error>> {
-        let deadline = Instant::now() + ACTION_TIMEOUT;
-        loop {
-            if let Ok(node) = request_json("GET", &format!("/api/v1/nodes/{id}"), None, 200).await
-                && node["spec"]["name"] == name
-                && (!connected || node["status"]["phase"] == "Running")
-            {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("timed out waiting for node {id} to be updated"),
-                )
-                .into());
-            }
-            sleep(POLL_INTERVAL).await;
-        }
+    /// Wait for one node's desired name and runtime observation.
+    async fn wait_for_node(
+        client: &ApiClient,
+        id: &str,
+        name: &str,
+        connected: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        client
+            .wait_for(&format!("/api/v1/nodes/{id}"), ACTION_TIMEOUT, |node| {
+                Ok(node["spec"]["name"] == name
+                    && (!connected || node["status"]["phase"] == "Running"))
+            })
+            .await?;
+        Ok(())
     }
 
     async fn wait_for_starts(path: &Path, script: &str, count: usize) -> io::Result<()> {
@@ -495,52 +318,6 @@ with log.open('a') as f:
                 ));
             }
             sleep(POLL_INTERVAL).await;
-        }
-    }
-
-    async fn request_json(
-        method: &str,
-        path: &str,
-        body: Option<&Value>,
-        expected_status: u16,
-    ) -> Result<Value, Box<dyn Error>> {
-        let body = body
-            .map(serde_json::to_vec)
-            .transpose()?
-            .unwrap_or_default();
-        let mut stream = TcpStream::connect("127.0.0.1:3031").await?;
-        let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:3031\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        stream.write_all(request.as_bytes()).await?;
-        stream.write_all(&body).await?;
-
-        let mut response = Vec::new();
-        timeout(Duration::from_secs(2), stream.read_to_end(&mut response)).await??;
-        let body_offset = response
-            .windows(4)
-            .position(|window| window == b"\r\n\r\n")
-            .map(|offset| offset + 4)
-            .ok_or_else(|| io::Error::other("control API returned an invalid HTTP response"))?;
-        let headers = std::str::from_utf8(&response[..body_offset])?;
-        let status = headers
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .and_then(|code| code.parse::<u16>().ok())
-            .ok_or_else(|| io::Error::other("control API returned an invalid status line"))?;
-        if status != expected_status {
-            return Err(io::Error::other(format!(
-                "{method} {path} returned {status}, expected {expected_status}: {}",
-                String::from_utf8_lossy(&response[body_offset..])
-            ))
-            .into());
-        }
-        if response.len() == body_offset {
-            Ok(Value::Null)
-        } else {
-            Ok(serde_json::from_slice(&response[body_offset..])?)
         }
     }
 }

@@ -337,6 +337,9 @@ just host-e2e
 The example stops its application children and removes its isolated Kubernetes
 namespace when it finishes. Kubernetes remains running.
 Both E2Es require ports 3030 and 3031 to be free.
+The recipes depend on `just e2e-build` to prepare applications and examples before
+startup. Direct example execution requires this preparation too; harnesses share
+process guards, service waits, and API polling under `ws-proxy/examples/support`.
 
 To verify node lifecycle handling end to end, run:
 
@@ -356,6 +359,8 @@ script, and Python module execution, run `just custom-node-e2e`. The YAML reques
 and retained development sources are in
 [`ws-proxy/examples/custom_node_e2e`](ws-proxy/examples/custom_node_e2e/README.md).
 Compose mounts those fixtures into HUB at `/opt/suntitle/example-extensions`.
+The custom-node recipe explicitly depends on `custom-node-fixtures`, which builds
+the E2E binaries and copies the native probe into its retained source directory.
 
 ## Run the proxy on AWS with Pulumi
 
