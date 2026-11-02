@@ -90,7 +90,7 @@ fn arbitrary_value_schema(generator: &mut schemars::SchemaGenerator) -> schemars
 #[derive(kube::KubeSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[x_kube(cel)]
-#[x_kube(validation = kube::core::Rule::new("!has(self.mode) || self.mode != 'switch' || (has(self.flag) && self.flag != null)")
+#[x_kube(validation = kube::core::Rule::new("!has(self.mode) || self.mode != 'switch' || (has(self.flag) && size(self.flag) > 0)")
     .message("switch arguments require a flag"))]
 pub struct ArgumentBinding {
     /// Omit the flag for a positional value.
@@ -99,6 +99,7 @@ pub struct ArgumentBinding {
     pub flag: Option<String>,
     /// Standard runtime value or exact user-defined setting key.
     pub source: ArgumentSource,
+    /// Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
     #[serde(default, skip_serializing_if = "ArgumentMode::is_value")]
     #[schemars(extend("default" = "value"))]
     pub mode: ArgumentMode,

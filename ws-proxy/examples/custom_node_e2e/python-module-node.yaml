@@ -1,0 +1,12 @@
+spec:
+  name: python-module probe
+  hostRef:
+    name: "${HOST_NAME}"
+  extensionRef:
+    name: python-module-probe
+  enabled: true
+  settings:
+    custom:
+      message: "a value with spaces; $(literal)"
+      report: "${RUN_ROOT}/python-module.json"
+      finish: "${RUN_ROOT}/finish"

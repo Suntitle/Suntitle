@@ -469,6 +469,10 @@ Publication and host preparation are implemented. Existing tests cover resource
 resolution, executor results, Git shallow snapshots, download/preparation handoff,
 heartbeats, and cancellation. The Compose/ORAS test verifies registry transport
 interoperability. It does not prove extension registration through process launch.
+`just custom-node-e2e` separately verifies registration through actual native,
+Python script, and Python module launch for local and mirrored OCI sources. OCI
+seed artifacts are pushed through `oci_artifact::Publisher` into a separate source
+repository before the Extension controller mirrors them into its managed repository.
 
 Recovery automation, complete acceptance coverage, and UI integration are tracked
 in the [custom node execution plan](custom-node-type-plan.md#remaining-recovery-and-acceptance).
@@ -477,7 +481,7 @@ layout validation stage for these follow-ups.
 
 ### Remaining delivery checks
 
-- [ ] Run the complete API-to-running-process acceptance test. Custom apply and command construction are implemented; complete acceptance coverage remains outstanding.
+- [x] Run API-to-running-process acceptance for native, Python script, and Python module extensions from local and OCI sources. Broader lifecycle coverage remains separate.
 - [ ] Verify the static Linux builds for the server binaries and Diamant. The current musl Dockerfile checks the API/proxy for dynamic dependencies, but does not build Diamant; its host artifact needs an equivalent build/check before claiming a complete static release.
 
 ### Optional deployment and coverage follow-up

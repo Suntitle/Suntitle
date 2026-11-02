@@ -80,6 +80,13 @@ that port is no longer published by the stack.
 
 ### Extension artifact registry
 
+For your own local extensions, put each payload in `extensions/<name>/` and register
+it with `sourceType: local` and `source: /opt/suntitle/extensions/<name>`.
+Compose mounts that directory read-only into HUB. Set `LOCAL_EXTENSIONS_DIR` in
+`.env.local` to use another host directory. Its contents are ignored by Git.
+The bundled E2E fixtures are available separately at
+`/opt/suntitle/example-extensions/{native,python-script,python-module}`.
+
 Distribution 3 stores OCI artifacts in the persistent `registry-data` volume,
 independently of Kubernetes. Traefik routes `registry.localhost` to its private
 port 5000. Set `REGISTRY_HOST` in `.env.local` to override the hostname. Clients
@@ -343,6 +350,12 @@ replay. Real embedded uv runs a dependency-free Python fixture, so the test
 does not use audio hardware, models, or a graphical session. Fixtures exit
 themselves before Diamant disconnects; this test does not cover child
 cancellation. The check currently requires Unix and `/usr/bin/python3`.
+
+To verify local and OCI extension registration through actual native, Python
+script, and Python module execution, run `just custom-node-e2e`. The YAML requests
+and retained development sources are in
+[`ws-proxy/examples/custom_node_e2e`](ws-proxy/examples/custom_node_e2e/README.md).
+Compose mounts those fixtures into HUB at `/opt/suntitle/example-extensions`.
 
 ## Run the proxy on AWS with Pulumi
 

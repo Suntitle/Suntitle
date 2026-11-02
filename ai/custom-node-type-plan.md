@@ -11,8 +11,9 @@ Registration, publication, host preparation, argument construction, and custom
 execution are implemented. Successful installation transitions through
 `Installed=True`, phase `Pending`, into apply. Enabled nodes launch native binaries
 directly or Python scripts/modules through embedded UV. Disabled nodes do not spawn.
-Recovery automation, complete API-to-process acceptance coverage, and UI integration
-remain outstanding; implementation completion does not imply those checks passed.
+API-to-process acceptance now covers local and OCI sources with native executables,
+Python scripts, and Python modules through `just custom-node-e2e`. Recovery automation,
+broader lifecycle acceptance coverage, and UI integration remain outstanding.
 
 The first working milestone is a self-contained executable created through the
 API, assigned to a host, and launched with mapped flags. UI support is a separate
@@ -177,8 +178,7 @@ sequenceDiagram
 ```
 
 After installation succeeds, the planner selects custom apply. The following
-execution sequence is implemented; a complete API-driven acceptance test remains
-outstanding:
+execution sequence is implemented and covered by the API-driven custom-node E2E:
 
 ```mermaid
 sequenceDiagram
@@ -640,11 +640,11 @@ Already covered by existing tests:
 
 Outstanding acceptance and release checks:
 
-- [ ] End-to-end native launch with exact flags and full runtime WebSocket URL.
+- [x] End-to-end native launch with exact flags and full runtime WebSocket URL for local and mirrored OCI sources.
 - [ ] Verify explicit pipeline routing separately when implemented; `inputRef` does not currently route data or gate startup.
 - [ ] Disabled nodes remain stopped; a setting/restart/artifact change runs the current intended payload.
 - [ ] Argument-building failure, spawn failure, and process exit produce the corresponding runtime status without erasing valid installation status.
-- [ ] Actual custom Python script/module execution through embedded UV, beyond command construction.
+- [x] Actual custom Python script/module execution through embedded UV for local and mirrored OCI sources.
 - [ ] Browser create/configure/start workflow and Cypress tests before claiming UI support.
 - [ ] Static Linux server and Diamant build verification before declaring a complete static release; see the publication plan delivery checks.
 

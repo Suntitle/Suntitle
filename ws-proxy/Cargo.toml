@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
 
+[[example]]
+name = "custom_node_probe"
+path = "examples/custom_node_e2e/extensions/native/main.rs"
+
 [features]
 default = []
 gui = ["dep:diamant-ui"]

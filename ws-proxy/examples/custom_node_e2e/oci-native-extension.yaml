@@ -1,0 +1,30 @@
+name: oci-native-probe
+spec:
+  name: OCI native probe
+  sourceType: oci
+  source: "${REGISTRY}/custom-node-sources/${HOST_NAME}/native:fixture"
+  adapter:
+    type: transcriber
+    execution:
+      runtime: executable
+      command: ./bin/probe
+    settings:
+      label:
+        default: default label
+      message:
+        default: overridden by node
+      report:
+        required: true
+      finish:
+        required: true
+    arguments:
+      - flag: --server
+        source: runtime.websocketUrl
+      - flag: --label
+        source: settings.label
+      - flag: --message
+        source: settings.message
+      - flag: --report
+        source: settings.report
+      - flag: --finish
+        source: settings.finish
