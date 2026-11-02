@@ -1,7 +1,8 @@
 //! Select one dispatch plan from the current node revision.
 //!
 //! Deletion selects removal. Built-in nodes select apply. Extension nodes wait
-//! for a current publication, then select download. Both reconciliation loops
+//! for a current publication, then download and apply. Artifact changes invalidate installation; configuration
+//! changes invalidate only apply. Both reconciliation loops
 //! and acknowledgement validation MUST use this selection.
 use crate::{
     kubernetes::{
@@ -18,6 +19,13 @@ pub(super) enum Plan {
         /// Published reference selected for this node generation.
         reference: String,
         /// Resolved execution and settings corresponding to this node revision.
+        adapter: Box<ResolvedAdapter>,
+    },
+    /// Launch a prepared artifact using the current resolved command configuration.
+    CustomApply {
+        /// Published payload that MUST already be installed.
+        reference: String,
+        /// Current command and settings, independent of payload installation.
         adapter: Box<ResolvedAdapter>,
     },
     /// Apply a built-in runtime specification.
@@ -45,25 +53,43 @@ impl Plan {
             .artifact_reference
             .as_ref()
             .filter(|r| !r.is_empty())?;
-        Some(Self::Download {
-            reference: reference.clone(),
-            adapter: Box::new(status.resolved_adapter.clone()?),
-        })
+        let adapter = Box::new(status.resolved_adapter.clone()?);
+        if status
+            .conditions
+            .iter()
+            .any(|c| c.type_ == "Installed" && c.status == "True")
+            && status
+                .dispatch
+                .as_ref()
+                .is_none_or(|d| d.artifact_reference.as_ref() == Some(reference))
+        {
+            Some(Self::CustomApply {
+                reference: reference.clone(),
+                adapter,
+            })
+        } else {
+            Some(Self::Download {
+                reference: reference.clone(),
+                adapter,
+            })
+        }
     }
 
     /// Return the wire operation represented by this plan.
     pub(super) fn operation(&self) -> Operation {
         match self {
             Self::Download { .. } => Operation::Download,
-            Self::BuiltinApply => Operation::Apply,
+            Self::BuiltinApply | Self::CustomApply { .. } => Operation::Apply,
             Self::Remove => Operation::Remove,
         }
     }
 
-    /// Return the publication snapshot required only for downloads.
+    /// Return the payload identity required for custom preparation and execution.
     pub(super) fn artifact_reference(&self) -> Option<&str> {
         match self {
-            Self::Download { reference, .. } => Some(reference),
+            Self::Download { reference, .. } | Self::CustomApply { reference, .. } => {
+                Some(reference)
+            }
             _ => None,
         }
     }
@@ -111,6 +137,15 @@ impl Plan {
             Self::BuiltinApply => RegistrationServerMessage::Apply {
                 identity,
                 spec: Box::new(spec),
+                custom: None,
+            },
+            Self::CustomApply { reference, adapter } => RegistrationServerMessage::Apply {
+                identity,
+                spec: Box::new(spec),
+                custom: Some(Box::new(crate::registration::CustomExecution {
+                    reference,
+                    adapter: *adapter,
+                })),
             },
             Self::Remove => RegistrationServerMessage::Remove { identity },
         }

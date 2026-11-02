@@ -1,3 +1,6 @@
+//! Resolve publication and command configuration independently.
+//! A new artifact MUST invalidate installation before download and apply.
+//! Configuration changes MUST retain installation and invalidate only apply.
 use super::{Context, ReconcileError, conditions, error_policy};
 use crate::kubernetes::resources::*;
 use futures_util::StreamExt;
@@ -13,6 +16,7 @@ use kube::{
 };
 use std::sync::Arc;
 
+/// Watch nodes and referenced extension publications.
 pub(super) async fn run(
     nodes: Api<SuntitleNode>,
     extensions: Api<SuntitleExtension>,
@@ -56,6 +60,7 @@ pub(super) async fn run(
     }).await;
 }
 
+/// Resolve current configuration while preserving installation for unchanged payloads.
 fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
     let status = node.status.get_or_insert_default();
     let outcome = (|| {
@@ -98,9 +103,25 @@ fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
             if unchanged {
                 return;
             }
+            let installed = status.artifact_reference.as_ref() == Some(&reference)
+                && status
+                    .conditions
+                    .iter()
+                    .any(|c| c.type_ == "Installed" && c.status == "True");
             status.dispatch = None;
             status.resolved_adapter = resolved;
             status.artifact_reference = Some(reference);
+            if installed {
+                for condition in &mut status.conditions {
+                    if condition.type_ == "Installed" {
+                        condition.observed_generation = node.metadata.generation;
+                    }
+                }
+                status.phase = Some(NodePhase::Pending);
+                status.message =
+                    Some("Command configuration resolved; waiting for runtime apply.".into());
+                return;
+            }
             (
                 "Preparing",
                 "Extension artifact resolved; waiting for host installation.".to_string(),
@@ -108,9 +129,7 @@ fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
             )
         }
         Err((reason, message)) => {
-            status.dispatch = None;
             status.resolved_adapter = None;
-            status.artifact_reference = None;
             let phase = if reason == "InvalidExtensionSettings" {
                 NodePhase::Failed
             } else {
@@ -122,6 +141,12 @@ fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
     status.phase = Some(phase);
     status.message = Some(message.clone());
     for kind in ["Installed", "Ready", "Updated"] {
+        if kind == "Installed" && status.resolved_adapter.is_none() {
+            continue;
+        }
+        status
+            .conditions
+            .retain(|condition| condition.type_ != kind);
         status.conditions.push(Condition {
             type_: kind.into(),
             status: "False".into(),
@@ -178,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_and_deletion_clear_obsolete_resolution() {
+    fn refresh_and_deletion_block_dispatch_while_retaining_payload_identity() {
         let mut node = node();
         let mut extension = extension();
         resolve(&mut node, Some(&extension));
@@ -186,7 +211,7 @@ mod tests {
         resolve(&mut node, Some(&extension));
         let status = node.status.as_ref().unwrap();
         assert!(status.resolved_adapter.is_none());
-        assert!(status.artifact_reference.is_none());
+        assert!(status.artifact_reference.is_some());
         assert_eq!(
             status.conditions.last().unwrap().reason,
             "ExtensionNotReady"
@@ -218,6 +243,53 @@ mod tests {
         resolve(&mut node, Some(&extension()));
         assert!(node.status.unwrap().artifact_reference.is_some());
     }
+    /// Settings and command revisions preserve installation; only changed content invalidates it.
+    #[test]
+    fn configuration_changes_reuse_installation_and_content_changes_require_bootstrap() {
+        let mut node = node();
+        let mut extension = extension();
+        resolve(&mut node, Some(&extension));
+        let installed = node
+            .status
+            .as_mut()
+            .unwrap()
+            .conditions
+            .iter_mut()
+            .find(|c| c.type_ == "Installed")
+            .unwrap();
+        installed.status = "True".into();
+        node.metadata.generation = Some(3);
+        resolve(&mut node, Some(&extension));
+        assert!(matches!(
+            super::super::plan::Plan::for_node(&node),
+            Some(super::super::plan::Plan::CustomApply { .. })
+        ));
+        extension.spec.adapter.execution =
+            serde_json::from_value(json!({"command":"./other"})).unwrap();
+        resolve(&mut node, Some(&extension));
+        assert!(matches!(
+            super::super::plan::Plan::for_node(&node),
+            Some(super::super::plan::Plan::CustomApply { .. })
+        ));
+        extension.metadata.generation = Some(4);
+        resolve(&mut node, Some(&extension));
+        assert!(super::super::plan::Plan::for_node(&node).is_none());
+        extension.status.as_mut().unwrap().observed_generation = Some(4);
+        extension.status.as_mut().unwrap().conditions[0].observed_generation = Some(4);
+        resolve(&mut node, Some(&extension));
+        assert!(matches!(
+            super::super::plan::Plan::for_node(&node),
+            Some(super::super::plan::Plan::CustomApply { .. })
+        ));
+        extension.status.as_mut().unwrap().artifact_reference =
+            Some("registry/extensions@sha256:new".into());
+        resolve(&mut node, Some(&extension));
+        assert!(matches!(
+            super::super::plan::Plan::for_node(&node),
+            Some(super::super::plan::Plan::Download { .. })
+        ));
+    }
+
     #[test]
     fn unchanged_resolution_preserves_download_report_and_new_artifacts_reset_it() {
         let mut node = node();

@@ -460,22 +460,24 @@ runs preparation and publication in the background. Completion notifications
 requeue the Extension, whose status records publication readiness and the canonical
 artifact reference. Node resolution and Diamant preparation consume that reference. Host dispatch
 includes the resolved adapter. Diamant retains the prepared installation and
-execution paths for the node, reporting `Installed=True` while launch remains
-pending.
+execution paths for the node, reporting `Installed=True` before custom apply
+constructs arguments and launches the runnable. Native execution and embedded-UV
+Python command selection are implemented. Payload caching preserves installed
+files across command changes and reconnects.
 
 Publication and host preparation are implemented. Existing tests cover resource
 resolution, executor results, Git shallow snapshots, download/preparation handoff,
 heartbeats, and cancellation. The Compose/ORAS test verifies registry transport
 interoperability. It does not prove extension registration through process launch.
 
-The remaining functional work is owned by the
-[custom node execution plan](custom-node-type-plan.md#remaining-first-executable-launched-through-the-api).
+Recovery automation, complete acceptance coverage, and UI integration are tracked
+in the [custom node execution plan](custom-node-type-plan.md#remaining-recovery-and-acceptance).
 Do not add another publication executor, source-discovery mechanism, or artifact
-layout validation stage to finish custom launch.
+layout validation stage for these follow-ups.
 
 ### Remaining delivery checks
 
-- [ ] Run the complete API-to-running-process acceptance test after custom apply and command construction are implemented.
+- [ ] Run the complete API-to-running-process acceptance test. Custom apply and command construction are implemented; complete acceptance coverage remains outstanding.
 - [ ] Verify the static Linux builds for the server binaries and Diamant. The current musl Dockerfile checks the API/proxy for dynamic dependencies, but does not build Diamant; its host artifact needs an equivalent build/check before claiming a complete static release.
 
 ### Optional deployment and coverage follow-up

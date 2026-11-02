@@ -444,3 +444,34 @@ fn extension_api_fixtures_match_resource_contracts() {
     assert_eq!(list.items.len(), 1);
     assert_eq!(list.resource_version, "10");
 }
+
+/// Runnable equality includes immutable fields and excludes metadata and pipeline inputs.
+#[test]
+fn node_spec_equality_compares_typed_runnable_configuration() {
+    let document = json!({
+        "name":"Custom", "hostRef":{"name":"host"}, "extensionRef":{"name":"extension"},
+        "settings":{"custom":{"language":"en"}}
+    });
+    let spec: SuntitleNodeSpec = serde_json::from_value(document.clone()).unwrap();
+    let mut metadata = spec.clone();
+    metadata.name = "Renamed".into();
+    metadata.description = Some("Updated description".into());
+    metadata.input_ref = Some(serde_json::from_value(json!({"name":"upstream"})).unwrap());
+    assert_eq!(spec, metadata);
+    for change in [
+        json!({"hostRef":{"name":"other-host"}}),
+        json!({"enabled":false}),
+        json!({"settings":{"custom":{"language":"cs"}}}),
+        json!({"extensionRef":{"name":"other-extension"}}),
+        json!({"restartToken":"restart"}),
+        json!({"settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}}),
+    ] {
+        let mut changed = document.clone();
+        changed
+            .as_object_mut()
+            .unwrap()
+            .extend(change.as_object().unwrap().clone());
+        let changed: SuntitleNodeSpec = serde_json::from_value(changed).unwrap();
+        assert_ne!(spec, changed);
+    }
+}

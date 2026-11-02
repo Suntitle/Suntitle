@@ -3,12 +3,12 @@
 //! | Operation | Successful transition | Failed transition |
 //! | --- | --- | --- |
 //! | Download and prepare | `Downloading` → `Installed` → `AwaitingLaunch` → `Pending` | Preparation → `Failed` |
-//! | Built-in apply | Acknowledged → `Running` or `Disabled` | Rejected → `Failed` |
+//! | Apply | Acknowledged → `Running` or `Disabled` | Rejected → `Failed` |
 //! | Remove | Acknowledged → `Terminating` | Rejected → `Terminating` |
 //!
 //! `Installed` MUST advance to `AwaitingLaunch` before reporting. Neither
-//! state starts a process. Argument construction and launch remain deferred. Built-in
-//! apply bypasses extension preparation. Removal MUST retain its finalizer until
+//! state starts a process. Reconciliation then dispatches custom apply, whose
+//! acknowledgement MUST reflect actual process spawn. Built-in apply bypasses preparation. Removal MUST retain its finalizer until
 //! cleanup reconciliation verifies success. Only successful acknowledgements
 //! record the observed revision. Every transition writes its final conditions once.
 use crate::{

@@ -429,9 +429,9 @@ async fn register(
                         };
                         if command.protocol_version != 1 { break; }
                         let events = match command.message {
-                            RegistrationServerMessage::Apply { identity, spec } => {
+                            RegistrationServerMessage::Apply { identity, spec, custom } => {
                                 if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace || spec.host_ref.name != host.name || identity.restart_token != spec.restart_token { break; }
-                                manager.apply(identity, *spec).await
+                                manager.apply(identity, *spec, custom.map(|custom| *custom)).await
                             },
                             RegistrationServerMessage::DownloadArtifact { identity, reference, adapter } => {
                                 if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace { break; }

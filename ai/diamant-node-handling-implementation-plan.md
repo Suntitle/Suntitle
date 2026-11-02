@@ -239,8 +239,9 @@ Then implement the minimum control path:
 
 1. `POST /hosts/{hostId}/nodes` creates the UUID and desired node state, stores it,
    and sends `ApplyNode` to the connected host.
-2. `PUT /nodes/{nodeId}` validates immutable type/host and input compatibility,
-   increments the revision, stores the desired update, and sends `ApplyNode`.
+2. `PUT /nodes/{nodeId}` validates immutable type/host, increments the revision,
+   stores the desired update, and sends `ApplyNode`. Pipeline input references do
+   not gate startup or restart the runnable; pipeline routing is separate work.
 3. Enabling/disabling uses the same `ApplyNode` reconciliation.
 4. `POST /nodes/{nodeId}/restart` sends `RestartNode` with a new revision.
 5. Diamant status messages update the API-facing `NodeStatus` and error metadata.
