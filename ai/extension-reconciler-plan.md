@@ -2,7 +2,7 @@
 
 ## Goal
 
-Use Apalis 1.0 with in-memory storage to run long-running image pushes without
+Use Apalis 1.0 with in-memory storage to run source preparation and publication without
 blocking reconciliation. When a push succeeds or fails, notify the controller's
 workqueue to requeue the affected resource. On the next reconciliation, read the
 outcome from an in-memory status store.
@@ -13,16 +13,18 @@ Duplicate pushes of the same content hash are acceptable.
 
 The extension controller and background publication path are implemented. This
 document records their design and the remaining integration checks.
-Proposed resource fields are defined in the custom node plan; artifact packaging
+Existing resource fields are described in the custom node plan; artifact packaging
 follows the ORAS directory convention below. OCI operations use
 `rust-oci-client` (the `oci-client` crate).
 
 ## Distribution contract
 
-Every original source (local HUB folder, HTTP, Git, upstream OCI, or a future
-source) MUST be published as a structured extension artifact in the configured
-Distribution registry. That registry is always the source for custom node
-installation. The extension controller owns source preparation and publication.
+Every original source (local HUB folder, HTTP, Git, or upstream OCI) is published
+into the configured Distribution registry. Local/Git sources become directory
+artifacts, HTTP becomes one executable file layer, and upstream OCI is copied
+without layout validation. Publication does not guarantee that an upstream
+artifact can be materialized or used as an extension on the host. That registry
+is always the source for custom node installation. The extension controller owns source preparation and publication.
 Source resolution, any required packaging, and transfer run in its background task.
 Upstream OCI artifacts are republished directly without unpacking.
 The reconciler records the published artifact reference and manifest digest.
@@ -103,10 +105,14 @@ with `org.opencontainers.image.title` naming the directory,
 `io.deis.oras.content.unpack: "true"`, and `io.deis.oras.content.digest` holding
 the uncompressed tar digest. Registry blob verification remains library-owned;
 the Rust filesystem layer MUST implement the corresponding ORAS extraction
-semantics. For local, HTTP, and Git sources, package one extension directory
-containing `adapter.yaml` and its payload. Upstream OCI sources are streamed unchanged into Distribution without extension
-layout validation. Diamant restores
-that directory as the installation root. Preserve executable permissions and verify push/pull interoperability with the ORAS CLI.
+semantics. For local and Git sources, package one extension directory containing
+`adapter.yaml` and its payload. HTTP remains a single executable file with its
+adapter supplied by host dispatch. Upstream OCI is streamed unchanged without
+extension-layout validation. The current copy path handles image/artifact
+manifests and their config/layers; it does not recursively copy image indexes or
+referrer graphs. Diamant materializes the supported file/directory layout and
+uses the layer title to identify its root. Preserve executable permissions and
+verify push/pull interoperability with the ORAS CLI.
 This defines the initial artifact layout; no separate archive format is required.
 
 See the [ORAS file-store API](https://pkg.go.dev/oras.land/oras-go/v2/content/file),
@@ -138,7 +144,10 @@ The reconciler obtains state through `status()`.
 
 Startup validates configuration and constructs the HTTP and OCI clients once,
 before spawning controllers. Initialization failures are returned to the caller.
-Source preparation has separate HTTP, local-directory, and Git functions. OCI
+Declared and resolved adapters share typed execution (`runtime`, `command`,
+optional `workingDirectory`) and binding contracts; only
+plugin settings/default values retain user-defined JSON shapes. Source preparation
+has separate HTTP, local-directory, and Git functions. OCI
 republication follows its direct copy path. One `PreparedUpload` owns the payload
 stream, optional archive producer, computed annotations, and cancellation cleanup.
 The publisher accepts one layer and joins archive production before publishing
@@ -206,7 +215,7 @@ is required.
 If queue submission fails, the executor MUST remove or finalize its provisional
 record and return an error. It MUST NOT leave a permanently `Queued` task with no
 job. Coordinate concurrent submissions without holding the registry lock across
-queue submission or image execution.
+queue submission or publication.
 
 Disable automatic job retries initially, so a failure represents a terminal
 attempt. Let the controller determine if and when to resubmit. If Apalis retries
@@ -272,7 +281,7 @@ resubmission of the same attempt can recover the existing result.
 
 ## Concurrency and lifecycle
 
-- Reconciliation MUST NOT await an image push or hold a lock across it.
+- Reconciliation MUST NOT await an artifact publication or hold a lock across it.
 - Scheduling MUST coalesce repeated notifications and serialize reconciliation of
   the same key while allowing independent resource keys to run concurrently.
 - Notifications MUST NOT be silently dropped under channel backpressure. Retain
@@ -414,8 +423,9 @@ oras pull --plain-http localhost:5000/suntitle/extensions/example:dev \
   --output ./pulled-extension
 ```
 
-The media type is a proposed application convention, not an existing contract.
-This example validates generic artifact storage; runnable container images require
+The example artifact type is illustrative; production directory publication
+currently uses the ORAS unknown-artifact convention. This command validates
+generic artifact storage, not an executable extension round trip; runnable container images require
 their own OCI image manifest and layers. Production pushes use HTTPS, configured
 credentials, and immutable references.
 
@@ -426,7 +436,7 @@ pull client. The registry does not need to run inside Kubernetes.
 ## Implementation checklist
 
 - [x] Define `ExecutionId`, `TaskStatus`, `Executor`, and channel-based reconcile notifications.
-- [x] Configure Apalis `MemoryStorage` and an image-push worker with retries disabled.
+- [x] Configure Apalis `MemoryStorage` and an publication worker with retries disabled.
 - [x] Add an in-memory registry keyed by execution identity and associated with resource IDs.
 - [x] Implement `enqueue()` and `status()`, including submission failure cleanup.
 - [x] Record job start and terminal outcomes, including worker interruption handling.
@@ -448,12 +458,30 @@ The extension controller now prepares local HUB folders, HTTP executable files,
 and Git HTTP(S) snapshots, and republishes upstream OCI artifacts unchanged. Apalis
 runs preparation and publication in the background. Completion notifications
 requeue the Extension, whose status records publication readiness and the canonical
-artifact reference. Node resolution and Diamant download consume that reference.
+artifact reference. Node resolution and Diamant preparation consume that reference. Host dispatch
+includes the resolved adapter. Diamant retains the prepared installation and
+execution paths for the node, reporting `Installed=True` while launch remains
+pending.
 
-All 35 Rust library tests pass, including the Git shallow-fetch, packaging, and
-cleanup checks. Clippy and the proxy binary check pass. Remaining unchecked items
-cover broader transfer/recovery tests, standalone deployment, and the complete
-host bootstrap path. Host prerequisites and custom execution remain deferred.
+Publication and host preparation are implemented. Existing tests cover resource
+resolution, executor results, Git shallow snapshots, download/preparation handoff,
+heartbeats, and cancellation. The Compose/ORAS test verifies registry transport
+interoperability. It does not prove extension registration through process launch.
+
+The remaining functional work is owned by the
+[custom node execution plan](custom-node-type-plan.md#remaining-first-executable-launched-through-the-api).
+Do not add another publication executor, source-discovery mechanism, or artifact
+layout validation stage to finish custom launch.
+
+### Remaining delivery checks
+
+- [ ] Run the complete API-to-running-process acceptance test after custom apply and command construction are implemented.
+- [ ] Verify the static Linux builds for the server binaries and Diamant. The current musl Dockerfile checks the API/proxy for dynamic dependencies, but does not build Diamant; its host artifact needs an equivalent build/check before claiming a complete static release.
+
+### Optional deployment and coverage follow-up
+
+- [ ] Verify standalone Distribution deployment if that deployment mode is needed; Compose is the current integrated path.
+- [ ] Extend transfer/recovery coverage when changing retry, concurrency, or registry behavior. Implemented recovery rules and isolated tests are not evidence that every recovery scenario has been exercised end to end.
 
 ## Acceptance criteria
 
@@ -472,12 +500,13 @@ host bootstrap path. Host prerequisites and custom execution remain deferred.
 | Process restart | Lost tasks detected; reconstructible work may be resubmitted |
 | Many pushes | Execution concurrency remains bounded |
 | Artifact published | Pull by reported manifest digest succeeds |
-| Any original source | Nodes receive the prepared artifact from the configured registry |
-| HTTP or Git source | Upload starts before the complete payload is received; memory stays bounded |
-| Git source | Only the resolved commit snapshot is fetched, without repository history |
-| Upstream OCI source | Blobs are pulled and pushed concurrently; artifact manifests and digests are preserved |
+| Any original source | Nodes pull the published payload from Distribution; publication alone does not prove host compatibility |
+| HTTP source | Registry upload overlaps the HTTP response; the payload is not staged |
+| Local/Git directory packaging | Archive production overlaps upload; no complete archive is staged |
+| Git source | Default HEAD is fetched at depth one into a temporary bare repository before packaging; no checkout, tags, or ancestor history |
+| Upstream OCI source | Each supported manifest blob streams from pull into push; manifest bytes/digest are preserved without layout validation |
 | Transfer failure or cancellation | Both sides stop; incomplete work cannot mark the extension ready |
-| Host installation | Registry artifact becomes a validated local extension folder before launch |
+| Host installation | Supported payload materializes as a file/directory; adapter execution paths are prepared before launch |
 
 Normal execution requires no periodic task-status polling, database, or external
 queue service. Distribution remains the artifact destination.

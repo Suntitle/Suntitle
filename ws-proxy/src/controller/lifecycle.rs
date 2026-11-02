@@ -2,12 +2,12 @@
 //!
 //! | Operation | Successful transition | Failed transition |
 //! | --- | --- | --- |
-//! | Download | `Downloading` → `Downloaded` → `AwaitingPrerequisites` → `Pending` | `Downloading` → `Failed` |
+//! | Download and prepare | `Downloading` → `Installed` → `AwaitingLaunch` → `Pending` | Preparation → `Failed` |
 //! | Built-in apply | Acknowledged → `Running` or `Disabled` | Rejected → `Failed` |
 //! | Remove | Acknowledged → `Terminating` | Rejected → `Terminating` |
 //!
-//! `Downloaded` MUST advance to `AwaitingPrerequisites` before reporting. Neither
-//! state permits execution. Prerequisite preparation remains deferred. Built-in
+//! `Installed` MUST advance to `AwaitingLaunch` before reporting. Neither
+//! state starts a process. Argument construction and launch remain deferred. Built-in
 //! apply bypasses extension preparation. Removal MUST retain its finalizer until
 //! cleanup reconciliation verifies success. Only successful acknowledgements
 //! record the observed revision. Every transition writes its final conditions once.
@@ -32,14 +32,14 @@ struct Downloading<'a> {
 }
 
 /// Verified artifact files. This state cannot report execution readiness.
-struct Downloaded<'a> {
+struct Installed<'a> {
     /// Node whose artifact transfer completed successfully.
     node: &'a mut SuntitleNode,
 }
 
-/// Downloaded files awaiting the deferred prerequisite preparation stage.
-struct AwaitingPrerequisites<'a> {
-    /// Node whose files are available but whose installation is incomplete.
+/// Installed files awaiting argument construction and process launch.
+struct AwaitingLaunch<'a> {
+    /// Node whose files and execution paths are ready.
     node: &'a mut SuntitleNode,
 }
 
@@ -49,38 +49,42 @@ struct Observation<'a> {
     node: &'a mut SuntitleNode,
     /// Phase selected by the operation transition.
     phase: NodePhase,
-    /// Download outcome overriding readiness reasons and adding Installed=False.
+    /// Preparation outcome overriding readiness reasons and reporting Installed.
     download_reason: Option<&'static str>,
+    /// True only after the host has resolved the installation and entry point.
+    installation_ready: bool,
 }
 
 impl<'a> Downloading<'a> {
     /// Consume the host result. Only success produces the downloaded state.
-    fn acknowledge(self, outcome: Outcome) -> Result<Downloaded<'a>, Observation<'a>> {
+    fn acknowledge(self, outcome: Outcome) -> Result<Installed<'a>, Observation<'a>> {
         match outcome {
-            Outcome::Success => Ok(Downloaded { node: self.node }),
+            Outcome::Success => Ok(Installed { node: self.node }),
             Outcome::Failure => Err(Observation {
                 node: self.node,
                 phase: NodePhase::Failed,
-                download_reason: Some("ArtifactDownloadFailed"),
+                download_reason: Some("ExtensionPreparationFailed"),
+                installation_ready: false,
             }),
         }
     }
 }
 
-impl<'a> Downloaded<'a> {
-    /// Advance files to the prerequisite boundary without claiming installation.
-    fn await_prerequisites(self) -> AwaitingPrerequisites<'a> {
-        AwaitingPrerequisites { node: self.node }
+impl<'a> Installed<'a> {
+    /// Advance the prepared installation to the launch boundary.
+    fn await_launch(self) -> AwaitingLaunch<'a> {
+        AwaitingLaunch { node: self.node }
     }
 }
 
-impl AwaitingPrerequisites<'_> {
-    /// Report the completed download while keeping installation and readiness false.
+impl AwaitingLaunch<'_> {
+    /// Report installation success while keeping runtime readiness false.
     fn report(self) {
         Observation {
             node: self.node,
             phase: NodePhase::Pending,
-            download_reason: Some("ArtifactDownloaded"),
+            download_reason: Some("AwaitingLaunch"),
+            installation_ready: true,
         }
         .report();
     }
@@ -93,6 +97,7 @@ impl<'a> Observation<'a> {
             node,
             phase,
             download_reason: None,
+            installation_ready: false,
         }
     }
 
@@ -112,11 +117,20 @@ impl<'a> Observation<'a> {
                 condition.reason = reason.into();
                 if status.message.is_none() {
                     condition.message =
-                        "Prerequisite preparation and execution are deferred.".into();
+                        "Argument construction and process launch are pending.".into();
                 }
             }
             let mut installed = conditions[0].clone();
             installed.type_ = "Installed".into();
+            installed.status = if self.installation_ready {
+                "True"
+            } else {
+                "False"
+            }
+            .into();
+            if self.installation_ready {
+                installed.reason = "ExtensionInstalled".into();
+            }
             conditions.push(installed);
         }
         for condition in conditions {
@@ -156,7 +170,7 @@ pub(super) fn acknowledge(node: &mut SuntitleNode, operation: Operation, success
     }
     match operation {
         Operation::Download => match (Downloading { node }).acknowledge(outcome) {
-            Ok(downloaded) => downloaded.await_prerequisites().report(),
+            Ok(downloaded) => downloaded.await_launch().report(),
             Err(failed) => failed.report(),
         },
         Operation::Apply => {
@@ -213,7 +227,17 @@ mod tests {
                             status
                                 .conditions
                                 .iter()
+                                .filter(|condition| condition.type_ != "Installed")
                                 .all(|condition| condition.status == "False")
+                        );
+                        assert_eq!(
+                            status
+                                .conditions
+                                .iter()
+                                .find(|condition| condition.type_ == "Installed")
+                                .unwrap()
+                                .status,
+                            if success { "True" } else { "False" }
                         );
                     }
                 }

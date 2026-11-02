@@ -487,10 +487,13 @@ spec:
                 nullable: true
                 type: string
               resolvedAdapter:
+                description: Standard adapter fields shared by an extension and its resolved node instance.
                 nullable: true
                 properties:
                   arguments:
+                    description: Ordered mappings from typed sources to command arguments.
                     items:
+                      description: Ordered CLI binding reused before and after node setting resolution.
                       properties:
                         flag:
                           description: Omit the flag for a positional value.
@@ -504,6 +507,7 @@ spec:
                           - switch
                           type: string
                         source:
+                          description: Standard runtime value or exact user-defined setting key.
                           pattern: ^(runtime\.websocketUrl|settings\..+)$
                           type: string
                       required:
@@ -514,12 +518,34 @@ spec:
                         rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
                     type: array
                   execution:
+                    description: Typed execution contract, unchanged by plugin setting resolution.
+                    properties:
+                      command:
+                        description: One executable/script path or module name, interpreted by runtime.
+                        minLength: 1
+                        type: string
+                      runtime:
+                        default: executable
+                        description: Defaults once during deserialization and Kubernetes schema defaulting.
+                        enum:
+                        - executable
+                        - python
+                        - pythonModule
+                        type: string
+                      workingDirectory:
+                        description: Optional process directory, relative to the installed root or explicitly absolute.
+                        minLength: 1
+                        nullable: true
+                        type: string
+                    required:
+                    - command
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   settings:
+                    description: User-defined setting declarations or resolved instance values.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                   type:
+                    description: Pipeline role defining communication and input compatibility.
                     enum:
                     - audio_source
                     - transcriber
@@ -527,9 +553,7 @@ spec:
                     - display
                     type: string
                 required:
-                - arguments
                 - execution
-                - settings
                 - type
                 type: object
             type: object
@@ -562,9 +586,12 @@ spec:
           spec:
             properties:
               adapter:
+                description: Standard adapter fields shared by an extension and its resolved node instance.
                 properties:
                   arguments:
+                    description: Ordered mappings from typed sources to command arguments.
                     items:
+                      description: Ordered CLI binding reused before and after node setting resolution.
                       properties:
                         flag:
                           description: Omit the flag for a positional value.
@@ -578,6 +605,7 @@ spec:
                           - switch
                           type: string
                         source:
+                          description: Standard runtime value or exact user-defined setting key.
                           pattern: ^(runtime\.websocketUrl|settings\..+)$
                           type: string
                       required:
@@ -588,10 +616,31 @@ spec:
                         rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
                     type: array
                   execution:
+                    description: Typed execution contract, unchanged by plugin setting resolution.
+                    properties:
+                      command:
+                        description: One executable/script path or module name, interpreted by runtime.
+                        minLength: 1
+                        type: string
+                      runtime:
+                        default: executable
+                        description: Defaults once during deserialization and Kubernetes schema defaulting.
+                        enum:
+                        - executable
+                        - python
+                        - pythonModule
+                        type: string
+                      workingDirectory:
+                        description: Optional process directory, relative to the installed root or explicitly absolute.
+                        minLength: 1
+                        nullable: true
+                        type: string
+                    required:
+                    - command
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   settings:
                     additionalProperties:
+                      description: One plugin setting declaration. Values may have any user-defined JSON shape.
                       properties:
                         default:
                           description: Explicit null MUST remain distinct from an omitted default.
@@ -599,10 +648,13 @@ spec:
                           x-kubernetes-preserve-unknown-fields: true
                         required:
                           default: false
+                          description: Require an instance value when no default is declared.
                           type: boolean
                       type: object
+                    description: User-defined setting declarations or resolved instance values.
                     type: object
                   type:
+                    description: Pipeline role defining communication and input compatibility.
                     enum:
                     - audio_source
                     - transcriber

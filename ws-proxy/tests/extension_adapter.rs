@@ -7,7 +7,7 @@ use ws_proxy::kubernetes::{
 fn adapter() -> ExtensionAdapter {
     serde_json::from_value(json!({
         "type":"transcriber",
-        "execution":{"runtime":"executable", "executable":"./bin/transcriber"},
+        "execution":{"runtime":"executable", "command":"./bin/transcriber"},
         "settings":{
             "model":{"default":"fast"},
             "threads":{"default":4},
@@ -86,7 +86,7 @@ fn default_presence_and_override_presence_preserve_every_json_value() {
         json!({"nested":[null]}),
     ] {
         let adapter: ExtensionAdapter = serde_json::from_value(json!({
-            "type":"display", "execution":{}, "settings":{"value":{"default":value}},
+            "type":"display", "execution":{"command":"./run"}, "settings":{"value":{"default":value}},
             "arguments":[{"source":"settings.value"}]
         }))
         .unwrap();
@@ -156,7 +156,7 @@ fn switch_requires_a_flag_in_the_crd_rule() {
 #[test]
 fn settings_are_optional_unless_explicitly_required_and_defaults_supply_values() {
     let adapter: ExtensionAdapter = serde_json::from_value(json!({
-        "type":"display", "execution":{},
+        "type":"display", "execution":{"command":"./run"},
         "settings":{
             "optional":{}, "defaulted":{"default":"value"},
             "requiredWithDefault":{"required":true,"default":null}
@@ -187,4 +187,27 @@ fn settings_are_optional_unless_explicitly_required_and_defaults_supply_values()
     );
     let roundtrip: ExtensionAdapter = serde_json::from_value(serialized).unwrap();
     assert!(roundtrip.settings["requiredWithDefault"].required);
+}
+
+/// Standard binding sources are typed while setting keys and values remain user-owned.
+#[test]
+fn argument_sources_reuse_the_wire_contract_and_reject_unknown_runtime_fields() {
+    use ws_proxy::kubernetes::adapter::{ArgumentSource, RuntimeValue};
+    for (wire, expected) in [
+        (
+            "runtime.websocketUrl",
+            ArgumentSource::Runtime(RuntimeValue::WebsocketUrl),
+        ),
+        (
+            "settings.custom.key",
+            ArgumentSource::Setting("custom.key".into()),
+        ),
+    ] {
+        let source: ArgumentSource = serde_json::from_value(json!(wire)).unwrap();
+        assert_eq!(source, expected);
+        assert_eq!(serde_json::to_value(source).unwrap(), json!(wire));
+    }
+    for wire in ["runtime.unknown", "settings.", "websocketUrl", ""] {
+        assert!(serde_json::from_value::<ArgumentSource>(json!(wire)).is_err());
+    }
 }

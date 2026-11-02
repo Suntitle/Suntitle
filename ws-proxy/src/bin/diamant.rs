@@ -379,6 +379,10 @@ async fn register(
     loop {
         tokio::select! {
             report = artifacts.next_report() => {
+                if let RegistrationClientMessage::Acknowledgement { identity, success: true, operation: Operation::Download, .. } = &report
+                    && let Some(installation) = artifacts.take_prepared(identity) {
+                    manager.prepare_extension(installation);
+                }
                 if let Err(error) = send_client_message(&mut write, &report).await {
                     failure = Some(format!("failed to report artifact download: {error}"));
                     break;
@@ -429,9 +433,9 @@ async fn register(
                                 if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace || spec.host_ref.name != host.name || identity.restart_token != spec.restart_token { break; }
                                 manager.apply(identity, *spec).await
                             },
-                            RegistrationServerMessage::DownloadArtifact { identity, reference } => {
+                            RegistrationServerMessage::DownloadArtifact { identity, reference, adapter } => {
                                 if identity.host_uid != host.uid || identity.session_id != session_id || identity.target.namespace != host.namespace { break; }
-                                artifacts.start(identity, reference);
+                                artifacts.start(identity, reference, *adapter);
                                 Vec::new()
                             },
                             RegistrationServerMessage::Remove { identity } => {

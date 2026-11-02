@@ -16,46 +16,42 @@ let result = downloader.download(request).await?;
 # }
 ```
 
-Push prepared content with the same transport and credential options:
+Publish prepared streams with explicit transport and credential options:
 
 ```rust,no_run
-use oci_artifact::{UploadRequest, Uploader, client::TransportOptions};
+use oci_artifact::{CancellationToken, PreparedUpload, Publisher, RegistryAuth, client::TransportOptions};
 
 # async fn push() -> Result<(), oci_artifact::Error> {
-let uploader = Uploader::new(TransportOptions::default())?;
-let request = UploadRequest::new("registry.example.com/assets:v1", "prepared/payload");
-let result = uploader.upload(request).await?;
-println!("Published {}", result.manifest_digest);
+let publisher = Publisher::new(TransportOptions::default())?;
+let content = Box::pin(futures_util::stream::once(async {
+    Ok(tokio_util::bytes::Bytes::from_static(b"payload"))
+}));
+let upload = PreparedUpload::file("payload.txt".into(), content);
+let reference = publisher.publish(
+    "registry.example.com/assets:v1",
+    &RegistryAuth::Anonymous,
+    upload,
+    &CancellationToken::new(),
+).await?;
+println!("Published {reference}");
 # Ok(())
 # }
 ```
 
-HTTP downloads, Git checkouts, and local source selection remain caller-owned.
-Pass their prepared file or directory to `Uploader`. Uploads use the source's
-UTF-8 basename as the title and contain one layer, compatible with `Downloader`
-and `oras pull`. Directory layers contain a gzip/tar archive with its directory
-prefix, `io.deis.oras.content.unpack=true`, and the uncompressed tar SHA-256 in
-`io.deis.oras.content.digest`, following the
+HTTP downloads, Git checkouts, local source selection, and directory packaging
+remain caller-owned. Pass prepared streams to `Publisher` as `PreparedUpload`.
+File layers use ORAS's default `application/vnd.oci.image.layer.v1.tar` media type
+without unpack annotations. Directory streams MUST contain a gzip/tar archive
+with an `extension` directory prefix. The archive producer returns the
+uncompressed tar SHA-256 in `io.deis.oras.content.digest`, following the
 [ORAS file store](https://github.com/oras-project/oras-go/tree/v2/content/file).
-Raw files use ORAS's default `application/vnd.oci.image.layer.v1.tar` media type
-without unpack annotations. The config is unnamed OCI empty JSON metadata.
+The config is unnamed OCI empty JSON metadata.
 This is an artifact manifest, not a runnable container image.
 
-Packaging and upload use bounded buffers and private temporary disk storage.
-Nonempty payloads and config blobs use chunked streaming uploads; the registry
-client computes their digests and sizes during transfer. Empty files use the
-client's ordinary blob upload because its chunked streaming API rejects empty
-streams. The public upload API still accepts local filesystem paths.
-Keep the source stable until upload returns. Files, directories, and archived
-symlinks are supported; top-level symlinks and special files are rejected.
-Directory archives normalize ownership to zero and retain ordinary permissions.
-Archive bytes and manifest digests need not equal ORAS's encoding.
-Upload references must use a tag (omitting it means `latest`). The result contains
-the immutable manifest digest. Credentials are explicit and cancellation uses
-the request token. Cancel and await completion so packaging can stop and clean up.
-Cancelled or failed uploads can leave unreferenced registry blobs. A failure or
-cancellation during manifest publication can leave the tag published.
-Uploads do not currently retry failed transfers automatically.
+Cancellation uses an explicit token. Cancel and await completion so producers
+can stop and clean up. Cancelled or failed publications can leave unreferenced
+registry blobs. A failure or cancellation during manifest publication can leave
+the tag published. Publications do not currently retry failed transfers automatically.
 
 Credentials are explicit; requests default to anonymous access. Transport uses
 HTTPS and verified certificates. `TransportOptions` also accepts plain HTTP,
@@ -103,17 +99,16 @@ The optional ORAS 1.3.2 compatibility tests run with
 `cargo test --manifest-path oci-artifact/Cargo.toml --test download oras_ -- --ignored`.
 ORAS is used only as a test reference, never by the library.
 
-To verify real pushes through the Compose Distribution service:
+To verify downloads of ORAS pushes through the Compose Distribution service:
 
 ```sh
 docker compose up -d --no-deps distribution traefik
 cargo test --manifest-path oci-artifact/Cargo.toml --test compose_distribution -- --ignored --nocapture
 ```
 
-This test requires ORAS 1.3.2. Both ORAS and the library push generated directory,
-binary-file, empty-file, and empty-directory fixtures. Both clients pull the
-results; the test compares paths, contents, ordinary modes, and symlink targets,
-and checks the library's returned digest by pulling its immutable reference.
+This test requires ORAS 1.3.2. ORAS pushes generated directory, binary-file,
+empty-file, and empty-directory fixtures. Both clients pull the results; the
+test compares paths, contents, ordinary modes, and symlink targets.
 The default endpoint is `registry.localhost`;
 override it with `OCI_ARTIFACT_TEST_REGISTRY` when using a different registry host.
 Each run uses a unique `oci-artifact-tests/` repository prefix and prints the
@@ -134,3 +129,7 @@ adapter contents, or payload files. Library-owned digest verification still appl
 
 HTTP executable file layers carry `io.suntitle.executable: "true"`. The downloader
 restores these files with mode `0755` on Unix hosts.
+
+`DownloadResult::payload_path` identifies the restored file or directory using its
+OCI layer filename annotation. Consumers can resolve installation paths without
+guessing a directory prefix from extracted files.

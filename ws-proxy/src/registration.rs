@@ -1,4 +1,7 @@
-use crate::kubernetes::resources::{ResourceIdentity, SuntitleNodeSpec};
+use crate::kubernetes::{
+    adapter::ResolvedAdapter,
+    resources::{ResourceIdentity, SuntitleNodeSpec},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -63,6 +66,7 @@ pub enum Operation {
     Remove,
 }
 
+/// Registration replies and node commands for the current host session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -79,10 +83,15 @@ pub enum RegistrationServerMessage {
         identity: ApplyIdentity,
         spec: Box<SuntitleNodeSpec>,
     },
+    /// Download and prepare a custom extension without starting its process.
     DownloadArtifact {
+        /// Node revision, dispatch operation, and host session selecting this installation.
         #[serde(flatten)]
         identity: ApplyIdentity,
+        /// Published extension payload selected by the controller.
         reference: String,
+        /// Adapter with defaults and node-specific settings already resolved.
+        adapter: Box<ResolvedAdapter>,
     },
     Remove {
         #[serde(flatten)]

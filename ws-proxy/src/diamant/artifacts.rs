@@ -1,14 +1,20 @@
-//! Background artifact downloads for the current host session.
+//! Background artifact downloads and installation preparation for the current host session.
 //!
 //! A single task collection owns current and superseded downloads. Replacement
 //! cancels a child token; session shutdown cancels their shared parent and MUST
 //! join every task. Tasks MUST NOT be aborted while a renderer can still be active.
+//! Successful preparation is handed to the process manager before reporting Installed.
+//! Argument construction and process launch remain deferred.
 use std::{collections::HashMap, path::PathBuf};
 
 use oci_artifact::{CancellationToken, DownloadRequest, Downloader, client::TransportOptions};
 use tokio::task::{Id, JoinSet};
 
-use crate::registration::{ApplyIdentity, Operation, RegistrationClientMessage};
+use super::installation::PreparedExtension;
+use crate::{
+    kubernetes::adapter::ResolvedAdapter,
+    registration::{ApplyIdentity, Operation, RegistrationClientMessage},
+};
 
 /// Registry access and persistent payload location.
 #[derive(Clone, Debug, Default)]
@@ -41,6 +47,8 @@ struct Job {
     finished: CancellationToken,
     /// Identifies task failures returned by the shared task collection.
     task_id: Id,
+    /// Prepared installation awaiting handoff to the process manager.
+    installation: Option<PreparedExtension>,
 }
 
 /// Task output before stale results are filtered and wire reports are constructed.
@@ -48,21 +56,21 @@ struct Completion {
     /// Identity captured when the transfer started.
     identity: ApplyIdentity,
     /// Published payload path or a diagnostic from the failed transfer.
-    result: Result<PathBuf, String>,
+    result: Result<PreparedExtension, String>,
 }
 
 impl Completion {
     /// Convert a current completion into the existing acknowledgement contract.
     fn into_report(self) -> RegistrationClientMessage {
         let (success, message) = match self.result {
-            Ok(path) => (
+            Ok(installation) => (
                 true,
                 format!(
-                    "Artifact downloaded to {}; prerequisites and execution are pending.",
-                    path.display()
+                    "Extension installed at {}; awaiting argument construction and launch.",
+                    installation.root.display()
                 ),
             ),
-            Err(error) => (false, format!("Artifact download failed: {error}")),
+            Err(error) => (false, format!("Extension preparation failed: {error}")),
         };
         RegistrationClientMessage::Acknowledgement {
             identity: self.identity,
@@ -102,9 +110,9 @@ impl ArtifactDownloads {
         })
     }
 
-    /// Start current work and cancel its predecessor without aborting rendering.
+    /// Download and prepare current work, cancelling its predecessor without aborting rendering.
     /// Duplicate and older generations MUST NOT replace the current operation.
-    pub fn start(&mut self, identity: ApplyIdentity, reference: String) {
+    pub fn start(&mut self, identity: ApplyIdentity, reference: String, adapter: ResolvedAdapter) {
         let key = identity.target.uid.clone();
         if self.jobs.get(&key).is_some_and(|job| {
             job.identity == identity || job.identity.generation > identity.generation
@@ -125,11 +133,30 @@ impl ArtifactDownloads {
             .tasks
             .spawn(async move {
                 let _finished = guard;
+                let result = async {
+                    let payload = download(directory, downloader, &reference, token.clone())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if token.is_cancelled() {
+                        return Err("extension preparation cancelled".into());
+                    }
+                    let installation = PreparedExtension::prepare(
+                        report_identity.clone(),
+                        reference,
+                        payload,
+                        adapter,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                    if token.is_cancelled() {
+                        return Err("extension preparation cancelled".into());
+                    }
+                    Ok(installation)
+                }
+                .await;
                 Completion {
                     identity: report_identity,
-                    result: download(directory, downloader, &reference, token)
-                        .await
-                        .map_err(|e| e.to_string()),
+                    result,
                 }
             })
             .id();
@@ -140,6 +167,7 @@ impl ArtifactDownloads {
                 cancellation,
                 finished,
                 task_id,
+                installation: None,
             },
         );
     }
@@ -164,14 +192,22 @@ impl ArtifactDownloads {
                     }
                 }
             };
-            if self
-                .jobs
-                .get(&completion.identity.target.uid)
-                .is_some_and(|job| job.identity == completion.identity)
+            if let Some(job) = self.jobs.get_mut(&completion.identity.target.uid)
+                && job.identity == completion.identity
             {
+                job.installation = completion.result.as_ref().ok().cloned();
                 return completion.into_report();
             }
         }
+    }
+
+    /// Move the current prepared installation to the process manager exactly once.
+    pub fn take_prepared(&mut self, identity: &ApplyIdentity) -> Option<PreparedExtension> {
+        self.jobs
+            .get_mut(&identity.target.uid)
+            .filter(|job| job.identity == *identity)?
+            .installation
+            .take()
     }
 
     /// Cancel the matching node revision and wait until its task exits.
@@ -216,7 +252,15 @@ async fn download(
     if cancellation.is_cancelled() {
         return Err(oci_artifact::Error::Cancelled);
     }
+    let relative_payload = result
+        .payload_path
+        .strip_prefix(&result.output_path)
+        .map_err(|_| {
+            oci_artifact::Error::Unsupported(
+                "artifact payload is outside its output directory".into(),
+            )
+        })?;
     let destination = base.join(uuid::Uuid::new_v4().to_string());
     tokio::fs::rename(&result.output_path, &destination).await?;
-    Ok(destination)
+    Ok(destination.join(relative_payload))
 }
