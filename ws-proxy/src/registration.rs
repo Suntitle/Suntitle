@@ -66,6 +66,16 @@ pub enum Operation {
     Remove,
 }
 
+/// Published payload and current command configuration selected for a custom apply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CustomExecution {
+    /// Immutable artifact reference. Configuration changes MUST NOT change this identity.
+    pub reference: String,
+    /// Current resolved command, settings, and ordered argument bindings.
+    pub adapter: ResolvedAdapter,
+}
+
 /// Registration replies and node commands for the current host session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
@@ -82,6 +92,9 @@ pub enum RegistrationServerMessage {
         #[serde(flatten)]
         identity: ApplyIdentity,
         spec: Box<SuntitleNodeSpec>,
+        /// Custom execution context; built-in commands MUST omit it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        custom: Option<Box<CustomExecution>>,
     },
     /// Download and prepare a custom extension without starting its process.
     DownloadArtifact {

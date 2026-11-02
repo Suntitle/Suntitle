@@ -43,7 +43,7 @@ pub struct SuntitleHostSpec {
     pub name: String,
 }
 
-#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceRef {
     /// Name of the referenced resource in the same namespace.
@@ -142,6 +142,19 @@ pub struct SuntitleNodeSpec {
         "has(self.custom) == has(oldSelf.custom)",
     )).message("node type is immutable"))]
     pub settings: NodeSettings,
+}
+
+/// Runnable equality includes CEL-immutable host assignment and the settings variant.
+/// Display metadata and pipeline inputs MUST NOT affect runnable equality.
+impl PartialEq for SuntitleNodeSpec {
+    /// Compare typed process configuration without serializing it to JSON.
+    fn eq(&self, other: &Self) -> bool {
+        self.host_ref == other.host_ref
+            && self.enabled == other.enabled
+            && self.settings == other.settings
+            && self.extension_ref == other.extension_ref
+            && self.restart_token == other.restart_token
+    }
 }
 
 impl SuntitleNodeSpec {
@@ -309,7 +322,7 @@ impl NodePhase {
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchStatus {
-    /// Artifact selected for this download operation.
+    /// Artifact selected for custom download or apply. Configuration changes MUST preserve it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_reference: Option<String>,
     pub generation: i64,
@@ -364,7 +377,7 @@ fn conditions_schema(generator: &mut SchemaGenerator) -> Schema {
 }
 
 /// Exactly one variant key selects the node type and contains its settings.
-#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeSettings {
     /// Audio capture and encoding configuration.

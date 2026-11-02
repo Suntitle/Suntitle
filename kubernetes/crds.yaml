@@ -436,7 +436,7 @@ spec:
                 nullable: true
                 properties:
                   artifactReference:
-                    description: Artifact selected for this download operation.
+                    description: Artifact selected for custom download or apply. Configuration changes MUST preserve it.
                     nullable: true
                     type: string
                   generation:

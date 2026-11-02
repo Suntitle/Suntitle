@@ -18,7 +18,11 @@ use uuid::Uuid;
 
 use super::installation::PreparedExtension;
 use crate::kubernetes::resources::{NodeSettings, SuntitleNodeSpec};
-use crate::registration::ApplyIdentity;
+use crate::kubernetes::{
+    adapter::{ArgumentMode, ArgumentSource, RuntimeValue},
+    execution::ExecutionCommand,
+};
+use crate::registration::{ApplyIdentity, CustomExecution};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRuntimeStatus {
@@ -170,6 +174,8 @@ struct ManagedNode {
     child: Option<ChildProcess>,
     status: NodeRuntimeStatus,
     message: Option<String>,
+    /// Effective command used to detect runnable changes independently of installation.
+    command: Option<CommandSpec>,
 }
 
 /// Own running node processes and prepared custom installations for one host session.
@@ -219,20 +225,22 @@ impl NodeProcessManager {
         self.prepared_extensions.insert(key, installation);
     }
 
-    /// Return prepared files for the current node revision, independently of launch operation ID.
+    /// Return installed files for this node UID, independently of command revision.
     pub fn prepared_extension(&self, identity: &ApplyIdentity) -> Option<&PreparedExtension> {
         let key = format!("{}/{}", identity.target.namespace, identity.target.name);
-        self.prepared_extensions.get(&key).filter(|installation| {
-            installation.identity.target.uid == identity.target.uid
-                && installation.identity.generation == identity.generation
-                && installation.identity.restart_token == identity.restart_token
-        })
+        self.prepared_extensions
+            .get(&key)
+            .filter(|installation| installation.identity.target.uid == identity.target.uid)
     }
 
+    /// Apply built-in or custom execution through one supervisor.
+    /// Duplicate and stale operations MUST NOT reconfigure prepared installations.
+    /// Custom execution context MUST accompany only custom node settings.
     pub async fn apply(
         &mut self,
         identity: ApplyIdentity,
         spec: SuntitleNodeSpec,
+        custom: Option<CustomExecution>,
     ) -> Vec<NodeEvent> {
         let key = format!("{}/{}", identity.target.namespace, identity.target.name);
         if let Some(node) = self.nodes.get_mut(&key) {
@@ -244,9 +252,19 @@ impl NodeProcessManager {
             {
                 return Vec::new();
             }
+        }
+        let command = if let Some(custom) = custom {
+            self.prepare_custom_command(&identity, custom).await
+        } else {
+            command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &spec)
+        };
+        if let Some(node) = self.nodes.get_mut(&key) {
             if node.identity.target.uid == identity.target.uid
                 && node.status != NodeRuntimeStatus::Failed
-                && runtime_spec(&node.spec) == runtime_spec(&spec)
+                && node.spec == spec
+                && command
+                    .as_ref()
+                    .is_ok_and(|command| node.command.as_ref() == Some(command))
             {
                 node.identity = identity;
                 node.spec = spec;
@@ -261,10 +279,9 @@ impl NodeProcessManager {
                 return vec![node.event()];
             }
         }
+        let selected_command = command.as_ref().ok().cloned();
         let (child, status, message) = if spec.enabled {
-            match command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &spec)
-                .and_then(|command| ChildProcess::spawn(&command))
-            {
+            match command.and_then(|command| ChildProcess::spawn(&command)) {
                 Ok(child) => (Some(child), NodeRuntimeStatus::Running, None),
                 Err(error) => (
                     None,
@@ -281,10 +298,33 @@ impl NodeProcessManager {
             child,
             status,
             message,
+            command: selected_command,
         };
         let event = node.event();
         self.nodes.insert(key, node);
         vec![event]
+    }
+
+    /// Build the current custom command from installed files without downloading again.
+    async fn prepare_custom_command(
+        &mut self,
+        identity: &ApplyIdentity,
+        custom: CustomExecution,
+    ) -> io::Result<CommandSpec> {
+        let installation = self
+            .prepared_extension(identity)
+            .filter(|installation| installation.artifact_reference == custom.reference)
+            .ok_or_else(|| io::Error::other("matching extension artifact is not installed"))?;
+        let installation = PreparedExtension::prepare(
+            identity.clone(),
+            custom.reference,
+            installation.root.clone(),
+            custom.adapter,
+        )
+        .await?;
+        let command = custom_command_spec(&self.uv_bin, &self.endpoints, &installation)?;
+        self.prepare_extension(installation);
+        Ok(command)
     }
 
     /// Remove prepared associations and stop the node; stop failures retain the process for retry.
@@ -380,8 +420,7 @@ impl NodeProcessManager {
             .nodes
             .values()
             .map(|node| {
-                let command =
-                    command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &node.spec);
+                let command = node.command.as_ref();
                 NodeSnapshot {
                     name: node.spec.name.clone(),
                     node_type: match &node.spec.settings {
@@ -417,16 +456,6 @@ impl ManagedNode {
             message: self.message.clone(),
         }
     }
-}
-
-fn runtime_spec(spec: &SuntitleNodeSpec) -> serde_json::Value {
-    serde_json::json!([
-        spec.enabled,
-        spec.settings,
-        spec.input_ref,
-        spec.extension_ref,
-        spec.restart_token
-    ])
 }
 
 pub fn data_plane_url_from_registration(registration: &Url) -> Result<Url, String> {
@@ -480,6 +509,10 @@ pub struct NodeEndpoints {
     audio: String,
     transcriber: String,
     authority: String,
+    /// Type-specific endpoint for custom translators.
+    translator: String,
+    /// Type-specific endpoint for custom displays.
+    display: String,
 }
 
 impl NodeEndpoints {
@@ -489,8 +522,93 @@ impl NodeEndpoints {
             audio: endpoint(base, "")?,
             transcriber: endpoint(base, "transcribe")?,
             authority: authority(base)?,
+            translator: endpoint(base, "translate")?,
+            display: endpoint(base, "display")?,
         })
     }
+}
+
+/// Build ordered arguments without shell evaluation. Structured and null values require explicit conversion.
+fn custom_command_spec(
+    uv_bin: &Path,
+    endpoints: &NodeEndpoints,
+    installation: &PreparedExtension,
+) -> io::Result<CommandSpec> {
+    use crate::api::models::NodeType;
+    let adapter = &installation.adapter;
+    let websocket_url = match adapter.node_type {
+        NodeType::AudioSource => &endpoints.audio,
+        NodeType::Transcriber => &endpoints.transcriber,
+        NodeType::Translator => &endpoints.translator,
+        NodeType::Display => &endpoints.display,
+    };
+    let (executable, mut args) = match &installation.command {
+        ExecutionCommand::Executable(path) => (path.clone(), Vec::new()),
+        ExecutionCommand::Python(path) => (
+            uv_bin.to_owned(),
+            vec![
+                "uv".into(),
+                "run".into(),
+                "python".into(),
+                path.as_os_str().to_owned(),
+            ],
+        ),
+        ExecutionCommand::PythonModule(module) => (
+            uv_bin.to_owned(),
+            vec![
+                "uv".into(),
+                "run".into(),
+                "python".into(),
+                "-m".into(),
+                module.into(),
+            ],
+        ),
+    };
+    for binding in &adapter.arguments {
+        let runtime = serde_json::Value::String(websocket_url.clone());
+        let value = match &binding.source {
+            ArgumentSource::Runtime(RuntimeValue::WebsocketUrl) => &runtime,
+            ArgumentSource::Setting(key) => adapter
+                .settings
+                .get(key)
+                .ok_or_else(|| io::Error::other(format!("missing argument setting: {key}")))?,
+        };
+        match binding.mode {
+            ArgumentMode::Switch => {
+                let enabled = value
+                    .as_bool()
+                    .ok_or_else(|| io::Error::other("switch argument MUST be boolean"))?;
+                let flag = binding
+                    .flag
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("switch argument MUST have a flag"))?;
+                if enabled {
+                    args.push(flag.into());
+                }
+            }
+            ArgumentMode::Value => {
+                let value = match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    serde_json::Value::Bool(value) => value.to_string(),
+                    serde_json::Value::Number(value) => value.to_string(),
+                    _ => {
+                        return Err(io::Error::other(
+                            "argument value MUST be a string, number, or boolean; null and structured values require explicit conversion",
+                        ));
+                    }
+                };
+                if let Some(flag) = &binding.flag {
+                    args.push(flag.into());
+                }
+                args.push(value.into());
+            }
+        }
+    }
+    Ok(CommandSpec {
+        executable,
+        args,
+        current_dir: installation.working_directory.clone(),
+    })
 }
 
 /// Builds a command for an implemented node runtime.
@@ -509,7 +627,7 @@ pub fn command_spec(
         NodeSettings::Custom(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "custom extension execution is not implemented",
+                "custom nodes require prepared execution context",
             ));
         }
     });
@@ -559,7 +677,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn custom_execution_reports_unsupported_without_spawning() {
+    async fn custom_apply_without_execution_context_fails_without_spawning() {
         let mut manager = NodeProcessManager::new(
             std::env::current_dir().unwrap(),
             PathBuf::from("/does-not-exist"),
@@ -572,18 +690,182 @@ mod tests {
             "settings":{"custom":{}}
         }))
         .unwrap();
-        let events = manager.apply(test_identity(), custom).await;
+        let events = manager.apply(test_identity(), custom, None).await;
         assert_eq!(events[0].status, NodeRuntimeStatus::Failed);
         assert!(
             events[0]
                 .message
                 .as_deref()
                 .unwrap()
-                .contains("custom extension execution is not implemented")
+                .contains("custom nodes require prepared execution context")
         );
         let snapshots = manager.snapshots();
         assert_eq!(snapshots[0].node_type, "Custom");
         assert!(snapshots[0].parameters.is_empty());
+    }
+
+    /// Native launch, argument updates, restart, and disable reuse the prepared payload.
+    #[tokio::test]
+    async fn custom_native_execution_reuses_installation_and_supervises_restarts() {
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("run");
+        std::fs::write(&binary, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut manager = NodeProcessManager::new(
+            root.path().into(),
+            "/missing-uv".into(),
+            Url::parse("ws://localhost/").unwrap(),
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let mut identity = test_identity();
+        let mut spec: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({"name":"Custom","hostRef":{"name":"host"},"extensionRef":{"name":"plugin"},"settings":{"custom":{}}})).unwrap();
+        let adapter = serde_json::from_value(serde_json::json!({"type":"transcriber","execution":{"command":"./run"},"settings":{"value":"a b;$(ignored)"},"arguments":[{"flag":"--value","source":"settings.value"}]})).unwrap();
+        let mut custom = CustomExecution {
+            reference: "registry/extensions@sha256:test".into(),
+            adapter,
+        };
+        let installation = PreparedExtension::prepare(
+            identity.clone(),
+            custom.reference.clone(),
+            root.path().into(),
+            custom.adapter.clone(),
+        )
+        .await
+        .unwrap();
+        manager.prepare_extension(installation);
+        assert_eq!(
+            manager
+                .apply(identity.clone(), spec.clone(), Some(custom.clone()))
+                .await[0]
+                .status,
+            NodeRuntimeStatus::Running
+        );
+        let key = format!("{}/{}", identity.target.namespace, identity.target.name);
+        let first = manager.nodes[&key].child.as_ref().unwrap().child.id();
+        assert_eq!(
+            manager.snapshots()[0].parameters,
+            ["--value", "a b;$(ignored)"]
+        );
+        identity.operation_id = "duplicate-configuration".into();
+        manager
+            .apply(identity.clone(), spec.clone(), Some(custom.clone()))
+            .await;
+        assert_eq!(
+            manager.nodes[&key].child.as_ref().unwrap().child.id(),
+            first
+        );
+        identity.generation += 1;
+        identity.operation_id = "new-arguments".into();
+        custom
+            .adapter
+            .settings
+            .insert("value".into(), serde_json::json!("changed"));
+        assert_eq!(
+            manager
+                .apply(identity.clone(), spec.clone(), Some(custom.clone()))
+                .await[0]
+                .status,
+            NodeRuntimeStatus::Running
+        );
+        assert_ne!(
+            manager.nodes[&key].child.as_ref().unwrap().child.id(),
+            first
+        );
+        assert_eq!(
+            manager.prepared_extension(&identity).unwrap().root,
+            std::fs::canonicalize(root.path()).unwrap()
+        );
+        identity.operation_id = "disabled".into();
+        identity.generation += 1;
+        spec.enabled = false;
+        assert_eq!(
+            manager.apply(identity.clone(), spec, Some(custom)).await[0].status,
+            NodeRuntimeStatus::Stopped
+        );
+        assert!(manager.nodes[&key].child.is_none());
+        manager.remove(&identity).await.unwrap();
+    }
+
+    /// Python variants always select embedded UV; arguments and endpoints preserve their exact values.
+    #[tokio::test]
+    async fn custom_command_modes_validate_values_and_select_type_endpoints() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("plugin.py"), "pass").unwrap();
+        let endpoints =
+            NodeEndpoints::new(&Url::parse("wss://example.test:9443/prefix/").unwrap()).unwrap();
+        for (role, suffix) in [
+            ("audio_source", ""),
+            ("transcriber", "transcribe"),
+            ("translator", "translate"),
+            ("display", "display"),
+        ] {
+            for (runtime, entry) in [("python", "./plugin.py"), ("pythonModule", "plugin.main")] {
+                let adapter = serde_json::from_value(serde_json::json!({"type":role,"execution":{"runtime":runtime,"command":entry},"settings":{"enabled":true,"zero":0,"empty":""},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"},{"flag":"--on","source":"settings.enabled","mode":"switch"},{"source":"settings.zero"},{"source":"settings.empty"}]})).unwrap();
+                let mut installed = PreparedExtension::prepare(
+                    test_identity(),
+                    "artifact".into(),
+                    root.path().into(),
+                    adapter,
+                )
+                .await
+                .unwrap();
+                let command =
+                    custom_command_spec(Path::new("/embedded-diamant"), &endpoints, &installed)
+                        .unwrap();
+                assert_eq!(command.executable, Path::new("/embedded-diamant"));
+                assert_eq!(
+                    command.current_dir,
+                    std::fs::canonicalize(root.path()).unwrap()
+                );
+                assert_eq!(
+                    &command.args[..3],
+                    &[OsString::from("uv"), "run".into(), "python".into()]
+                );
+                if runtime == "pythonModule" {
+                    assert_eq!(
+                        &command.args[3..5],
+                        &[OsString::from("-m"), "plugin.main".into()]
+                    );
+                }
+                let tail = &command.args[command.args.len() - 5..];
+                assert_eq!(
+                    tail,
+                    &[
+                        OsString::from("--server"),
+                        format!("wss://example.test:9443/prefix/{suffix}").into(),
+                        "--on".into(),
+                        "0".into(),
+                        "".into()
+                    ]
+                );
+                for invalid in [
+                    serde_json::Value::Null,
+                    serde_json::json!([]),
+                    serde_json::json!({}),
+                ] {
+                    installed.adapter.settings.insert("zero".into(), invalid);
+                    assert!(
+                        custom_command_spec(Path::new("/embedded-diamant"), &endpoints, &installed)
+                            .is_err()
+                    );
+                }
+                installed
+                    .adapter
+                    .settings
+                    .insert("zero".into(), serde_json::json!(0));
+                installed
+                    .adapter
+                    .settings
+                    .insert("enabled".into(), serde_json::json!(false));
+                assert!(
+                    !custom_command_spec(Path::new("/embedded-diamant"), &endpoints, &installed)
+                        .unwrap()
+                        .args
+                        .contains(&"--on".into())
+                );
+            }
+        }
     }
 
     #[test]
@@ -722,7 +1004,7 @@ mod tests {
         }));
         let identity = test_identity();
 
-        let started = manager.apply(identity.clone(), update.clone()).await;
+        let started = manager.apply(identity.clone(), update.clone(), None).await;
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].status, NodeRuntimeStatus::Running, "{started:?}");
         let snapshots = manager.snapshots();
@@ -739,13 +1021,34 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert_eq!(
-            manager.apply(identity.clone(), update.clone()).await.len(),
+            manager
+                .apply(identity.clone(), update.clone(), None)
+                .await
+                .len(),
             1
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(
             std::fs::read_to_string(&pid_file).unwrap().lines().count(),
             1
+        );
+
+        let key = format!("{}/{}", identity.target.namespace, identity.target.name);
+        let process_id = manager.nodes[&key].child.as_ref().unwrap().child.id();
+        let mut pipeline_spec = update.clone();
+        pipeline_spec.input_ref = Some(crate::kubernetes::resources::ResourceRef {
+            name: "pipeline-upstream".into(),
+        });
+        let mut pipeline_identity = identity.clone();
+        pipeline_identity.generation += 1;
+        pipeline_identity.operation_id = "pipeline-change".into();
+        assert_eq!(
+            manager.apply(pipeline_identity, pipeline_spec, None).await[0].status,
+            NodeRuntimeStatus::Running
+        );
+        assert_eq!(
+            manager.nodes[&key].child.as_ref().unwrap().child.id(),
+            process_id
         );
 
         let mut restart = identity;
@@ -755,11 +1058,14 @@ mod tests {
         let mut restarted_spec = update;
         restarted_spec.restart_token = restart.restart_token.clone();
         assert_eq!(
-            manager.apply(restart.clone(), restarted_spec.clone()).await[0].status,
+            manager
+                .apply(restart.clone(), restarted_spec.clone(), None)
+                .await[0]
+                .status,
             NodeRuntimeStatus::Running
         );
         assert_eq!(
-            manager.apply(restart.clone(), restarted_spec).await[0].status,
+            manager.apply(restart.clone(), restarted_spec, None).await[0].status,
             NodeRuntimeStatus::Running
         );
         for _ in 0..40 {

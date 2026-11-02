@@ -7,10 +7,12 @@ MUST run directly unless their execution configuration explicitly selects Python
 They MUST accept arbitrary plugin settings through a declarative argument adapter
 and implement the communication contract of their selected pipeline type.
 
-This plan records implemented behavior and the remaining path to custom execution.
-Registration, publication, download, adapter delivery, and host path preparation
-are implemented. Custom nodes currently stop at `Installed=True`, phase `Pending`,
-with runtime readiness false. They do not start a process yet.
+Registration, publication, host preparation, argument construction, and custom
+execution are implemented. Successful installation transitions through
+`Installed=True`, phase `Pending`, into apply. Enabled nodes launch native binaries
+directly or Python scripts/modules through embedded UV. Disabled nodes do not spawn.
+Recovery automation, complete API-to-process acceptance coverage, and UI integration
+remain outstanding; implementation completion does not imply those checks passed.
 
 The first working milestone is a self-contained executable created through the
 API, assigned to a host, and launched with mapped flags. UI support is a separate
@@ -40,7 +42,7 @@ The lifecycle is:
 5. Diamant downloads the payload, resolves the entry point and working directory,
    and retains a prepared installation for that node. This is implemented.
 6. Dispatch a custom apply after preparation, construct arguments, and launch
-   through the existing process supervisor. This remains to be implemented.
+   through the existing process supervisor. This is implemented.
 
 Extension specifications are reusable. Execution details and CLI mappings belong
 to the extension; node-specific values and host assignment belong to the node.
@@ -129,8 +131,8 @@ Original source (local / HTTP / Git / OCI / ...)
     -> Traefik registry endpoint
     -> Diamant installation on the assigned host
     -> Local extension folder
-    -> Awaiting launch (current implementation)
-    -> Custom apply, argument construction, and execution (remaining)
+    -> Custom apply and ordered argument construction
+    -> Native execution or embedded-UV Python execution under supervision
 ```
 
 Distribution is accessible to Diamant through Traefik. HUB supplies a prepared
@@ -148,7 +150,7 @@ preparation, OCI client integration, and Distribution deployment details.
 
 ## Registration, preparation, and execution sequence
 
-The implemented path ends at a prepared installation:
+The implemented preparation path precedes custom apply:
 
 ```mermaid
 sequenceDiagram
@@ -174,9 +176,9 @@ sequenceDiagram
     HUB->>HUB: Installed=True#59; Pending#59; Ready=False#59; AwaitingLaunch
 ```
 
-The remaining execution path MUST be explicit. The current dispatch planner
-continues to select download work for custom nodes; it does not schedule apply
-after installation. The following sequence is planned, not implemented:
+After installation succeeds, the planner selects custom apply. The following
+execution sequence is implemented; a complete API-driven acceptance test remains
+outstanding:
 
 ```mermaid
 sequenceDiagram
@@ -203,9 +205,9 @@ argument-construction and process-start failures.
 
 ## Existing Extension and Node contracts
 
-These examples use the current resource shape. Execution launch and runtime
-reporting described below are still pending; no new CRD is required merely to
-construct flags or launch an already prepared extension.
+These examples use the current resource shape. Custom launch reuses existing
+Node status and acknowledgement contracts. Host apply messages carry optional
+custom context containing the artifact reference and current resolved adapter.
 
 ### Extension
 
@@ -303,7 +305,10 @@ status:
 `settings.custom` adds arbitrary instance values alongside the existing built-in
 settings variants. Custom nodes MUST require `extensionRef`; built-in variants
 MUST omit it. The referenced adapter supplies the pipeline type, execution, and
-argument mappings. Input compatibility MUST use that pipeline type.
+argument mappings. `inputRef` is optional pipeline configuration. It MUST NOT gate
+host installation or startup, trigger upstream resolution watches, or restart the
+runnable when changed. Explicit pipeline validation and routing are separate work;
+the current data plane broadcasts by role.
 
 The Node depends on the referenced Extension being published and installed on its
 assigned host before launch. The existing
@@ -336,7 +341,7 @@ determines how Diamant launches it.
 
 | Concern | Required configuration | Responsibility |
 | --- | --- | --- |
-| Pipeline type | `audio_source`, `transcriber`, `translator`, or `display` | Input compatibility and communication contract |
+| Pipeline type | `audio_source`, `transcriber`, `translator`, or `display` | Communication contract and type-specific runtime endpoint |
 | Execution | Runtime and entry point | Host process launch |
 | Plugin settings | Arbitrary key/value object, which MAY be empty | Component-specific configuration |
 | Argument adapter | Ordered bindings from settings and runtime values | CLI argument construction |
@@ -378,7 +383,7 @@ execution:
 ```
 
 ```yaml
-# Python module; the launch stage will use python -m
+# Python module; launched through embedded UV with python -m
 execution:
   runtime: pythonModule
   command: my_plugin.transcriber
@@ -387,7 +392,7 @@ execution:
 
 `command` is a single path or module name, not a shell command line. Plugin flags
 continue to come from the ordered adapter argument bindings. Both Python runtime
-variants share Diamant's embedded uv launcher once custom launch is implemented.
+variants use Diamant's embedded UV launcher. Native executable mode bypasses UV.
 
 Diamant MUST preserve the existing process supervision behavior: output
 forwarding, exit reporting, restart handling, graceful termination, and descendant
@@ -520,8 +525,11 @@ pipeline type, and execution configuration come from the extension. Resolution
 reports missing required settings; omitted optional settings omit their mappings.
 Explicit null defaults and overrides remain present, as do false, zero, and empty
 strings. Undeclared instance keys remain unrestricted custom settings. Resolving
-defaults does not generate CLI strings or launch a process. Host dispatch now
-delivers the resolved adapter; argument conversion remains pending.
+defaults does not generate CLI strings or launch a process. Host apply delivers
+the resolved adapter, and Diamant constructs ordered arguments. Value bindings
+accept strings, numbers, and booleans; null, arrays, and objects fail argument
+construction. Switch bindings require booleans. Optional absent bindings are
+removed during resolution.
 
 Diamant supplies a reserved runtime context independently of plugin settings.
 Initially, it MUST provide the full type-specific `runtime.websocketUrl`,
@@ -583,22 +591,26 @@ before implementation, following the project workflow.
 - [x] Report `Installed=True` with reason `ExtensionInstalled`, while `Ready/Updated=False` with reason `AwaitingLaunch` and phase `Pending`; report preparation failures separately.
 - [x] Preserve current resource/session checks, background downloads, cancellation, and removal of prepared associations.
 
-### Remaining: first executable launched through the API
+### Completed execution and reconfiguration
 
-These items are required, in implementation order:
+- [x] Select custom apply after successful installation and deliver the Node spec, artifact reference, and resolved adapter.
+- [x] Supply full type-specific `runtime.websocketUrl` values for all four pipeline types, preserving scheme, port, and path prefix.
+- [x] Build ordered `OsString` arguments with positional values, separate flags, boolean switches, defaults, and optional omission. Preserve false, zero, empty strings, and shell characters; reject null and structured values without explicit conversion.
+- [x] Launch prepared native executables directly from their configured working directory through the shared `NodeProcessManager::apply` supervisor. Disabled nodes MUST NOT spawn.
+- [x] Launch Python scripts/modules through embedded UV, using the prepared working directory and adapter arguments. Automatic dependency preparation is separate.
+- [x] Reprovision changed extensions on HUB and consume the published artifact reference on the Node. A changed reference invalidates bootstrap; unchanged references retain installed files.
+- [x] Apply command/settings changes and explicit restarts without pulling unchanged artifacts. Compare typed runnable spec fields and effective commands; CEL-immutable host assignment and settings type participate in equality, while display metadata and pipeline input references do not.
+- [x] Restore installations after reconnect using payloads cached by artifact reference; pull again only when the payload is unavailable locally or the selected reference is uncached.
+- [x] Report actual spawn results and subsequent process exits. Preserve installation status after argument or launch failure when the payload remains valid.
+- [x] Keep `inputRef` as pipeline configuration without startup validation, dependency watches, or process restarts.
 
-- [ ] Add the post-installation custom apply transition in `controller/plan.rs` and dispatch. The current planner only downloads custom extensions. Prefer extending the existing apply path: deliver the complete Node spec and selected artifact context so the host knows `enabled`, restart controls, and which prepared payload to use. Keep installation observations when applying.
-- [ ] Resolve pipeline compatibility from the extension's declared type for custom nodes, including custom upstream nodes. The current settings-only compatibility function does not recognize custom nodes and will reject them once custom apply uses it.
-- [ ] Supply full type-specific `runtime.websocketUrl` values for all four pipeline types. Current built-in endpoint handling supplies full URLs only for audio source/transcriber; translator/display use an authority string for their built-in adapters. Custom plugins need complete URLs, preserving scheme, port, and path prefix.
-- [ ] Build an ordered `OsString` argument array for the existing `source`, optional `flag`, and `mode: value | switch` schema. Preserve optional omission, false/zero/empty values, and positional bindings. Define explicit scalar/null conversion; reject arrays/objects without a supported explicit conversion. Require booleans for switches. Do not evaluate shell expressions.
-- [ ] Use the retained prepared executable and working directory to construct the native command. Integrate with `NodeProcessManager::apply` and its existing child supervision; it currently returns an unsupported error for custom nodes. A disabled node MUST NOT spawn.
-- [ ] Include artifact identity and resolved execution/settings in runtime comparison so reconfiguration uses the intended installation rather than reusing an unrelated running command. Preserve restart, removal, reconnect, and exit reporting behavior.
-- [ ] Report `Running`/`Ready` from actual spawn results and subsequent observations. Keep `Installed=True` after argument or launch failure when the prepared payload is still valid.
-- [ ] Add one complete API-driven executable test: register HTTP executable extension, create a custom node on a host with setting overrides, publish, download, prepare, apply, and verify the exact received flags and running status. Existing tests cover the stages but do not prove this full path.
+### Remaining: recovery and acceptance
 
-### Remaining: Python launch and the user-facing workflow
+- [ ] Automatic recovery: add bounded retries for transient download failures and decide whether crashed processes restart automatically or require an explicit restart.
+- [ ] Complete acceptance coverage: verify extension registration → publication → host installation → actual native and embedded-UV Python execution, including refresh, command/settings updates, reconnect, disable, restart, failure, and deletion.
 
-- [ ] Launch prepared Python scripts/modules using Diamant's existing embedded Python/uv path, with adapter-derived flags and working directory. Verify this separately from native launch; dependency installation is not implied by selecting Python.
+### Remaining: user-facing workflow
+
 - [ ] Align frontend extension models with `{name?, spec}`, Kubernetes resource responses, and `{items, resourceVersion}` list responses. Replace ZIP with HTTP/OCI source choices and support adapter configuration and publication status.
 - [ ] Add custom-node UI controls for extension, host, instance settings, and installation/running status. A browser file picker MUST NOT imply an upload when it sends only a filename: local sources refer to HUB directories; browser content upload needs a separate future contract.
 - [ ] Follow the required shadcn/ui Figma review for UI design changes, then implement the approved design, update mocks, and run Cypress coverage.
@@ -609,7 +621,7 @@ These items are required, in implementation order:
 - [ ] Define and implement automatic Python/package/native dependency preparation, including its failure and readiness semantics. Until then, `Installed=True` means payload and execution paths are prepared, not that dependencies were installed.
 - [ ] Add literal arguments, joined flags, repeated list arguments, explicit JSON conversion, and environment bindings when a concrete plugin requires them.
 - [ ] Add Git SSH, configurable refs, submodules, or LFS only when requested. Current Git HTTP(S)/default-HEAD behavior is intentional.
-- [ ] Add host registry authentication, artifact reuse, and cache cleanup when required by deployment. Current host registry access is anonymous and reconnect redownloads payloads.
+- [ ] Add host registry authentication and cache cleanup when required by deployment. Current host registry access is anonymous; artifact reuse is implemented.
 
 ## Validation and completion criteria
 
@@ -620,14 +632,19 @@ Already covered by existing tests:
 - [x] Controller delivery of artifact reference and resolved adapter.
 - [x] Host download, payload-path resolution, installation handoff, missing-entry-point failure, heartbeats, and cancellation.
 - [x] Preparation succeeds without starting a process; `Installed` and runtime readiness remain separate.
+- [x] Post-installation custom apply selection, artifact replacement, and rejection of stale reports.
+- [x] Native process supervision, unchanged-command reuse, argument updates, disable, and removal.
+- [x] Full endpoint URLs and embedded-UV script/module command construction; scalar and switch argument validation.
+- [x] Configuration changes retain installation; unchanged published content retains bootstrap state; cached payloads can be restored while the registry is unavailable.
+- [x] Typed runnable equality includes immutable host/type configuration and excludes display metadata and pipeline inputs.
 
-Still required before calling custom execution functional:
+Outstanding acceptance and release checks:
 
 - [ ] End-to-end native launch with exact flags and full runtime WebSocket URL.
-- [ ] Compatible custom pipeline connections using the declared type.
+- [ ] Verify explicit pipeline routing separately when implemented; `inputRef` does not currently route data or gate startup.
 - [ ] Disabled nodes remain stopped; a setting/restart/artifact change runs the current intended payload.
 - [ ] Argument-building failure, spawn failure, and process exit produce the corresponding runtime status without erasing valid installation status.
-- [ ] Python script/module launch tests before claiming Python execution support.
+- [ ] Actual custom Python script/module execution through embedded UV, beyond command construction.
 - [ ] Browser create/configure/start workflow and Cypress tests before claiming UI support.
 - [ ] Static Linux server and Diamant build verification before declaring a complete static release; see the publication plan delivery checks.
 
@@ -678,12 +695,16 @@ both download and installation-path preparation completed: `Installed=True`, rea
 phase `Pending`. Preparation failure sets `Installed=False` and phase `Failed`,
 reason `ExtensionPreparationFailed`. Neither outcome claims process startup.
 Resource, generation, operation, artifact, and session checks still reject stale
-reports. Prerequisite preparation and custom process execution remain deferred.
+reports. Successful preparation is followed by custom apply. Only prerequisite
+preparation remains deferred at this boundary.
 
 Diamant uses configurable persistent local artifact storage, defaulting to the OS
 local data directory under `suntitle/diamant/artifacts`. Every download uses private
 staging and publishes a unique directory after completion. Failed/cancelled staging
-MUST be removed after renderer shutdown. Completed downloads are retained. Cache
-reuse and garbage collection are deferred; reconnect redownloads the current
-reference. Background download jobs MUST NOT block registration heartbeats and
+MUST be removed after renderer shutdown. Completed downloads are retained and
+indexed by artifact reference. Reconnect restores a cached payload without a
+registry pull when it remains available. Command-only changes re-resolve execution
+paths against the existing installation without repeating the pull stage.
+Garbage collection and automatic download retries remain outstanding.
+Background download jobs MUST NOT block registration heartbeats and
 MUST be cancelled and awaited on removal, replacement, disconnect, or shutdown.

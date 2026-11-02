@@ -1,11 +1,11 @@
 //! Generation/deletion-driven dispatch intent.
+//! Pipeline input references MUST NOT gate installation or runnable startup.
 use super::{Context, ReconcileError, error_policy, plan::Plan, session::State};
 use crate::{
     kubernetes::{Error, resources::*},
     registration::Operation,
 };
 use futures_util::StreamExt;
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{
     Api, ResourceExt,
     runtime::{
@@ -64,27 +64,19 @@ impl State {
             if host.metadata.deletion_timestamp.is_some() {
                 return Ok(());
             }
-            if let Some(input) = &node.spec.input_ref
-                && plan.operation() == Operation::Apply
-            {
-                let upstream = self.nodes_api.get(&input.name).await?;
-                if upstream.metadata.deletion_timestamp.is_some()
-                    || !upstream.spec.enabled
-                    || upstream.uid() == node.uid()
-                    || !compatible(&upstream.spec.settings, &node.spec.settings)
-                {
-                    return self
-                        .invalid(
-                            &mut node,
-                            "InvalidInput",
-                            "Input MUST reference an available node with a compatible output.",
-                        )
-                        .await;
-                }
-            }
         }
         let previous = node.status.clone();
         let artifact_reference = plan.artifact_reference().map(str::to_owned);
+        if plan.operation() == Operation::Download {
+            for condition in &mut node.status.get_or_insert_default().conditions {
+                if condition.type_ == "Installed" {
+                    condition.status = "False".into();
+                    condition.reason = "Preparing".into();
+                    condition.message =
+                        "Waiting for host installation of the selected artifact.".into();
+                }
+            }
+        }
         node.status.get_or_insert_default().dispatch = Some(DispatchStatus {
             artifact_reference,
             generation,
@@ -95,49 +87,4 @@ impl State {
         });
         self.node_status(&mut node, &previous).await
     }
-}
-
-impl State {
-    /// Record a validation failure in node status.
-    async fn invalid(
-        &mut self,
-        node: &mut SuntitleNode,
-        reason: &str,
-        message: &str,
-    ) -> Result<(), Error> {
-        let previous = node.status.clone();
-        let status = node.status.get_or_insert_default();
-        status.phase = Some(NodePhase::Failed);
-        status.message = Some(message.into());
-        status.conditions.push(Condition {
-            last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
-            observed_generation: Some(node.metadata.generation.unwrap_or(1)),
-            type_: "Updated".into(),
-            status: "False".into(),
-            reason: (reason).into(),
-            message: (message).into(),
-        });
-        status.conditions.push(Condition {
-            last_transition_time: Time(k8s_openapi::jiff::Timestamp::now()),
-            observed_generation: Some(node.metadata.generation.unwrap_or(1)),
-            type_: "Ready".into(),
-            status: "False".into(),
-            reason: (reason).into(),
-            message: (message).into(),
-        });
-        self.node_status(node, &previous).await
-    }
-}
-
-/// Check whether an upstream output suits the downstream node.
-fn compatible(input: &NodeSettings, output: &NodeSettings) -> bool {
-    matches!(
-        (input, output),
-        (NodeSettings::AudioSource(_), NodeSettings::Transcriber(_))
-            | (
-                NodeSettings::Transcriber(_),
-                NodeSettings::Translator(_) | NodeSettings::Display(_)
-            )
-            | (NodeSettings::Translator(_), NodeSettings::Display(_))
-    )
 }

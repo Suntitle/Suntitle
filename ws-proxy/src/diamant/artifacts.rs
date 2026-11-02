@@ -4,7 +4,7 @@
 //! cancels a child token; session shutdown cancels their shared parent and MUST
 //! join every task. Tasks MUST NOT be aborted while a renderer can still be active.
 //! Successful preparation is handed to the process manager before reporting Installed.
-//! Argument construction and process launch remain deferred.
+//! Completed payloads are cached by artifact reference. Command changes MUST NOT pull files.
 use std::{collections::HashMap, path::PathBuf};
 
 use oci_artifact::{CancellationToken, DownloadRequest, Downloader, client::TransportOptions};
@@ -243,6 +243,18 @@ async fn download(
     let base = directory;
     tokio::fs::create_dir_all(&base).await?;
     let base = tokio::fs::canonicalize(base).await?;
+    use sha2::{Digest, Sha256};
+    let cache = base.join(format!(
+        ".payload-{:x}.json",
+        Sha256::digest(reference.as_bytes())
+    ));
+    if let Ok(bytes) = tokio::fs::read(&cache).await
+        && let Ok(payload) = serde_json::from_slice::<PathBuf>(&bytes)
+        && payload.starts_with(&base)
+        && tokio::fs::try_exists(&payload).await?
+    {
+        return Ok(payload);
+    }
     let staging = tempfile::Builder::new()
         .prefix(".artifact-")
         .tempdir_in(&base)?;
@@ -262,5 +274,13 @@ async fn download(
         })?;
     let destination = base.join(uuid::Uuid::new_v4().to_string());
     tokio::fs::rename(&result.output_path, &destination).await?;
-    Ok(destination.join(relative_payload))
+    let payload = destination.join(relative_payload);
+    let marker = tempfile::NamedTempFile::new_in(&base)?;
+    tokio::fs::write(
+        marker.path(),
+        serde_json::to_vec(&payload).map_err(std::io::Error::other)?,
+    )
+    .await?;
+    tokio::fs::rename(marker.path(), &cache).await?;
+    Ok(payload)
 }

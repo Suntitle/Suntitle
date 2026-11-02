@@ -262,11 +262,14 @@ async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
 }
 
 #[tokio::test]
-async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_execution() {
+async fn custom_lifecycle_prepares_then_applies_and_reboots_only_changed_artifacts() {
     use warp::Filter;
     let mut node = node();
     node.spec.extension_ref = Some(ResourceRef {
         name: "extension".into(),
+    });
+    node.spec.input_ref = Some(ResourceRef {
+        name: "pipeline-upstream".into(),
     });
     node.spec.settings = NodeSettings::Custom(Default::default());
     node.metadata.finalizers = Some(vec![NODE_FINALIZER.into()]);
@@ -293,6 +296,10 @@ async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_exec
                   path: warp::path::FullPath,
                   body: actix_web::web::Bytes| {
                 if path.as_str().contains("/suntitlenodes/") {
+                    assert!(
+                        !path.as_str().ends_with("/pipeline-upstream"),
+                        "startup MUST NOT resolve pipeline inputs"
+                    );
                     let mut node = nodes.lock().unwrap();
                     if method == warp::http::Method::PATCH {
                         let patch: Value = serde_json::from_slice(&body).unwrap();
@@ -432,8 +439,58 @@ async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_exec
     }
     let current = stored_node.lock().unwrap().clone();
     state.reconcile_spec(&current).await.unwrap();
+    let current = stored_node.lock().unwrap().clone();
     state.reconcile_runtime(&current).await.unwrap();
-    assert!(connection.outbound.try_recv().is_err());
+    let RegistrationServerMessage::Apply {
+        identity: applied,
+        custom: Some(custom),
+        ..
+    } = connection.outbound.recv().await.unwrap()
+    else {
+        panic!("expected custom apply after installation");
+    };
+    assert_eq!(custom.reference, reference);
+    state
+        .report(
+            &applied.host_uid,
+            &applied.session_id,
+            RegistrationClientMessage::Acknowledgement {
+                identity: applied.clone(),
+                operation: Operation::Apply,
+                success: true,
+                message: None,
+            },
+        )
+        .await
+        .unwrap();
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_runtime(&current).await.unwrap();
+    assert!(matches!(
+        stored_node.lock().unwrap().status.as_ref().unwrap().phase,
+        Some(NodePhase::Running)
+    ));
+    {
+        let mut node = stored_node.lock().unwrap();
+        node.metadata.generation = Some(2);
+        // Resolution preserves the installation and advances its observed node revision.
+        node.status
+            .as_mut()
+            .unwrap()
+            .conditions
+            .iter_mut()
+            .find(|c| c.type_ == "Installed")
+            .unwrap()
+            .observed_generation = Some(2);
+        node.spec.restart_token = Some("restart".into());
+    }
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_spec(&current).await.unwrap();
+    let current = stored_node.lock().unwrap().clone();
+    state.reconcile_runtime(&current).await.unwrap();
+    assert!(matches!(
+        connection.outbound.recv().await.unwrap(),
+        RegistrationServerMessage::Apply { .. }
+    ));
     stored_node
         .lock()
         .unwrap()

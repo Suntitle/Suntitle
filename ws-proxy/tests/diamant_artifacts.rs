@@ -102,7 +102,7 @@ async fn downloads_publish_complete_trees_and_report_failures_without_partial_ou
         let mut id = identity();
         id.generation += i64::from(corrupt);
         id.operation_id = format!("transfer-{}", id.generation);
-        downloads.start(id.clone(), reference, adapter());
+        downloads.start(id.clone(), reference.clone(), adapter());
         let report = tokio::time::timeout(Duration::from_secs(10), downloads.next_report())
             .await
             .unwrap();
@@ -138,6 +138,20 @@ async fn downloads_publish_complete_trees_and_report_failures_without_partial_ou
                 Duration::from_secs(1),
             )
             .unwrap();
+            let installed_root = installation.root.clone();
+            server.abort();
+            let mut next = id.clone();
+            next.generation += 1;
+            next.operation_id = "restore-cached-payload".into();
+            downloads.start(next.clone(), reference, adapter());
+            let report = tokio::time::timeout(Duration::from_secs(2), downloads.next_report())
+                .await
+                .unwrap();
+            assert!(matches!(
+                report,
+                RegistrationClientMessage::Acknowledgement { success: true, .. }
+            ));
+            assert_eq!(downloads.take_prepared(&next).unwrap().root, installed_root);
             manager.prepare_extension(installation);
             assert!(manager.prepared_extension(&id).is_some());
             assert!(
@@ -154,6 +168,10 @@ async fn downloads_publish_complete_trees_and_report_failures_without_partial_ou
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
+        let entries: Vec<_> = entries
+            .into_iter()
+            .filter(|entry| entry.path().is_dir())
+            .collect();
         assert_eq!(entries.len(), 1);
         let payload = entries[0].path().join("payload/run");
         assert_eq!(std::fs::read(&payload).unwrap(), b"payload");
@@ -311,6 +329,10 @@ async fn host_keeps_heartbeats_running_and_reports_download_without_launching() 
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
+    let payloads: Vec<_> = payloads
+        .into_iter()
+        .filter(|entry| entry.path().is_dir())
+        .collect();
     assert_eq!(payloads.len(), 1);
     assert_eq!(
         std::fs::read(payloads[0].path().join("payload/run")).unwrap(),

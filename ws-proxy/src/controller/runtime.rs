@@ -102,6 +102,21 @@ impl State {
             return self.node_status(&mut node, &previous).await;
         };
         let status = node.status.as_mut().unwrap();
+        if matches!(plan, Plan::CustomApply { .. })
+            && status.reporting_session.as_deref() != Some(&session)
+        {
+            for condition in &mut status.conditions {
+                if condition.type_ == "Installed" {
+                    condition.status = "False".into();
+                    condition.reason = "RestoringInstallation".into();
+                    condition.message =
+                        "Restore the prepared payload for the current host session.".into();
+                }
+            }
+            status.dispatch = None;
+            set_phase(&mut node, NodePhase::Pending);
+            return self.node_status(&mut node, &previous).await;
+        }
         let dispatch = status.dispatch.as_mut().unwrap();
         if dispatch.session_id.as_deref() == Some(&session)
             && self.connections.dispatched(
