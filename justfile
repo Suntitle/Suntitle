@@ -164,21 +164,24 @@ restart-node node_id:
 e2e:
     cargo run --locked --manifest-path ws-proxy/Cargo.toml --example e2e_probe
 
+# Prepare application binaries and E2E harnesses without starting services.
+e2e-build:
+    cargo build --locked --manifest-path ws-proxy/Cargo.toml --target-dir ws-proxy/target --bins --examples
+
 # Run the host-registration end-to-end test.
-host-e2e: kubernetes-up
-    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example host_registration_e2e
+host-e2e: e2e-build kubernetes-up
+    ws-proxy/target/debug/examples/host_registration_e2e
 
 # Run the node-lifecycle end-to-end test.
-node-e2e: kubernetes-up
-    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example node_handling_e2e
+node-e2e: e2e-build kubernetes-up
+    ws-proxy/target/debug/examples/node_handling_e2e
 
 # Build and retain the native development extension for the current host architecture.
-custom-node-fixtures:
-    cargo build --locked --manifest-path ws-proxy/Cargo.toml --target-dir ws-proxy/target --example custom_node_probe
+custom-node-fixtures: e2e-build
     cp ws-proxy/target/debug/examples/custom_node_probe ws-proxy/examples/custom_node_e2e/extensions/native/bin/probe
 
 # Verify local and OCI native, Python script, and Python module extensions through the API.
-custom-node-e2e:
+custom-node-e2e: custom-node-fixtures
     #!/usr/bin/env bash
     set -euo pipefail
     bash scripts/generate-kubeconfigs.sh
@@ -192,7 +195,7 @@ custom-node-e2e:
     }
     trap cleanup EXIT
     "${compose[@]}" up -d --wait --wait-timeout 90 kube-apiserver distribution traefik
-    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example custom_node_e2e
+    ws-proxy/target/debug/examples/custom_node_e2e
 
 # Run Rust tests that do not require a Kubernetes server.
 test-rust:

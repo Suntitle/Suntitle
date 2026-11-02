@@ -151,57 +151,86 @@ preparation, OCI client integration, and Distribution deployment details.
 
 ## Registration, preparation, and execution sequence
 
-The implemented preparation path precedes custom apply:
+Extension registration and publication:
 
 ```mermaid
 sequenceDiagram
-    participant USER
-    participant HUB
-    participant REGISTRY
-    participant TRAEFIK
-    participant DIAMANT
+    actor USER as API client
+    participant HUB as HUB (API and controllers)
+    participant WORKER as Publication worker
+    participant SOURCE as Original source
+    participant REGISTRY as Distribution
+
     USER->>HUB: Register Extension source and adapter
     HUB-->>USER: 201 Created (publication pending)
-    HUB->>REGISTRY: Publish source payload in background
-    REGISTRY-->>HUB: Canonical digest reference
-    HUB->>HUB: Extension Ready=True
-    USER->>HUB: Create custom Node with hostRef and extensionRef
-    HUB->>HUB: Resolve adapter defaults and instance settings
-    HUB->>DIAMANT: download_artifact(identity, reference, adapter)
-    DIAMANT->>TRAEFIK: Pull artifact
-    TRAEFIK->>REGISTRY: Forward registry requests
-    REGISTRY-->>DIAMANT: Artifact bytes through Traefik
-    DIAMANT->>DIAMANT: Materialize payload and resolve execution paths
-    DIAMANT->>DIAMANT: Retain PreparedExtension in process manager
-    DIAMANT-->>HUB: download acknowledgement (preparation result)
-    HUB->>HUB: Installed=True#59; Pending#59; Ready=False#59; AwaitingLaunch
+    HUB->>WORKER: Queue background publication
+    alt Local HUB folder or Git HTTP(S)
+        WORKER->>SOURCE: Read folder or fetch depth-one Git HEAD
+        SOURCE-->>WORKER: Payload files
+        WORKER->>WORKER: Stream directory archive with adapter.yaml
+    else HTTP executable
+        WORKER->>SOURCE: Download executable
+        SOURCE-->>WORKER: File byte stream
+    else Upstream OCI artifact
+        WORKER->>SOURCE: Pull manifest and blobs
+        SOURCE-->>WORKER: Original manifest and blob streams
+    end
+    WORKER->>REGISTRY: Publish or mirror using oci-artifact
+    REGISTRY-->>WORKER: Canonical digest reference
+    WORKER->>REGISTRY: Verify digest reference resolves
+    REGISTRY-->>WORKER: Manifest available
+    WORKER-->>HUB: Publication succeeded
+    HUB->>HUB: Extension Ready=True for current generation
 ```
 
-After installation succeeds, the planner selects custom apply. The following
-execution sequence is implemented and covered by the API-driven custom-node E2E:
+Host installation and supervised execution:
 
 ```mermaid
 sequenceDiagram
-    participant HUB
-    participant DIAMANT
-    participant PROCESS
-    HUB->>HUB: Select custom apply after successful preparation
+    actor USER as API client
+    participant HUB as HUB (API and controllers)
+    participant DIAMANT as Assigned Diamant host
+    participant TRAEFIK as Traefik
+    participant REGISTRY as Distribution
+    participant PROCESS as Custom process
+
+    USER->>HUB: Create Node with hostRef, extensionRef, and custom settings
+    HUB-->>USER: 201 Created (desired state persisted)
+    HUB->>HUB: Resolve current publication, adapter defaults, and overrides
+    HUB->>DIAMANT: download_artifact(identity, digest reference, adapter)
+    DIAMANT->>TRAEFIK: Pull artifact by digest
+    TRAEFIK->>REGISTRY: Forward registry requests
+    REGISTRY-->>TRAEFIK: Manifest and payload bytes
+    TRAEFIK-->>DIAMANT: Manifest and payload bytes
+    DIAMANT->>DIAMANT: Restore payload and resolve execution paths
+    DIAMANT->>DIAMANT: Retain PreparedExtension in process manager
+    DIAMANT-->>HUB: Download acknowledgement (preparation succeeded)
+    HUB->>HUB: Installed=True, Pending, Ready=False/AwaitingLaunch
     HUB->>DIAMANT: Apply node spec and selected artifact context
-    DIAMANT->>DIAMANT: Match PreparedExtension and build ordered arguments
-    alt Node enabled
-        DIAMANT->>PROCESS: Spawn executable or explicit Python entry point
-        DIAMANT-->>HUB: Report actual spawn success or failure
-        HUB->>HUB: Running/Ready only after successful spawn
-    else Node disabled
-        DIAMANT-->>HUB: Report disabled#59; do not spawn
+    DIAMANT->>DIAMANT: Match installation and build ordered arguments
+    alt Native executable
+        DIAMANT->>PROCESS: Spawn executable directly
+    else Python script
+        DIAMANT->>PROCESS: Start script through embedded UV
+    else Python module
+        DIAMANT->>PROCESS: Start module through embedded UV with python -m
     end
-    PROCESS-->>DIAMANT: Exit / output
-    DIAMANT-->>HUB: Subsequent runtime observations
+    DIAMANT-->>HUB: Apply result reflecting actual spawn success or failure
+    HUB->>HUB: Running/Ready only after successful spawn
+    PROCESS-->>DIAMANT: Subsequent process exit
+    DIAMANT-->>HUB: Runtime observation
 ```
 
-Reuse the existing apply/reporting and supervision machinery. Command acceptance
-alone MUST NOT mark a node running. Installation failures remain distinct from
-argument-construction and process-start failures.
+The execution diagram shows an enabled node after successful publication and
+preparation. Preparation failure prevents launch. A disabled apply reports disabled
+without spawning a process. Publication, installation, and runtime readiness remain
+separate observations; command acceptance alone MUST NOT mark a node running.
+
+`controller/lifecycle.rs` projects validated acknowledgements with one match on
+operation, success, and enabled state. Successful preparation writes `Installed=True`
+and `Pending/AwaitingLaunch` together. There are no intermediate Rust wrapper states
+or extra status writes between those observations. Identity, generation, artifact,
+operation, and session checks remain prerequisites for handling acknowledgements.
 
 ## Existing Extension and Node contracts
 

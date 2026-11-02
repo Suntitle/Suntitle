@@ -324,6 +324,16 @@ that can send commands through `HostControlRegistry`, then let the API task call
 
 ### Verification commands
 
+E2E preparation is owned by `just e2e-build`, which builds applications and examples
+before either `host-e2e` or `node-e2e` starts its harness. Direct Cargo example runs
+MUST prepare application binaries first. The custom-node recipe additionally
+depends on `custom-node-fixtures` to retain its native payload for development.
+Shared process guards, binary discovery, startup waits, API requests, and polling
+live under `ws-proxy/examples/support`.
+
+The extension publication and host installation/execution sequences are in the
+[custom-node plan](custom-node-type-plan.md#registration-preparation-and-execution-sequence).
+
 ```bash
 cargo fmt --manifest-path ws-proxy/Cargo.toml --check
 cargo clippy --manifest-path ws-proxy/Cargo.toml --all-targets --all-features -- -D warnings

@@ -53,7 +53,7 @@ jobs:
           sudo apt-get install -y lld mkcert libnss3-tools
 
       - name: Build binaries and examples
-        run: cargo build --locked --manifest-path ws-proxy/Cargo.toml --bins --examples
+        run: just e2e-build
 
       - name: Run Rust unit and integration tests
         run: just test-rust

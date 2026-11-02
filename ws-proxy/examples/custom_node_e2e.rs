@@ -15,54 +15,17 @@ use std::{
     error::Error,
     fs, io,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Command,
     time::Duration,
 };
-use tokio::time::{Instant, sleep, timeout};
+use support::{
+    ApiClient, ChildProcess, binary_directory, binary_path, fixture_python, wait_for_services,
+};
+use tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
 /// Maximum time for publication, installation, or launch evidence.
 const ACTION_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Application process owned by this run. Shutdown MUST reap its children first.
-struct Process {
-    /// Live child, stopped and reaped when the guard is dropped.
-    child: Child,
-}
-
-impl Process {
-    /// Start a real application with diagnostics inherited by the test runner.
-    fn start(command: &mut Command) -> io::Result<Self> {
-        Ok(Self {
-            child: command
-                .stdin(Stdio::null())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn()?,
-        })
-    }
-}
-
-impl Drop for Process {
-    /// Give Diamant time to stop supervised processes before forced cleanup.
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Ok(pid) = i32::try_from(self.child.id()) {
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid),
-                nix::sys::signal::Signal::SIGTERM,
-            );
-            for _ in 0..70 {
-                if self.child.try_wait().ok().flatten().is_some() {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 
 /// Read reviewable YAML and replace only the run-specific string values.
 fn fixture(path: &Path, replacements: &[(&str, &str)]) -> Result<Value, Box<dyn Error>> {
@@ -90,48 +53,6 @@ fn substitute(value: &mut Value, replacements: &[(&str, &str)]) {
             }
         }
         _ => {}
-    }
-}
-
-/// Send a real control API request and retain error response bodies.
-async fn request(
-    client: &reqwest::Client,
-    method: reqwest::Method,
-    path: &str,
-    body: Option<&Value>,
-    expected: u16,
-) -> Result<Value, Box<dyn Error>> {
-    let mut request = client.request(method, format!("http://127.0.0.1:3031/api/v1{path}"));
-    if let Some(body) = body {
-        request = request.json(body);
-    }
-    let response = request.send().await?;
-    let status = response.status().as_u16();
-    let text = response.text().await?;
-    if status != expected {
-        return Err(format!("{path}: expected {expected}, got {status}: {text}").into());
-    }
-    Ok(serde_json::from_str(&text)?)
-}
-
-/// Wait for a matching API observation while retaining the last response for diagnostics.
-async fn wait_api(
-    client: &reqwest::Client,
-    path: &str,
-    predicate: impl Fn(&Value) -> bool,
-) -> Result<Value, Box<dyn Error>> {
-    let deadline = Instant::now() + ACTION_TIMEOUT;
-    loop {
-        let result = request(client, reqwest::Method::GET, path, None, 200).await;
-        if let Ok(value) = &result
-            && predicate(value)
-        {
-            return Ok(value.clone());
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("timed out waiting for {path}: {result:?}").into());
-        }
-        sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -204,24 +125,6 @@ async fn installed_then_running(
     Ok(())
 }
 
-/// Build the real services and retain a native fixture in its development source directory.
-fn build(root: &Path, binaries: &Path, sources: &Path) -> Result<(), Box<dyn Error>> {
-    let status = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-        .args(["build", "--locked", "--manifest-path"])
-        .arg(root.join("Cargo.toml"))
-        .args(["--bins", "--example", "custom_node_probe", "--target-dir"])
-        .arg(binaries.parent().ok_or("target directory missing")?)
-        .status()?;
-    if !status.success() {
-        return Err("failed to build E2E applications".into());
-    }
-    fs::copy(
-        binaries.join("examples/custom_node_probe"),
-        sources.join("native/bin/probe"),
-    )?;
-    Ok(())
-}
-
 /// Exercise local and OCI YAML-defined extensions against real services and one assigned host.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -229,18 +132,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let data = root.join("examples/custom_node_e2e");
     let sources = data.join("extensions");
-    let executable = env::current_exe()?;
-    let binaries = executable
-        .parent()
-        .and_then(Path::parent)
-        .ok_or("binary directory missing")?;
-    build(&root, binaries, &sources)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
+    let binaries = binary_directory()?;
+    if !sources.join("native/bin/probe").is_file() {
+        return Err(
+            "native fixture missing; run just custom-node-fixtures before the harness".into(),
+        );
+    }
+    let client = ApiClient::new()?;
     let registry =
         env::var("CUSTOM_NODE_E2E_REGISTRY").unwrap_or_else(|_| "127.0.0.1:18080".into());
-    client
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?
         .get(format!("http://{registry}/v2/"))
         .send()
         .await?
@@ -291,23 +194,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
             run.path().to_str().ok_or("run path is not UTF-8")?,
         ),
     ];
-    let _api = Process::start(&mut namespace.command(binaries.join("control_api"), "api"))?;
-    let _proxy = Process::start(
+    let mut api = ChildProcess::spawn(
+        "control_api",
+        &mut namespace.command(binary_path(&binaries, "control_api"), "api"),
+    )?;
+    let mut proxy = ChildProcess::spawn(
+        "ws-proxy",
         namespace
-            .command(binaries.join("ws-proxy"), "proxy")
+            .command(binary_path(&binaries, "ws-proxy"), "proxy")
             .arg("--extension-registry")
             .arg(format!("{registry}/custom-node-e2e/{host_name}"))
             .arg("--extension-registry-plain-http"),
     )?;
-    wait_api(&client, "/hosts", |_| true).await?;
-    let python = Command::new("/usr/bin/python3")
-        .args(["-c", "import sys; print(sys.executable)"])
-        .output()?;
-    if !python.status.success() {
-        return Err("fixture Python interpreter unavailable".into());
-    }
-    let _diamant = Process::start(
-        Command::new(binaries.join("diamant"))
+    wait_for_services(&mut [&mut api, &mut proxy]).await?;
+    let mut diamant = ChildProcess::spawn(
+        "diamant",
+        Command::new(binary_path(&binaries, "diamant"))
             .args([
                 "--cli",
                 "--proxy-url",
@@ -324,24 +226,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ])
             .arg(&artifacts)
             .arg("--artifact-plain-http")
-            .env("UV_PYTHON", String::from_utf8(python.stdout)?.trim())
+            .env("UV_PYTHON", fixture_python()?)
             .env("UV_OFFLINE", "true")
             .env("UV_PYTHON_DOWNLOADS", "never"),
     )?;
-    let hosts = wait_api(&client, "/hosts", |hosts| {
-        hosts["items"].as_array().is_some_and(|items| {
-            items
-                .iter()
-                .any(|h| h["spec"]["name"] == host_name && h["status"]["presence"] == "Online")
-        })
-    })
-    .await?;
-    let host = hosts["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|h| h["spec"]["name"] == host_name)
-        .unwrap();
+    let host = client
+        .wait_for_host(
+            &host_name,
+            "Online",
+            ACTION_TIMEOUT,
+            &mut [&mut proxy, &mut diamant],
+        )
+        .await?;
     let host_id = host["metadata"]["uid"].as_str().ok_or("host UID missing")?;
     let scenarios = fixture(&data.join("scenarios.yaml"), &[])?;
     let publisher = Publisher::new(TransportOptions {
@@ -372,20 +268,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } else {
             None
         };
-        request(
-            &client,
-            reqwest::Method::POST,
-            "/extensions",
-            Some(&extension),
-            201,
-        )
-        .await?;
-        let published = wait_api(
-            &client,
-            &format!("/extensions/{}", extension["name"].as_str().unwrap()),
-            |e| condition(e, "Ready", "True", None),
-        )
-        .await?;
+        client
+            .request("POST", "/api/v1/extensions", Some(&extension), 201)
+            .await?;
+        let published = client
+            .wait_for(
+                &format!("/api/v1/extensions/{}", extension["name"].as_str().unwrap()),
+                ACTION_TIMEOUT,
+                |e| Ok(condition(e, "Ready", "True", None)),
+            )
+            .await?;
         let reference = &published["status"]["artifactReference"];
         assert!(
             reference
@@ -413,14 +305,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .to_owned(),
         );
         let node = fixture(&data.join(format!("{name}-node.yaml")), &replacements)?;
-        let created = request(
-            &client,
-            reqwest::Method::POST,
-            &format!("/hosts/{host_id}/nodes"),
-            Some(&node),
-            201,
-        )
-        .await?;
+        let created = client
+            .request(
+                "POST",
+                &format!("/api/v1/hosts/{host_id}/nodes"),
+                Some(&node),
+                201,
+            )
+            .await?;
         installed_then_running(&namespace, &created, reference).await?;
         let report_path = run.path().join(format!("{name}.json"));
         let report = timeout(ACTION_TIMEOUT, async {
