@@ -376,7 +376,7 @@ pub enum NodeSettings {
     /// Subtitle presentation configuration.
     Display(DisplaySettings),
     /// Arbitrary settings for the referenced extension.
-    Custom(#[schemars(schema_with = "reported_metadata_schema")] BTreeMap<String, Value>),
+    Custom(super::adapter::PluginSettings),
 }
 
 pub fn crds()

@@ -8,7 +8,7 @@
       "type": "transcriber",
       "execution": {
         "runtime": "executable",
-        "executable": "./bin/transcriber"
+        "command": "./bin/transcriber"
       },
       "settings": {
         "language": {

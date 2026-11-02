@@ -1135,6 +1135,7 @@ components:
           properties:
             adapter:
               type: object
+              description: Standard adapter fields shared by an extension and its resolved node instance.
               required:
               - type
               - execution
@@ -1143,6 +1144,7 @@ components:
                   type: array
                   items:
                     type: object
+                    description: Ordered CLI binding reused before and after node setting resolution.
                     required:
                     - source
                     properties:
@@ -1160,18 +1162,44 @@ components:
                         - switch
                       source:
                         type: string
+                        description: Standard runtime value or exact user-defined setting key.
                         pattern: ^(runtime\.websocketUrl|settings\..+)$
                     additionalProperties: false
                     x-kubernetes-validations:
                     - message: switch arguments require a flag
                       rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+                  description: Ordered mappings from typed sources to command arguments.
                 execution:
                   type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                  description: Typed execution contract, unchanged by plugin setting resolution.
+                  required:
+                  - command
+                  properties:
+                    command:
+                      type: string
+                      description: One executable/script path or module name, interpreted by runtime.
+                      minLength: 1
+                    runtime:
+                      type: string
+                      description: Defaults once during deserialization and Kubernetes schema defaulting.
+                      default: executable
+                      enum:
+                      - executable
+                      - python
+                      - pythonModule
+                    workingDirectory:
+                      type:
+                      - string
+                      - 'null'
+                      description: Optional process directory, relative to the installed root or explicitly absolute.
+                      minLength: 1
+                  additionalProperties: false
                 settings:
                   type: object
+                  description: User-defined setting declarations or resolved instance values.
                   additionalProperties:
                     type: object
+                    description: One plugin setting declaration. Values may have any user-defined JSON shape.
                     properties:
                       default:
                         type:
@@ -1184,10 +1212,12 @@ components:
                         description: Explicit null MUST remain distinct from an omitted default.
                       required:
                         type: boolean
+                        description: Require an instance value when no default is declared.
                         default: false
                     additionalProperties: false
                 type:
                   type: string
+                  description: Pipeline role defining communication and input compatibility.
                   enum:
                   - audio_source
                   - transcriber
@@ -1256,9 +1286,9 @@ components:
                   type:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
+              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
-              x-kubernetes-list-type: map
             observedGeneration:
               type:
               - integer
@@ -1279,6 +1309,7 @@ components:
       properties:
         adapter:
           type: object
+          description: Standard adapter fields shared by an extension and its resolved node instance.
           required:
           - type
           - execution
@@ -1287,6 +1318,7 @@ components:
               type: array
               items:
                 type: object
+                description: Ordered CLI binding reused before and after node setting resolution.
                 required:
                 - source
                 properties:
@@ -1304,18 +1336,44 @@ components:
                     - switch
                   source:
                     type: string
+                    description: Standard runtime value or exact user-defined setting key.
                     pattern: ^(runtime\.websocketUrl|settings\..+)$
                 additionalProperties: false
                 x-kubernetes-validations:
                 - message: switch arguments require a flag
                   rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+              description: Ordered mappings from typed sources to command arguments.
             execution:
               type: object
-              x-kubernetes-preserve-unknown-fields: true
+              description: Typed execution contract, unchanged by plugin setting resolution.
+              required:
+              - command
+              properties:
+                command:
+                  type: string
+                  description: One executable/script path or module name, interpreted by runtime.
+                  minLength: 1
+                runtime:
+                  type: string
+                  description: Defaults once during deserialization and Kubernetes schema defaulting.
+                  default: executable
+                  enum:
+                  - executable
+                  - python
+                  - pythonModule
+                workingDirectory:
+                  type:
+                  - string
+                  - 'null'
+                  description: Optional process directory, relative to the installed root or explicitly absolute.
+                  minLength: 1
+              additionalProperties: false
             settings:
               type: object
+              description: User-defined setting declarations or resolved instance values.
               additionalProperties:
                 type: object
+                description: One plugin setting declaration. Values may have any user-defined JSON shape.
                 properties:
                   default:
                     type:
@@ -1328,10 +1386,12 @@ components:
                     description: Explicit null MUST remain distinct from an omitted default.
                   required:
                     type: boolean
+                    description: Require an instance value when no default is declared.
                     default: false
                 additionalProperties: false
             type:
               type: string
+              description: Pipeline role defining communication and input compatibility.
               enum:
               - audio_source
               - transcriber
@@ -2024,6 +2084,7 @@ components:
                 properties:
                   custom:
                     type: object
+                    description: Only plugin-owned values remain dynamic. Keys and value shapes are user-defined.
                     x-kubernetes-preserve-unknown-fields: true
                 additionalProperties: false
               description: Configuration for exactly one node type. The selected type MUST remain unchanged.
@@ -2080,9 +2141,9 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Node health observations keyed by condition type.
-              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
+              x-kubernetes-list-type: map
             dispatch:
               type:
               - object
@@ -2150,16 +2211,16 @@ components:
               type:
               - object
               - 'null'
+              description: Standard adapter fields shared by an extension and its resolved node instance.
               required:
               - type
               - execution
-              - settings
-              - arguments
               properties:
                 arguments:
                   type: array
                   items:
                     type: object
+                    description: Ordered CLI binding reused before and after node setting resolution.
                     required:
                     - source
                     properties:
@@ -2177,24 +2238,51 @@ components:
                         - switch
                       source:
                         type: string
+                        description: Standard runtime value or exact user-defined setting key.
                         pattern: ^(runtime\.websocketUrl|settings\..+)$
                     additionalProperties: false
                     x-kubernetes-validations:
                     - message: switch arguments require a flag
                       rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && self.flag != null)'
+                  description: Ordered mappings from typed sources to command arguments.
                 execution:
                   type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                  description: Typed execution contract, unchanged by plugin setting resolution.
+                  required:
+                  - command
+                  properties:
+                    command:
+                      type: string
+                      description: One executable/script path or module name, interpreted by runtime.
+                      minLength: 1
+                    runtime:
+                      type: string
+                      description: Defaults once during deserialization and Kubernetes schema defaulting.
+                      default: executable
+                      enum:
+                      - executable
+                      - python
+                      - pythonModule
+                    workingDirectory:
+                      type:
+                      - string
+                      - 'null'
+                      description: Optional process directory, relative to the installed root or explicitly absolute.
+                      minLength: 1
+                  additionalProperties: false
                 settings:
                   type: object
+                  description: User-defined setting declarations or resolved instance values.
                   x-kubernetes-preserve-unknown-fields: true
                 type:
                   type: string
+                  description: Pipeline role defining communication and input compatibility.
                   enum:
                   - audio_source
                   - transcriber
                   - translator
                   - display
+              additionalProperties: false
     SuntitleNodeSpec:
       type: object
       title: SuntitleNodeSpec
@@ -2474,6 +2562,7 @@ components:
             properties:
               custom:
                 type: object
+                description: Only plugin-owned values remain dynamic. Keys and value shapes are user-defined.
                 x-kubernetes-preserve-unknown-fields: true
             additionalProperties: false
           description: Configuration for exactly one node type. The selected type MUST remain unchanged.

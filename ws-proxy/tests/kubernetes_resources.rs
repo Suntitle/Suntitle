@@ -263,6 +263,38 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
         adapter_schema["type"]["enum"],
         json!(["audio_source", "transcriber", "translator", "display"])
     );
+    let execution = &adapter_schema["execution"];
+    assert_eq!(execution["type"], "object");
+    assert!(
+        execution
+            .get("x-kubernetes-preserve-unknown-fields")
+            .is_none()
+    );
+    assert_eq!(
+        execution["properties"]["runtime"]["enum"],
+        json!(["executable", "python", "pythonModule"])
+    );
+    assert_eq!(execution["properties"]["runtime"]["default"], "executable");
+    assert_eq!(execution["properties"]["command"]["type"], "string");
+    assert_eq!(execution["required"], json!(["command"]));
+    assert_eq!(execution["properties"]["command"]["minLength"], 1);
+    for old in ["executable", "script", "module"] {
+        assert!(execution["properties"].get(old).is_none());
+    }
+    let node_schema = serde_json::to_value(SuntitleNode::crd()).unwrap();
+    let resolved_execution = &node_schema["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
+        ["status"]["properties"]["resolvedAdapter"]["properties"]["execution"];
+    assert_eq!(
+        resolved_execution, execution,
+        "declared and resolved adapters MUST reuse the execution schema"
+    );
+    use utoipa::OpenApi;
+    let api = serde_json::to_value(ws_proxy::api::ApiDoc::openapi()).unwrap();
+    assert_eq!(
+        api["components"]["schemas"]["SuntitleExtensionSpec"]["properties"]["adapter"]["properties"]
+            ["execution"]["properties"]["runtime"]["enum"],
+        json!(["executable", "python", "pythonModule"])
+    );
     let setting = &adapter_schema["settings"]["additionalProperties"];
     assert_eq!(setting["properties"]["required"]["type"], "boolean");
     assert_eq!(setting["properties"]["required"]["default"], false);
@@ -278,7 +310,7 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     );
     assert_eq!(binding["properties"]["mode"]["default"], "value");
     assert_eq!(binding["required"], json!(["source"]));
-    let adapter = json!({"type":"transcriber", "execution":{"runtime":"executable", "executable":"./run"},
+    let adapter = json!({"type":"transcriber", "execution":{"runtime":"executable", "command":"./run"},
         "settings":{"nested":{"default":{"values":[null, false, 0, ""]}}},
         "arguments":[{"flag":"--server", "source":"runtime.websocketUrl"}]});
     for source_type in ["local", "git", "oci", "http"] {

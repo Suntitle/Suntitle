@@ -4,16 +4,21 @@
 //! for a current publication, then select download. Both reconciliation loops
 //! and acknowledgement validation MUST use this selection.
 use crate::{
-    kubernetes::resources::{DispatchStatus, NodePhase, SuntitleNode, SuntitleNodeSpec},
+    kubernetes::{
+        adapter::ResolvedAdapter,
+        resources::{DispatchStatus, NodePhase, SuntitleNode, SuntitleNodeSpec},
+    },
     registration::{ApplyIdentity, Operation, RegistrationServerMessage},
 };
 
 /// Work eligible for dispatch. Absence of a plan means publication is pending.
 pub(super) enum Plan {
-    /// Transfer the current extension artifact without executing it.
+    /// Transfer the current extension artifact and prepare its execution paths.
     Download {
         /// Published reference selected for this node generation.
         reference: String,
+        /// Resolved execution and settings corresponding to this node revision.
+        adapter: Box<ResolvedAdapter>,
     },
     /// Apply a built-in runtime specification.
     BuiltinApply,
@@ -42,6 +47,7 @@ impl Plan {
             .filter(|r| !r.is_empty())?;
         Some(Self::Download {
             reference: reference.clone(),
+            adapter: Box::new(status.resolved_adapter.clone()?),
         })
     }
 
@@ -57,7 +63,7 @@ impl Plan {
     /// Return the publication snapshot required only for downloads.
     pub(super) fn artifact_reference(&self) -> Option<&str> {
         match self {
-            Self::Download { reference } => Some(reference),
+            Self::Download { reference, .. } => Some(reference),
             _ => None,
         }
     }
@@ -97,9 +103,10 @@ impl Plan {
         spec: SuntitleNodeSpec,
     ) -> RegistrationServerMessage {
         match self {
-            Self::Download { reference } => RegistrationServerMessage::DownloadArtifact {
+            Self::Download { reference, adapter } => RegistrationServerMessage::DownloadArtifact {
                 identity,
                 reference,
+                adapter,
             },
             Self::BuiltinApply => RegistrationServerMessage::Apply {
                 identity,

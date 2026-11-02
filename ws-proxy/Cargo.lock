@@ -5070,14 +5070,12 @@ name = "oci-artifact"
 version = "0.1.0"
 dependencies = [
  "backon",
- "flate2",
  "futures-util",
  "oci-client",
  "oci-spec",
  "ocirender",
  "serde_json",
  "sha2 0.10.9",
- "tar",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

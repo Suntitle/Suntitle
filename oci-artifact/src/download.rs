@@ -48,6 +48,8 @@ pub struct DownloadResult {
     pub manifest_digest: String,
     /// Absolute path of the completed output directory.
     pub output_path: PathBuf,
+    /// Restored file or directory identified by the layer filename annotation.
+    pub payload_path: PathBuf,
 }
 
 /// Registry client for downloading file and directory artifacts.
@@ -124,7 +126,12 @@ impl Downloader {
         if request.cancellation.is_cancelled() {
             return Err(Error::Cancelled);
         }
+        let payload_path = output_path.join(
+            annotation(artifact.descriptor, ANNOTATION_TITLE)
+                .expect("artifact layer filename was validated"),
+        );
         Ok(DownloadResult {
+            payload_path,
             manifest_digest,
             output_path,
         })

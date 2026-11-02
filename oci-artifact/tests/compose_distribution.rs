@@ -7,9 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use oci_artifact::{
-    DownloadRequest, Downloader, UploadRequest, Uploader, client::TransportOptions,
-};
+use oci_artifact::{DownloadRequest, Downloader, client::TransportOptions};
 use sha2::{Digest, Sha256};
 
 /// Run the pinned reference client and retain its diagnostics on failure.
@@ -65,9 +63,10 @@ fn tree(root: &Path, path: &Path) -> BTreeMap<PathBuf, (&'static str, u32, Vec<u
     entries
 }
 
+/// Compare library and ORAS restoration of file and directory fixtures.
 #[tokio::test]
 #[ignore = "requires the Compose Distribution route and ORAS 1.3.2"]
-async fn oras_and_library_push_pull_through_compose_distribution() {
+async fn oras_push_library_pull_through_compose_distribution() {
     let version = Command::new("oras").arg("version").output().unwrap();
     assert!(
         String::from_utf8_lossy(&version.stdout)
@@ -126,11 +125,6 @@ async fn oras_and_library_push_pull_through_compose_distribution() {
         ..Default::default()
     })
     .unwrap();
-    let uploader = Uploader::new(TransportOptions {
-        plain_http: true,
-        ..Default::default()
-    })
-    .unwrap();
     for (name, reference) in [
         ("directory", &directory_reference),
         ("file", &file_reference),
@@ -162,44 +156,6 @@ async fn oras_and_library_push_pull_through_compose_distribution() {
             assert_eq!(std::fs::read(ours.join("standalone.bin")).unwrap(), binary);
         }
         println!("Verified {reference}: {}", result.manifest_digest);
-
-        let library_reference = format!("{reference}-library");
-        let source_path = if name == "directory" {
-            payload.clone()
-        } else {
-            source.join("standalone.bin")
-        };
-        let pushed = uploader
-            .upload(UploadRequest::new(&library_reference, source_path))
-            .await
-            .unwrap();
-        let ours_pushed = root
-            .path()
-            .join(format!("library-push-library-pull-{name}"));
-        let oras_pushed = root.path().join(format!("library-push-oras-pull-{name}"));
-        let digest_reference = format!(
-            "{}@{}",
-            library_reference.rsplit_once(':').unwrap().0,
-            pushed.manifest_digest
-        );
-        let pulled = downloader
-            .download(DownloadRequest::new(&digest_reference, &ours_pushed))
-            .await
-            .unwrap();
-        assert_eq!(pulled.manifest_digest, pushed.manifest_digest);
-        oras(
-            root.path(),
-            &[
-                "pull",
-                "--plain-http",
-                "--output",
-                oras_pushed.to_str().unwrap(),
-                &digest_reference,
-            ],
-        );
-        assert_eq!(tree(&ours, &ours), tree(&ours_pushed, &ours_pushed));
-        assert_eq!(tree(&ours, &ours), tree(&oras_pushed, &oras_pushed));
-        println!("Verified {library_reference}: {}", pushed.manifest_digest);
     }
 
     for (name, directory) in [("empty-file", false), ("empty-directory", true)] {
@@ -209,41 +165,29 @@ async fn oras_and_library_push_pull_through_compose_distribution() {
         } else {
             std::fs::write(&path, b"").unwrap();
         }
-        for library_push in [false, true] {
-            let reference = format!("{registry}/oci-artifact-tests/{run}/{name}:{library_push}");
-            if library_push {
-                uploader
-                    .upload(UploadRequest::new(&reference, &path))
-                    .await
-                    .unwrap();
-            } else {
-                oras(&source, &["push", "--plain-http", &reference, name]);
-            }
-            let ours = root
-                .path()
-                .join(format!("empty-library-{name}-{library_push}"));
-            let theirs = root
-                .path()
-                .join(format!("empty-oras-{name}-{library_push}"));
-            downloader
-                .download(DownloadRequest::new(&reference, &ours))
-                .await
-                .unwrap();
-            oras(
-                root.path(),
-                &[
-                    "pull",
-                    "--plain-http",
-                    "--output",
-                    theirs.to_str().unwrap(),
-                    &reference,
-                ],
-            );
-            assert_eq!(tree(&ours, &ours), tree(&theirs, &theirs));
-            assert_eq!(ours.join(name).is_dir(), directory);
-            assert_eq!(std::fs::read_dir(&ours).unwrap().count(), 1);
-        }
+        let reference = format!("{registry}/oci-artifact-tests/{run}/{name}:fixture");
+        oras(&source, &["push", "--plain-http", &reference, name]);
+        let ours = root.path().join(format!("empty-library-{name}"));
+        let theirs = root.path().join(format!("empty-oras-{name}"));
+        downloader
+            .download(DownloadRequest::new(&reference, &ours))
+            .await
+            .unwrap();
+        oras(
+            root.path(),
+            &[
+                "pull",
+                "--plain-http",
+                "--output",
+                theirs.to_str().unwrap(),
+                &reference,
+            ],
+        );
+        assert_eq!(tree(&ours, &ours), tree(&theirs, &theirs));
+        assert_eq!(ours.join(name).is_dir(), directory);
+        assert_eq!(std::fs::read_dir(&ours).unwrap().count(), 1);
     }
+
     assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
         !entry
             .unwrap()

@@ -16,6 +16,7 @@ use url::Url;
 #[cfg(test)]
 use uuid::Uuid;
 
+use super::installation::PreparedExtension;
 use crate::kubernetes::resources::{NodeSettings, SuntitleNodeSpec};
 use crate::registration::ApplyIdentity;
 
@@ -171,15 +172,24 @@ struct ManagedNode {
     message: Option<String>,
 }
 
+/// Own running node processes and prepared custom installations for one host session.
 #[derive(Debug)]
 pub struct NodeProcessManager {
+    /// Working directory used by built-in implementations.
     project_dir: PathBuf,
+    /// Diamant executable providing the embedded Python launcher.
     uv_bin: PathBuf,
+    /// Runtime WebSocket endpoints derived from the registration connection.
     endpoints: NodeEndpoints,
+    /// Time allowed for child processes to terminate before forced cleanup.
     shutdown_grace: Duration,
+    /// Current built-in or launched node processes by namespace and name.
     nodes: HashMap<String, ManagedNode>,
+    /// Prepared custom payloads waiting for argument construction and launch.
+    prepared_extensions: HashMap<String, PreparedExtension>,
 }
 impl NodeProcessManager {
+    /// Construct a session owner without starting processes or preparing extensions.
     pub fn new(
         project_dir: PathBuf,
         uv_bin: PathBuf,
@@ -198,6 +208,24 @@ impl NodeProcessManager {
             endpoints: NodeEndpoints::new(&data_plane_url)?,
             shutdown_grace,
             nodes: HashMap::new(),
+            prepared_extensions: HashMap::new(),
+        })
+    }
+
+    /// Associate downloaded files with their custom node without starting a process.
+    pub fn prepare_extension(&mut self, installation: PreparedExtension) {
+        let identity = &installation.identity;
+        let key = format!("{}/{}", identity.target.namespace, identity.target.name);
+        self.prepared_extensions.insert(key, installation);
+    }
+
+    /// Return prepared files for the current node revision, independently of launch operation ID.
+    pub fn prepared_extension(&self, identity: &ApplyIdentity) -> Option<&PreparedExtension> {
+        let key = format!("{}/{}", identity.target.namespace, identity.target.name);
+        self.prepared_extensions.get(&key).filter(|installation| {
+            installation.identity.target.uid == identity.target.uid
+                && installation.identity.generation == identity.generation
+                && installation.identity.restart_token == identity.restart_token
         })
     }
 
@@ -259,9 +287,19 @@ impl NodeProcessManager {
         vec![event]
     }
 
-    /// Stop failures retain the managed process for later cleanup.
+    /// Remove prepared associations and stop the node; stop failures retain the process for retry.
     pub async fn remove(&mut self, identity: &ApplyIdentity) -> Result<(), String> {
         let key = format!("{}/{}", identity.target.namespace, identity.target.name);
+        if self
+            .prepared_extensions
+            .get(&key)
+            .is_some_and(|installation| {
+                installation.identity.target.uid == identity.target.uid
+                    && installation.identity.generation <= identity.generation
+            })
+        {
+            self.prepared_extensions.remove(&key);
+        }
         let Some(node) = self.nodes.get_mut(&key) else {
             return Ok(());
         };
@@ -306,7 +344,9 @@ impl NodeProcessManager {
         events
     }
 
+    /// Stop child processes and discard prepared installation associations.
     pub async fn shutdown_all(&mut self) -> Vec<NodeEvent> {
+        self.prepared_extensions.clear();
         for node in self.nodes.values_mut() {
             if let Some(child) = node.child.as_mut() {
                 let _ = child.terminate();

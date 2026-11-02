@@ -72,9 +72,9 @@ async fn expiry_persists_offline_status_once_for_resource_watches() {
     ))
     .unwrap();
     state.hosts_api = Api::namespaced(client, "test");
-    let connection = state.connections.open(
-        identity(&resource.lock().unwrap().metadata),
-    );
+    let connection = state
+        .connections
+        .open(identity(&resource.lock().unwrap().metadata));
     let host = resource.lock().unwrap().clone();
     state.offline(&host).await.unwrap();
     assert!(*connection.closed.borrow());
@@ -118,13 +118,11 @@ fn heartbeat_expiry_and_session_identity_use_resource_status() {
 #[tokio::test]
 async fn outbound_overflow_closes_session() {
     let mut state = state();
-    let connection = state.connections.open(
-        ResourceIdentity {
-            namespace: "test".into(),
-            name: "host".into(),
-            uid: "host-uid".into(),
-        },
-    );
+    let connection = state.connections.open(ResourceIdentity {
+        namespace: "test".into(),
+        name: "host".into(),
+        uid: "host-uid".into(),
+    });
     for _ in 0..32 {
         state.dispatch(
             "host-uid",
@@ -235,7 +233,11 @@ async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
         .disconnect(&first.host.uid, &first.session_id)
         .await
         .unwrap();
-    assert!(state.connections.contains(&replacement.host.uid, &replacement.session_id));
+    assert!(
+        state
+            .connections
+            .contains(&replacement.host.uid, &replacement.session_id)
+    );
     assert!(*first.closed.borrow());
     assert!(!*replacement.closed.borrow());
     assert!(
@@ -337,6 +339,7 @@ async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_exec
         let generation = node.metadata.generation;
         let status = node.status.get_or_insert_default();
         status.artifact_reference = Some("registry.test/extensions:v1".into());
+        status.resolved_adapter = Some(serde_json::from_value(json!({"type":"transcriber","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap());
         status
             .conditions
             .push(k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition {
@@ -357,11 +360,17 @@ async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_exec
     let RegistrationServerMessage::DownloadArtifact {
         identity,
         reference,
+        adapter,
     } = connection.outbound.recv().await.unwrap()
     else {
         panic!("expected download")
     };
     assert_eq!(reference, "registry.test/extensions:v1");
+    assert_eq!(adapter.settings["language"], "cs");
+    assert!(
+        matches!(&adapter.execution.command, crate::kubernetes::execution::ExecutionCommand::Executable(path) if path == std::path::Path::new("./run"))
+    );
+    assert_eq!(adapter.arguments[0].flag.as_deref(), Some("--language"));
     let mut stale = identity.clone();
     stale.generation += 1;
     state
@@ -414,7 +423,11 @@ async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_exec
                 .conditions
                 .iter()
                 .filter(|c| ["Installed", "Ready", "Updated"].contains(&c.type_.as_str()))
-                .all(|c| c.status == "False" && c.reason == "ArtifactDownloaded")
+                .all(|c| if c.type_ == "Installed" {
+                    c.status == "True" && c.reason == "ExtensionInstalled"
+                } else {
+                    c.status == "False" && c.reason == "AwaitingLaunch"
+                })
         );
     }
     let current = stored_node.lock().unwrap().clone();
@@ -460,6 +473,7 @@ async fn artifact_presence_drives_download_dispatch_and_reports_never_claim_exec
     let RegistrationServerMessage::DownloadArtifact {
         identity: next,
         reference,
+        ..
     } = connection.outbound.recv().await.unwrap()
     else {
         panic!("expected replacement")

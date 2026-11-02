@@ -11,9 +11,14 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 use warp::Filter;
 use ws_proxy::{
     diamant::artifacts::{ArtifactDownloads, ArtifactOptions},
-    kubernetes::resources::ResourceIdentity,
+    kubernetes::{adapter::ResolvedAdapter, resources::ResourceIdentity},
     registration::*,
 };
+
+/// Resolved configuration sent with the artifact, independent of adapter.yaml.
+fn adapter() -> ResolvedAdapter {
+    serde_json::from_value(json!({"type":"transcriber","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap()
+}
 
 fn identity() -> ApplyIdentity {
     ApplyIdentity {
@@ -97,7 +102,7 @@ async fn downloads_publish_complete_trees_and_report_failures_without_partial_ou
         let mut id = identity();
         id.generation += i64::from(corrupt);
         id.operation_id = format!("transfer-{}", id.generation);
-        downloads.start(id.clone(), reference);
+        downloads.start(id.clone(), reference, adapter());
         let report = tokio::time::timeout(Duration::from_secs(10), downloads.next_report())
             .await
             .unwrap();
@@ -113,6 +118,37 @@ async fn downloads_publish_complete_trees_and_report_failures_without_partial_ou
         assert_eq!(actual, id);
         assert_eq!(operation, Operation::Download);
         assert_eq!(success, !corrupt, "{message:?}");
+        if !corrupt {
+            let installation = downloads
+                .take_prepared(&id)
+                .expect("installation must follow a successful report");
+            assert_eq!(installation.identity, id);
+            assert_eq!(installation.adapter.settings["language"], "cs");
+            assert_eq!(
+                installation.adapter.arguments[0].flag.as_deref(),
+                Some("--language")
+            );
+            assert!(installation.root.join("run").is_file());
+            assert_eq!(installation.working_directory, installation.root);
+            assert!(downloads.take_prepared(&id).is_none());
+            let mut manager = ws_proxy::diamant::nodes::NodeProcessManager::new(
+                root.path().into(),
+                std::env::current_exe().unwrap(),
+                "ws://localhost/".parse().unwrap(),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            manager.prepare_extension(installation);
+            assert!(manager.prepared_extension(&id).is_some());
+            assert!(
+                manager.snapshots().is_empty(),
+                "preparation must not launch a process"
+            );
+            manager.remove(&id).await.unwrap();
+            assert!(manager.prepared_extension(&id).is_none());
+        } else {
+            assert!(downloads.take_prepared(&id).is_none());
+        }
         server.abort();
         let entries = std::fs::read_dir(root.path())
             .unwrap()
@@ -144,13 +180,13 @@ async fn replacement_and_shutdown_cancel_downloads_and_discard_stale_reports() {
     .unwrap();
     let (reference, server) = registry(false, Duration::from_secs(30)).await;
     let id = identity();
-    downloads.start(id.clone(), reference.clone());
+    downloads.start(id.clone(), reference.clone(), adapter());
     tokio::time::sleep(Duration::from_millis(100)).await;
     let mut next = id.clone();
     next.generation += 1;
     next.operation_id = "replacement".into();
-    downloads.start(next.clone(), "invalid reference".into());
-    downloads.start(id, reference.clone());
+    downloads.start(next.clone(), "invalid reference".into(), adapter());
+    downloads.start(id, reference.clone(), adapter());
     let report = tokio::time::timeout(Duration::from_secs(5), downloads.next_report())
         .await
         .unwrap();
@@ -164,7 +200,7 @@ async fn replacement_and_shutdown_cancel_downloads_and_discard_stale_reports() {
     assert!(!success);
     next.generation += 1;
     next.operation_id = "removed".into();
-    downloads.start(next.clone(), reference.clone());
+    downloads.start(next.clone(), reference.clone(), adapter());
     tokio::time::sleep(Duration::from_millis(100)).await;
     tokio::time::timeout(Duration::from_secs(5), downloads.remove(&next))
         .await
@@ -176,7 +212,7 @@ async fn replacement_and_shutdown_cancel_downloads_and_discard_stale_reports() {
     );
     next.generation += 1;
     next.operation_id = "shutdown".into();
-    downloads.start(next, reference);
+    downloads.start(next, reference, adapter());
     tokio::time::sleep(Duration::from_millis(100)).await;
     tokio::time::timeout(Duration::from_secs(5), downloads.shutdown())
         .await
@@ -236,6 +272,7 @@ async fn host_keeps_heartbeats_running_and_reports_download_without_launching() 
                     RegistrationServerMessage::DownloadArtifact {
                         identity: identity(),
                         reference,
+                        adapter: Box::new(adapter()),
                     },
                 ))
                 .unwrap()
@@ -279,4 +316,34 @@ async fn host_keeps_heartbeats_running_and_reports_download_without_launching() 
         std::fs::read(payloads[0].path().join("payload/run")).unwrap(),
         b"payload"
     );
+}
+
+/// Download success MUST NOT hide an invalid executable or leave a prepared record.
+#[tokio::test]
+async fn invalid_entry_point_reports_preparation_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let mut downloads = ArtifactDownloads::new(ArtifactOptions {
+        directory: Some(root.path().into()),
+        plain_http: true,
+    })
+    .unwrap();
+    let (reference, server) = registry(false, Duration::ZERO).await;
+    let mut config = adapter();
+    config.execution.command =
+        ws_proxy::kubernetes::execution::ExecutionCommand::Executable("./missing".into());
+    let id = identity();
+    downloads.start(id.clone(), reference, config);
+    let report = tokio::time::timeout(Duration::from_secs(10), downloads.next_report())
+        .await
+        .unwrap();
+    let RegistrationClientMessage::Acknowledgement {
+        success, message, ..
+    } = report
+    else {
+        panic!("expected preparation result")
+    };
+    assert!(!success, "{message:?}");
+    assert!(downloads.take_prepared(&id).is_none());
+    downloads.shutdown().await;
+    server.abort();
 }
