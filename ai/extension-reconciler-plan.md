@@ -1,13 +1,13 @@
-# In-Memory Asynchronous Reconciliation with Apalis
+# Asynchronous Reconciliation with Apalis SQLite
 
 ## Goal
 
-Use Apalis 1.0 with in-memory storage to run source preparation and publication without
+Use Apalis 1.0 with an in-memory SQLite backend to run source preparation and publication without
 blocking reconciliation. When a push succeeds or fails, notify the controller's
 workqueue to requeue the affected resource. On the next reconciliation, read the
-outcome from an in-memory status store.
+outcome from the in-memory SQLite database.
 
-Task execution requires no database or external queue service. Distribution is
+Task execution requires no external database or queue service. Distribution is
 still required as the destination artifact service and may run on the same VM.
 Duplicate pushes of the same content hash are acceptable.
 
@@ -51,6 +51,7 @@ sequenceDiagram
     USER->>HUB: Register Extension source and adapter
     HUB-->>USER: 201 Created (publication pending)
     HUB->>WORKER: Queue background publication
+    Note over HUB,WORKER: Apalis SQLite retries up to maxAttempts and stores terminal results before notification
     alt Local HUB folder or Git HTTP(S)
         WORKER->>SOURCE: Read folder or fetch depth-one Git HEAD
         SOURCE-->>WORKER: Payload files
@@ -160,183 +161,91 @@ and [Rust client API](https://docs.rs/oci-client/latest/oci_client/client/struct
 
 ## Architecture
 
-```text
-Reconciler
-    |
-    +-- enqueue(push) --> Executor --> Apalis MemoryStorage
-    |                                            |
-    |                                        Image-push worker
-    |                                            |
-    |                                      Save terminal result
-    |                                            |
-    |                                      Notify(resource_id)
-    |                                            |
-    +<------------------------------- Controller reconcile queue
-    |
-    +-- status(task_id) --> In-memory status registry
-```
+Reconciliation uses `SqliteStorage<PublishExtension>` directly. There is no executor
+wrapper, custom task-status enum, or parallel result registry. SQLite owns admission,
+deduplication, pending/running state, and completed results. The database is in memory;
+no database server or database file is required.
 
-The notification is a **wake-up signal**, not the source of truth for the result.
-The reconciler obtains state through `status()`.
+Startup validates configuration, creates source clients, and migrates SQLite before
+spawning controllers. Initialization errors are returned to the caller. One pooled
+connection serializes short database operations; source preparation and publication
+run outside database transactions and independently of reconciliation.
 
 ## Reconciler-facing contract
 
-Startup validates configuration and constructs the HTTP and OCI clients once,
-before spawning controllers. Initialization failures are returned to the caller.
-Declared and resolved adapters share typed execution (`runtime`, `command`,
-optional `workingDirectory`) and binding contracts; only
-plugin settings/default values retain user-defined JSON shapes. Source preparation
-has separate HTTP, local-directory, and Git functions. OCI
-republication follows its direct copy path. One `PreparedUpload` owns the payload
-stream, optional archive producer, computed annotations, and cancellation cleanup.
-The publisher accepts one layer and joins archive production before publishing
-the manifest. Kubernetes status fields are derived from explicit `Preparing`,
-`Published`, and `Failed` outcomes.
+A deterministic Apalis `TaskId` hashes resource UID, desired source and adapter,
+resource generation, and destination settings. SQLite requires its ULID representation.
+The same ID is the idempotency key and remains unchanged across Apalis retries.
+Repeated `push_task()` calls are atomic no-ops for an existing task, including a
+terminal task. There is no custom execution identity or controller attempt suffix.
+
+`spec.maxAttempts` defaults to three total executions and is passed directly to
+Apalis `TaskBuilder::max_attempts()`. SQLite owns retry admission and attempt counting.
+`status.attempts` copies the final Apalis count; it does not drive retry scheduling.
+The Ready condition distinguishes Preparing (including retries), ArtifactPublished,
+and terminal PreparationFailed. No retry map, deadline field, or retry timer is needed.
+
+The controller calls native `check_status()` to read a stored terminal
+`TaskResult<String>`. No result means preparation is pending or running. Native
+`fetch_by_id()` also exposes individual Pending/Running states when needed.
+Neither operation performs source or registry I/O. Kubernetes status is derived from
+the native `Option<TaskResult<String>>`: no result is Preparing, success is ArtifactPublished,
+and failure is PreparationFailed.
+
+## Execution and notification
+
+1. Reconciliation submits an immutable command using `push_task()` with a stable
+   task ID, idempotency key, and `max_attempts(spec.max_attempts)`.
+2. It reads any stored result and updates resource status with UID/resource-version
+   preconditions. Pending work awaits its stored-result completion notification.
+3. Apalis schedules publication within its configured concurrency and records task
+   transitions and the handler's success or failure. `Sources` is injected through
+   Apalis `Data<Sources>`. `CatchPanicLayer` converts panics to ordinary I/O errors
+   so they retain the same storage-managed retry behavior.
+4. An independent completion observer uses native `wait_for_single()` to wait for
+   result storage before sending the resource key to `reconcile_on`. Its polling
+   occurs outside reconciliation and does not hold an execution slot. Observation
+   errors retry the subscription after one second without consuming publication attempts.
+5. SQLite retries failed executions up to the configured attempt limit. The observer
+   waits across retries and notifies only after success or exhausted attempts.
+6. Reconciliation copies the final result and attempt count into resource status.
+   It returns `await_change()` for both pending and terminal tasks.
+
+A notification is a wake-up signal; SQLite remains authoritative. The controller
+scheduler coalesces repeated notifications, including one received during an active
+reconcile. Pending work does not schedule polling or an immediate follow-up after
+submission. A repeated submission recovers
+results even if the previous task-ID status write failed.
 
 ```rust
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct ExecutionId {
-    desired: String,
-    attempt: u32,
-}
-
-#[derive(Clone, Debug)]
-pub enum TaskStatus {
-    Queued,
-    Running,
-    Succeeded { reference: String },
-    Failed { error: String },
-}
+storage.push_task(command_for(resource, &id)).await?;
+let state = storage.check_status([id]).await?.pop();
+write_status(resource, &id, &state).await?;
+await_change()
 ```
-
-The controller does not depend on Apalis types. `enqueue()` returns after accepting
-work, not after executing it. `status()` is a short in-memory lookup; it MUST NOT
-perform registry requests or wait for execution. `None` indicates an unknown or
-discarded task. The controller holds the concrete `Executor`; no executor trait
-or async-trait adapter is needed. `PublishExtension` contains reconstructible source
-inputs. `ExecutionId` owns desired-input hashing, persisted encoding, retry
-numbers, and immutable destination tags.
-
-Task identity MUST distinguish resource UID, desired preparation specification
-hash, destination, and controller-selected attempt. Repeated submissions of the same attempt SHOULD
-return the existing task ID without replacing its status. A controller retry after
-terminal failure MUST select a new attempt so it does not repeatedly observe the
-same retained failure. A recreated resource MUST NOT inherit an old resource's work.
-
-## Internal components
-
-- **Apalis `MemoryStorage`:** dispatches queued push jobs to background workers.
-- **Status registry:** `Arc<RwLock<HashMap<ExecutionId, TaskRecord>>>`, using an asynchronous
-  lock. Each record contains the resource ID, execution identity, and task status.
-- **Completion observer:** records `Succeeded` or `Failed`, then notifies the workqueue.
-- **Notifier:** a small adapter that enqueues a resource key in the existing scheduler.
-
-Completion uses an in-process channel of resource references connected to the
-Kubernetes controller's `reconcile_on` stream. The worker MUST store its terminal
-result before sending that notification. No notifier trait is required.
-
-Pin compatible Apalis 1.0 versions and verify worker completion and retry behavior
-against their public APIs during implementation. Strict ordering relative to final
-job acknowledgment is not required initially; storing the outcome before notifying
-is required.
-
-## Execution flow
-
-1. Reconciler calls `enqueue(PublishExtension)` and stores the returned `ExecutionId` with its
-   resource state.
-2. Executor records `Queued`, then submits the job to Apalis.
-3. Worker marks the task `Running` and performs the push independently.
-4. Completion integration saves the terminal outcome in the registry.
-5. **Only after saving the outcome**, it calls `notify(resource_id)`.
-6. The controller queues another reconciliation for that resource.
-7. Reconciler calls `status(task_id)` and updates resource state accordingly.
-
-If queue submission fails, the executor MUST remove or finalize its provisional
-record and return an error. It MUST NOT leave a permanently `Queued` task with no
-job. Coordinate concurrent submissions without holding the registry lock across
-queue submission or publication.
-
-Disable automatic job retries initially, so a failure represents a terminal
-attempt. Let the controller determine if and when to resubmit. If Apalis retries
-are enabled later, notify only after terminal success/failure. Duplicate completion
-callbacks MUST NOT regress terminal state. Worker panics or cancellation while the
-process stays alive MUST produce a failure notification or trigger supervised
-recovery; they MUST NOT leave an unobservable, permanently `Running` task.
-
-## Reconciliation pseudocode
-
-```rust
-async fn reconcile(&self, resource: &Resource) -> Result<()> {
-    if self.execution_is_obsolete(resource) {
-        self.reset_execution(resource).await?;
-        self.schedule_reconcile(resource);
-        return Ok(());
-    }
-
-    let task_id = match &resource.task_id {
-        Some(id) => id.clone(),
-        None => {
-            let id = self.executor.enqueue(PublishExtension::from(resource)).await?;
-            self.save_task_id(resource, id).await?;
-            return Ok(());
-        }
-    };
-
-    match self.executor.status(&task_id).await? {
-        Some(TaskStatus::Queued | TaskStatus::Running) => {}
-        Some(TaskStatus::Succeeded { reference }) => {
-            self.mark_ready(resource, reference).await?;
-        }
-        Some(TaskStatus::Failed { error }) => {
-            self.mark_failed(resource, error).await?;
-            self.schedule_retry_if_allowed(resource).await?;
-        }
-        None => {
-            self.reset_execution(resource).await?;
-            self.schedule_reconcile(resource);
-        }
-    }
-
-    Ok(())
-}
-```
-
-Helpers are illustrative. Resetting execution MUST schedule another pass, rather
-than depend on a status-only update triggering the controller. An allowed retry
-uses controller backoff and a new attempt identity. Resource status writes MUST
-check that the observed UID and desired execution still match before marking ready.
-
-Before recording task success, the publication worker verifies the artifact through `rust-oci-client`
-using its digest reference. Push is idempotent: if reconciliation is interrupted
-before verification completes, it can repeat the push as if it had never happened.
-Digest verification remains library-owned.
-
-**Race to handle:** a job may complete between `enqueue()` and persisting its task
-ID. Derive the task ID from stable execution inputs and retain/coalesce notifications
-arriving during reconciliation. Stable IDs alone do not guarantee a subsequent
-reconcile: the scheduler MUST retain a pending pass for an already-running key.
-If saving the task ID fails, controller error recovery MUST retry reconciliation;
-resubmission of the same attempt can recover the existing result.
 
 ## Concurrency and lifecycle
 
-- Reconciliation MUST NOT await an artifact publication or hold a lock across it.
-- Scheduling MUST coalesce repeated notifications and serialize reconciliation of
-  the same key while allowing independent resource keys to run concurrently.
-- Notifications MUST NOT be silently dropped under channel backpressure. Retain
-  pending keys or use an equivalent reliable in-process queue adapter.
-- Configure Apalis concurrency separately from controller concurrency. Bound pushes
-  and registry request timeouts to protect CPU, memory, network, and registry capacity.
-- All task state is lost on process exit. At startup, reconcile managed resources
-  again and resubmit missing tasks. Artifact inputs MUST be reconstructible from
-  managed desired state or another retained source for restart recovery.
-- Keep artifact inputs available until execution completes. Ignore results from
-  obsolete desired content or destinations. Use immutable push references so stale
-  workers cannot replace the current artifact under a shared mutable tag.
-- Keep terminal results until the controller has observed them. Define cleanup from
-  managed resource state or conservative retention without adding executor methods.
-- Initially run one controller/executor process. Coordination between multiple
-  replicas with independent in-memory registries is outside this design.
+- Reconciliation MUST NOT await publication or hold a lock across it. Database
+  operations only admit tasks and inspect already stored state.
+- Apalis concurrency is independent of controller concurrency. Transfer timeouts
+  bound source preparation and registry operations.
+- Completion observation runs concurrently with the worker so result persistence
+  can progress. Notifications MUST follow a stored terminal result.
+- Shutdown cancels transfers, stops Apalis, and joins its active handlers and storage
+  cleanup. Pending commands need not execute during shutdown.
+- Commands and results remain in SQLite for the process lifetime. The former custom
+  capacity limit, observation timestamps, and retention sweep are removed. Cleanup
+  for long-lived processes is a separate follow-up.
+- After process restart, Kubernetes desired state reconstructs missing work. Keep
+  artifact inputs available for that recovery. An artifact reference for the current
+  observed generation skips submission, including after restart. A changed generation
+  republishes the source. Other submissions rely on SQLite deduplication; an empty
+  database accepts unfinished or exhausted work with a fresh attempt budget.
+  Results for obsolete desired state
+  MUST NOT mark the current resource ready; destination tags are stable for one desired revision.
+- One controller process owns this in-memory database. Persistent databases and
+  coordination between multiple controller replicas remain separate work.
 
 ## Distribution as the push destination
 
@@ -425,16 +334,16 @@ The application-owned `PublishExtension` request MUST identify:
 - A resolved Git commit or upstream OCI manifest digest once known, retained for
   the running attempt; payload bytes remain transient streaming buffers.
 - The destination registry authority and repository.
-- An immutable attempt-specific tag until the content digest is known, or a
+- An immutable desired-revision tag until the content digest is known, or a
   content-derived tag if it is already known.
 - A credential reference and TLS policy, without embedding secrets in task IDs.
 
 For example, publish to
-`registry.example.com/suntitle/extensions/example:attempt-<execution-id>`.
+`registry.example.com/suntitle/extensions/example:publication-<task-id>`.
 The preparation specification hash identifies desired configuration before source
 transfer. It is distinct from the source content hash and OCI manifest digest.
 Resolved source identities and the final manifest digest describe actual content. Return
-`Succeeded { reference }` only after the registry accepts the complete manifest and
+`Ok(reference)` only after the registry accepts the complete manifest and
 referenced blobs. Store the canonical pull reference
 `registry.example.com/suntitle/extensions/example@sha256:<manifest-hash>` on the
 resource. Consumers SHOULD pull by digest.
@@ -474,14 +383,14 @@ pull client. The registry does not need to run inside Kubernetes.
 
 ## Implementation checklist
 
-- [x] Define `ExecutionId`, `TaskStatus`, `Executor`, and channel-based reconcile notifications.
-- [x] Configure Apalis `MemoryStorage` and an publication worker with retries disabled.
-- [x] Add an in-memory registry keyed by execution identity and associated with resource IDs.
-- [x] Implement `enqueue()` and `status()`, including submission failure cleanup.
-- [x] Record job start and terminal outcomes, including worker interruption handling.
+- [x] Define stable execution identities and channel-based reconcile notifications.
+- [x] Use native Apalis SQLite admission, deduplication, task state, and stored results.
+- [x] Initialize an isolated in-memory database before starting controllers.
+- [x] Delegate max attempts, retry admission, and attempt counts directly to Apalis SQLite.
+- [x] Join active publication and native storage cleanup during shutdown.
 - [x] Wire completion/failure to the controller queue after storing terminal status.
 - [x] Handle early notifications, duplicate submissions/events, and unknown task IDs.
-- [x] Define controller retry backoff, attempt identities, and result retention.
+- [x] Expose spec.maxAttempts (default three), terminal status.attempts, and process-lifetime result storage.
 - [x] Prepare local HUB folders using the agreed extension artifact structure.
 - [x] Add Git HTTP(S) preparation with gix: default HEAD, depth-one bare temporary repository, no tags or checkout, and streamed archive publication.
 - [x] Add HTTP source preparation: pooled client and bounded streaming into one executable file layer.
@@ -538,7 +447,7 @@ layout validation stage for these follow-ups.
 | Push succeeds | Result stored, resource requeued, status observable |
 | Push fails | Error stored, resource requeued, status observable |
 | Worker interrupted | Failure or supervised recovery prevents a stuck task |
-| Controller retries | New attempt runs after controller backoff |
+| Publication retries | Apalis retries the same task up to spec.maxAttempts; default three total attempts |
 | Duplicate notification | Reconcile remains idempotent |
 | Early notification | Another pass remains queued after saving the task ID |
 | Desired state changes | Obsolete result cannot mark the current resource ready |
@@ -553,20 +462,22 @@ layout validation stage for these follow-ups.
 | Transfer failure or cancellation | Both sides stop; incomplete work cannot mark the extension ready |
 | Host installation | Supported payload materializes as a file/directory; adapter execution paths are prepared before launch |
 
-Normal execution requires no periodic task-status polling, database, or external
-queue service. Distribution remains the artifact destination.
+Stored terminal completion notifications wake reconciliation. Apalis owns retry
+scheduling; reconciliation does not schedule publication retry timers. No external database or queue service is required;
+Distribution remains the artifact destination.
 
 ## Design boundary
 
-The reconciler only calls **`enqueue()`** and **`status()`** on the executor. Apalis
-owns background execution; the in-memory registry owns queryable outcomes; the
-completion observer notifies the existing reconcile scheduler. SQLite persistence
-and distributed execution are outside the initial implementation.
+The reconciler uses native Apalis SQLite APIs directly. Apalis owns scheduling,
+task state, idempotency, and results. A completion observer bridges stored results
+to the existing reconciliation scheduler. Disk persistence, result cleanup, and
+distributed execution remain follow-ups.
 
 ## References
 
 
 - [Apalis 1.0](https://docs.rs/crate/apalis/1.0.0)
+- [Apalis SQLite 1.0](https://docs.rs/apalis-sqlite/1.0.0/apalis_sqlite/)
 - [Apalis middleware](https://apalis.dev/docs/guides/workers/middleware)
 - [Distribution configuration](https://distribution.github.io/distribution/about/configuration/)
 - [Distribution releases](https://github.com/distribution/distribution/releases)

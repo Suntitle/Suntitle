@@ -13,10 +13,10 @@ default = []
 gui = ["dep:diamant-ui"]
 
 [dependencies]
-apalis = { version = "=1.0.0", default-features = false, features = ["limit"] }
+apalis = { version = "=1.0.0", default-features = false, features = ["limit", "catch-panic"] }
+apalis-sqlite = "=1.0.0"
 gix = { version = "=0.87.1", default-features = false, features = ["sha1", "blocking-http-transport-reqwest-rust-tls"] }
 base64 = "0.22"
-futures-channel = "0.3"
 sha2 = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json"] }
 tokio-util = { version = "0.7", features = ["io", "io-util", "rt"] }
