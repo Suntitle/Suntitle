@@ -54,6 +54,7 @@ pub struct ResourceRef {
     pub name: String,
 }
 
+/// Desired source, adapter, and publication attempt limit for an extension.
 #[derive(CustomResource, JsonSchema, Serialize, Deserialize, Clone, Debug)]
 #[kube(
     group = "control.suntitle.io",
@@ -64,16 +65,29 @@ pub struct ResourceRef {
 )]
 #[serde(rename_all = "camelCase")]
 pub struct SuntitleExtensionSpec {
+    /// Display name of the extension.
     #[schemars(length(min = 1, max = 128))]
     pub name: String,
+    /// Kind of source prepared by the publication worker.
     pub source_type: ExtensionSourceType,
+    /// Source path or URL interpreted according to source type.
     #[schemars(length(min = 1))]
     pub source: String,
     /// Opaque token whose change requests extension preparation.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1, max = 128))]
     pub refresh_token: Option<String>,
+    /// Maximum total publication attempts, including the initial execution. Defaults to three.
+    #[serde(default = "publication_attempts_default")]
+    #[schemars(range(min = 1))]
+    pub max_attempts: u32,
+    /// Execution and binding contract packaged with the source.
     pub adapter: super::adapter::ExtensionAdapter,
+}
+
+/// Default total attempt limit delegated to Apalis.
+fn publication_attempts_default() -> u32 {
+    3
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -85,15 +99,23 @@ pub enum ExtensionSourceType {
     Http,
 }
 
+/// Publication progress and terminal outcome reported by Apalis for the observed revision.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionStatus {
+    /// Resource generation whose publication state is reported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_generation: Option<i64>,
+    /// Stable Apalis task identifier for this desired revision.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    /// Total attempts reported by Apalis once this publication completes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<usize>,
+    /// Verified digest reference available after successful publication.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_reference: Option<String>,
+    /// Preparing, published, or terminal failure state; retries are owned by Apalis.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(schema_with = "conditions_schema")]
     pub conditions: Vec<Condition>,

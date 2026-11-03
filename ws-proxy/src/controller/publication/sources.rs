@@ -44,7 +44,9 @@ impl Sources {
         tokio::pin!(operation);
         tokio::select! {
             result = &mut operation => result.map_err(|error| {
-                if let Some(error) = error.downcast_ref::<io::Error>().filter(|error| error.kind() == io::ErrorKind::InvalidInput) { return error.to_string(); }
+                if let Some(error) = error.downcast_ref::<io::Error>()
+                    && error.kind() == io::ErrorKind::InvalidInput
+                { return error.to_string(); }
                 "Extension publication failed. Check source access, registry credentials, and connectivity.".into()
             }),
             _ = tokio::time::sleep(self.config.task_timeout) => {

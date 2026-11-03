@@ -104,6 +104,7 @@ async fn main() -> std::io::Result<()> {
         task_timeout: std::time::Duration::from_secs(args.extension_timeout_seconds),
     };
     let (controller, task) = Controller::start_with_publication(client, &args.namespace, config)
+        .await
         .map_err(std::io::Error::other)?;
     let routes = proxy_with_controller(Some(controller.clone())).await;
     eprintln!("Suntitle WebSocket proxy listening on 0.0.0.0:3030");

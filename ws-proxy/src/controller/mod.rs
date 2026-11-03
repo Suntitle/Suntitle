@@ -98,8 +98,8 @@ impl Controller {
         )
     }
 
-    /// Start host controllers with automatic source publication enabled.
-    pub fn start_with_publication(
+    /// Initialize SQLite and source clients before starting host controllers and publication.
+    pub async fn start_with_publication(
         client: Client,
         namespace: &str,
         config: PublicationConfig,
@@ -107,10 +107,11 @@ impl Controller {
         config.validate()?;
         let cancellation = oci_artifact::CancellationToken::new();
         let sources = publication::Sources::new(config.clone(), cancellation.clone())?;
+        let storage = publication::storage().await?;
         Ok(Self::start_inner(
             client,
             namespace,
-            Some((config, sources)),
+            Some((config, sources, storage)),
             cancellation,
         ))
     }
@@ -119,7 +120,11 @@ impl Controller {
     fn start_inner(
         client: Client,
         namespace: &str,
-        publication: Option<(PublicationConfig, publication::Sources)>,
+        publication: Option<(
+            PublicationConfig,
+            publication::Sources,
+            apalis_sqlite::SqliteStorage<publication::PublishExtension>,
+        )>,
         cancellation: oci_artifact::CancellationToken,
     ) -> (Self, JoinHandle<()>) {
         let hosts_api = Api::namespaced(client.clone(), namespace);
@@ -141,9 +146,15 @@ impl Controller {
             let publication_cancellation = run_context.cancellation.clone();
             let publication_task = tokio::spawn(async move {
                 match publication {
-                    Some((config, sources)) => {
-                        publication::run(publication_api, config, publication_cancellation, sources)
-                            .await
+                    Some((config, sources, storage)) => {
+                        publication::run(
+                            publication_api,
+                            config,
+                            publication_cancellation,
+                            sources,
+                            storage,
+                        )
+                        .await
                     }
                     None => publication_cancellation.cancelled().await,
                 }

@@ -1,179 +1,115 @@
-//! Attempts transition Queued -> Running -> Succeeded/Failed before notification.
-//! Controller retries create new identities. Lost tasks are reconstructed after restart.
-use super::{identity::ExecutionId, sources::Sources};
-use crate::kubernetes::{Error, resources::SuntitleExtensionSpec};
-use apalis::prelude::*;
-use futures_util::{FutureExt, SinkExt, StreamExt};
-use std::{
-    collections::HashMap,
-    panic::AssertUnwindSafe,
-    sync::Arc,
-    time::{Duration, Instant},
+//! Apalis owns Pending -> Running -> Done/Failed transitions and stored results.
+//! SQLite retries each task up to the specification limit without blocking reconciliation.
+//! Notifications follow SQLite result storage and wake reconciliation without polling timers.
+//! Shutdown joins active transfers. The in-memory database is rebuilt from resources after restart.
+use super::sources::Sources;
+use crate::kubernetes::{
+    Error,
+    resources::{SuntitleExtension, SuntitleExtensionSpec},
 };
-use tokio::sync::{Mutex, RwLock, mpsc};
+use apalis::{layers::catch_panic::CatchPanicLayer, prelude::*};
+use apalis_sqlite::{SqlitePoolOptions, SqliteStorage};
+use futures_util::{StreamExt, TryStreamExt};
+use kube::runtime::reflector::ObjectRef;
+use oci_artifact::CancellationToken;
+use std::time::Duration;
+use tokio::{sync::mpsc, task::JoinHandle};
 
-/// Queryable outcome independent of Apalis acknowledgement state.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum TaskStatus {
-    /// Accepted by the executor and awaiting a worker.
-    Queued,
-    /// Source preparation or registry publication is active.
-    Running,
-    /// Verified canonical registry reference.
-    Succeeded { reference: String },
-    /// Terminal attempt error. The controller owns retries.
-    Failed { error: String },
-}
-/// Reconstructible source and destination for one resource revision.
-#[derive(Clone)]
-pub(super) struct PublishExtension {
-    /// Attempt identity including UID, specification hash, destination, and attempt.
-    pub id: ExecutionId,
-    /// Namespaced resource key for controller notifications.
-    pub key: kube::runtime::reflector::ObjectRef<crate::kubernetes::resources::SuntitleExtension>,
+/// Immutable inputs for one publication attempt. Credentials remain in the source client.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(in crate::controller) struct PublishExtension {
+    /// Namespace of the resource notified after completion.
+    pub(super) namespace: Option<String>,
+    /// Name of the resource notified after completion.
+    pub(super) name: String,
     /// Desired source and adapter snapshot.
-    pub spec: SuntitleExtensionSpec,
-    /// Immutable destination tag unique to this attempt.
-    pub destination: String,
-}
-/// Retained attempt state and conservative observed-result expiration.
-struct Record {
-    /// Current lifecycle state. Terminal states MUST NOT regress.
-    status: TaskStatus,
-    /// First terminal observation; unobserved results MUST be retained.
-    observed: Option<Instant>,
-}
-/// Apalis-backed in-memory executor and terminal outcome registry.
-pub(super) struct Executor {
-    /// Serialize submissions to make duplicate acceptance atomic.
-    sink: Mutex<MemorySink<PublishExtension>>,
-    /// Short-lived locks; source and registry work never hold them.
-    records: Arc<RwLock<HashMap<ExecutionId, Record>>>,
-}
-impl Executor {
-    /// Start bounded-concurrency workers with Apalis retries disabled.
-    pub fn start(
-        sources: Sources,
-        concurrency: usize,
-        cancellation: oci_artifact::CancellationToken,
-        notify: mpsc::UnboundedSender<
-            kube::runtime::reflector::ObjectRef<crate::kubernetes::resources::SuntitleExtension>,
-        >,
-    ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
-        let (tx, rx) = futures_channel::mpsc::unbounded::<Task<PublishExtension>>();
-        let sink = MemorySink::new(Arc::new(futures_util::lock::Mutex::new(Box::new(
-            tx.sink_map_err(|e| MemoryStorageError::Other(Box::new(e))),
-        ))));
-        let storage = MemoryStorage::new_with(sink.clone(), rx.boxed());
-        let executor = Arc::new(Self {
-            sink: Mutex::new(sink),
-            records: Arc::new(RwLock::new(HashMap::new())),
-        });
-        let records = executor.records.clone();
-        let task = tokio::spawn(async move {
-            let worker_context = WorkerContext::new("extension-publication");
-            let worker = WorkerBuilder::new(worker_context.clone())
-                .backend(storage)
-                .concurrency(concurrency)
-                .data(WorkerData {
-                    sources,
-                    records,
-                    notify,
-                })
-                .build(execute);
-            let execution = worker.run();
-            tokio::pin!(execution);
-            tokio::select! {
-                result = &mut execution => { if let Err(error) = result { eprintln!("extension worker stopped: {error}"); } },
-                _ = cancellation.cancelled() => { let _ = worker_context.stop(); let _ = execution.await; }
-            }
-        });
-        (executor, task)
-    }
-}
-impl Executor {
-    /// Coalesce concurrent duplicate submissions and roll back failed acceptance.
-    pub async fn enqueue(&self, task: PublishExtension) -> Result<ExecutionId, Error> {
-        let mut sink = self.sink.lock().await;
-        {
-            let mut records = self.records.write().await;
-            records.retain(|_, record| {
-                record
-                    .observed
-                    .is_none_or(|at| at.elapsed() < Duration::from_secs(3600))
-            });
-            if records.contains_key(&task.id) {
-                return Ok(task.id);
-            }
-            if records.len() >= 4096 {
-                return Err("extension task capacity exceeded".into());
-            }
-            records.insert(
-                task.id.clone(),
-                Record {
-                    status: TaskStatus::Queued,
-                    observed: None,
-                },
-            );
-        }
-        let id = task.id.clone();
-        if let Err(error) = sink.send(Task::new(task)).await {
-            self.records.write().await.remove(&id);
-            return Err(Box::new(error));
-        }
-        Ok(id)
-    }
-    /// Terminal observations start conservative retention without removing results.
-    pub async fn status(&self, id: &ExecutionId) -> Result<Option<TaskStatus>, Error> {
-        let mut records = self.records.write().await;
-        Ok(records.get_mut(id).map(|record| {
-            if matches!(
-                record.status,
-                TaskStatus::Succeeded { .. } | TaskStatus::Failed { .. }
-            ) {
-                record.observed.get_or_insert_with(Instant::now);
-            }
-            record.status.clone()
-        }))
-    }
+    pub(super) spec: SuntitleExtensionSpec,
+    /// Destination tag shared by retries of this desired revision.
+    pub(super) destination: String,
 }
 
-/// Shared worker dependencies injected without coupling the controller to Apalis.
-#[derive(Clone)]
-struct WorkerData {
-    /// Pooled source and OCI clients.
-    sources: Sources,
-    /// Queryable attempt results.
-    records: Arc<RwLock<HashMap<ExecutionId, Record>>>,
-    /// Reliable unbounded completion channel; each accepted attempt emits once.
-    notify: mpsc::UnboundedSender<
-        kube::runtime::reflector::ObjectRef<crate::kubernetes::resources::SuntitleExtension>,
-    >,
+/// Initialize an isolated in-memory database before starting controllers.
+pub(in crate::controller) async fn storage() -> Result<SqliteStorage<PublishExtension>, Error> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect(":memory:")
+        .await?;
+    SqliteStorage::setup(&pool).await?;
+    Ok(SqliteStorage::new(&pool))
 }
-/// Store terminal outcomes before notifying, including caught worker panics.
-async fn execute(task: PublishExtension, data: Data<WorkerData>) {
-    {
-        let mut records = data.records.write().await;
-        if let Some(record) = records.get_mut(&task.id) {
-            record.status = TaskStatus::Running;
+
+/// Start Apalis and bridge stored completions to resource reconciliation.
+/// Concurrency MUST be positive and validated by the caller.
+pub(super) fn start(
+    storage: SqliteStorage<PublishExtension>,
+    sources: Sources,
+    concurrency: usize,
+    cancellation: CancellationToken,
+    notify: mpsc::UnboundedSender<ObjectRef<SuntitleExtension>>,
+) -> JoinHandle<()> {
+    let (completed, receiver) = mpsc::unbounded_channel();
+    let worker = WorkerBuilder::new("extension-publication")
+        .backend(
+            storage
+                .clone()
+                .poll_with_interval(Duration::from_millis(100)),
+        )
+        .concurrency(concurrency)
+        .data(sources)
+        // Ordinary errors preserve SQLite retries; the default panic handler aborts the task.
+        // The callback MUST accept any payload lifetime for spawned workers.
+        .layer(CatchPanicLayer::with_panic_handler(
+            (|_| std::io::Error::other("publication worker panicked"))
+                as for<'panic> fn(&Box<dyn std::any::Any + Send + 'panic>) -> std::io::Error,
+        ))
+        .build(
+            move |task: PublishExtension, id: TaskId, attempt: Attempt, sources: Data<Sources>| {
+                // One observer follows the task across storage-managed retries.
+                if attempt.current() == 1 {
+                    let mut key = ObjectRef::new(&task.name);
+                    key.namespace = task.namespace.clone();
+                    let _ = completed.send((id, key));
+                }
+                async move { sources.publish(&task).await.map_err(std::io::Error::other) }
+            },
+        );
+    let observer_notify = notify.clone();
+    let completions = tokio_stream::wrappers::UnboundedReceiverStream::new(receiver)
+        .for_each_concurrent(None, move |(id, key)| {
+            let mut storage = storage.clone();
+            let notify = observer_notify.clone();
+            async move {
+                loop {
+                    let result: Result<Option<TaskResult<String>>, _> =
+                        storage.wait_for_single(id.clone()).try_next().await;
+                    if let Ok(Some(_)) = result {
+                        let _ = notify.send(key);
+                        break;
+                    }
+                    eprintln!("extension completion observation: {result:?}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        });
+    tokio::spawn(async move {
+        let shutdown = cancellation.clone();
+        let execution = worker.run_until(async move {
+            tokio::select! {
+                _ = shutdown.cancelled() => {},
+                _ = notify.closed() => {},
+            }
+            shutdown.cancel();
+            Ok::<(), WorkerError>(())
+        });
+        tokio::pin!(execution, completions);
+        tokio::select! {
+            result = &mut execution => {
+                if let Err(error) = result { eprintln!("extension worker stopped: {error}"); }
+            }
+            _ = &mut completions => {},
         }
-    }
-    let outcome = AssertUnwindSafe(data.sources.publish(&task))
-        .catch_unwind()
-        .await;
-    let status = match outcome {
-        Ok(Ok(reference)) => TaskStatus::Succeeded { reference },
-        Ok(Err(error)) => TaskStatus::Failed { error },
-        Err(_) => TaskStatus::Failed {
-            error: "publication worker panicked".into(),
-        },
-    };
-    {
-        let mut records = data.records.write().await;
-        if let Some(record) = records.get_mut(&task.id) {
-            record.status = status;
-        }
-    }
-    // Apalis receives success because the controller owns terminal failure retries.
-    let _ = data.notify.send(task.key);
+        cancellation.cancel();
+    })
 }

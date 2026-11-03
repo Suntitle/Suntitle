@@ -585,9 +585,10 @@ spec:
         description: Auto-generated derived type for SuntitleExtensionSpec via `CustomResource`
         properties:
           spec:
+            description: Desired source, adapter, and publication attempt limit for an extension.
             properties:
               adapter:
-                description: Standard adapter fields shared by an extension and its resolved node instance.
+                description: Execution and binding contract packaged with the source.
                 properties:
                   arguments:
                     description: Ordered mappings from typed sources to command arguments.
@@ -667,7 +668,14 @@ spec:
                 - execution
                 - type
                 type: object
+              maxAttempts:
+                default: 3
+                description: Maximum total publication attempts, including the initial execution. Defaults to three.
+                format: uint32
+                minimum: 1.0
+                type: integer
               name:
+                description: Display name of the extension.
                 maxLength: 128
                 minLength: 1
                 type: string
@@ -678,9 +686,11 @@ spec:
                 nullable: true
                 type: string
               source:
+                description: Source path or URL interpreted according to source type.
                 minLength: 1
                 type: string
               sourceType:
+                description: Kind of source prepared by the publication worker.
                 enum:
                 - local
                 - git
@@ -694,12 +704,21 @@ spec:
             - sourceType
             type: object
           status:
+            description: Publication progress and terminal outcome reported by Apalis for the observed revision.
             nullable: true
             properties:
               artifactReference:
+                description: Verified digest reference available after successful publication.
                 nullable: true
                 type: string
+              attempts:
+                description: Total attempts reported by Apalis once this publication completes.
+                format: uint
+                minimum: 0.0
+                nullable: true
+                type: integer
               conditions:
+                description: Preparing, published, or terminal failure state; retries are owned by Apalis.
                 items:
                   description: Condition contains details for one aspect of the current state of this API Resource.
                   properties:
@@ -735,10 +754,12 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               observedGeneration:
+                description: Resource generation whose publication state is reported.
                 format: int64
                 nullable: true
                 type: integer
               taskId:
+                description: Stable Apalis task identifier for this desired revision.
                 nullable: true
                 type: string
             type: object

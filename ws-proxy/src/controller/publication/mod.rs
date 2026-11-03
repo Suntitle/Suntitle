@@ -1,11 +1,12 @@
 //! Extensions progress from Preparing to ArtifactPublished or PreparationFailed.
 //! Publication precedes node resolution, host download, installation, and execution.
-//! Terminal failures may defer a new attempt under bounded controller backoff.
+//! Apalis retries failed tasks up to the specification limit; only terminal outcomes wake reconciliation.
 mod archive;
 mod executor;
 mod git;
 mod identity;
 mod sources;
+pub(super) use executor::{PublishExtension, storage};
 pub(super) use sources::Sources;
 #[cfg(test)]
 mod tests;
@@ -14,9 +15,9 @@ use crate::kubernetes::{
     Error,
     resources::{ExtensionStatus, SuntitleExtension},
 };
-use executor::{Executor, PublishExtension, TaskStatus};
+use apalis::prelude::*;
+use apalis_sqlite::SqliteStorage;
 use futures_util::StreamExt;
-use identity::ExecutionId;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{
     Api, ResourceExt,
@@ -28,12 +29,8 @@ use kube::{
     },
 };
 use oci_artifact::{CancellationToken, RegistryAuth, client::TransportOptions};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::{Mutex, mpsc};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::mpsc;
 
 /// Destination and resource limits for automatic extension publication.
 #[derive(Clone)]
@@ -84,29 +81,32 @@ impl RegistryCredential {
 struct PublicationContext {
     /// Resource API supporting status writes guarded by UID and resource version.
     api: Api<SuntitleExtension>,
-    /// Background executor with short in-memory status lookups.
-    executor: Arc<Executor>,
+    /// Apalis owns queue admission, deduplication, task state, and terminal results.
+    storage: SqliteStorage<PublishExtension>,
     /// Desired destination and independent transfer limits.
     config: PublicationConfig,
-    /// Retry deadlines survive repeated watch events within this process.
-    retries: Mutex<HashMap<ExecutionId, Instant>>,
 }
 
-/// Run independent resource reconciliation and Apalis workers until shutdown.
+/// Run resource reconciliation and independent publication tasks until shutdown.
 pub(super) async fn run(
     api: Api<SuntitleExtension>,
     config: PublicationConfig,
     cancellation: CancellationToken,
     sources: Sources,
+    storage: SqliteStorage<PublishExtension>,
 ) {
     let (notify, receiver) = mpsc::unbounded_channel::<ObjectRef<SuntitleExtension>>();
-    let (executor, mut worker) =
-        Executor::start(sources, config.concurrency, cancellation.clone(), notify);
+    let mut worker = executor::start(
+        storage.clone(),
+        sources,
+        config.concurrency,
+        cancellation.clone(),
+        notify,
+    );
     let context = Arc::new(PublicationContext {
         api: api.clone(),
-        executor,
+        storage,
         config,
-        retries: Mutex::new(HashMap::new()),
     });
     let controller = Controller::new(api, watcher::Config::default())
         .with_config(Config::default().concurrency(16))
@@ -136,150 +136,74 @@ pub(super) async fn run(
     let _ = worker.await;
 }
 
-/// Observe desired state, accept missing work, or publish an already verified result.
+/// Retain published artifacts for the current generation; otherwise submit and observe Apalis work.
 async fn reconcile(
     extension: Arc<SuntitleExtension>,
     ctx: Arc<PublicationContext>,
 ) -> Result<Action, Error> {
-    if extension.metadata.deletion_timestamp.is_some() {
+    if let Some(_deleted_at) = &extension.metadata.deletion_timestamp {
         return Ok(Action::await_change());
     }
-    let desired = ExecutionId::for_extension(&extension, &ctx.config)?;
-    let current = extension.status.as_ref();
-    let id = current
-        .and_then(|status| status.task_id.as_deref())
-        .and_then(ExecutionId::parse)
-        .filter(|id| id.matches(&desired));
-    let Some(id) = id else {
-        return enqueue(&extension, &ctx, desired).await;
-    };
-    if current.is_some_and(|status| {
-        status.observed_generation == extension.metadata.generation
-            && status.artifact_reference.is_some()
-            && status.conditions.iter().any(|condition| {
-                condition.type_ == "Ready"
-                    && condition.status == "True"
-                    && condition.observed_generation == extension.metadata.generation
-            })
-    }) {
+    if let Some(status) = &extension.status
+        && let Some(_reference) = &status.artifact_reference
+        && status.observed_generation == extension.metadata.generation
+    {
         return Ok(Action::await_change());
     }
-    match ctx.executor.status(&id).await? {
-        Some(TaskStatus::Queued | TaskStatus::Running) => Ok(Action::await_change()),
-        Some(TaskStatus::Succeeded { reference }) => {
-            write_status(
-                &ctx.api,
-                &extension,
-                PublicationOutcome::Published {
-                    task: id.clone(),
-                    reference,
-                },
-            )
-            .await?;
-            ctx.retries.lock().await.remove(&id);
-            Ok(Action::await_change())
-        }
-        Some(TaskStatus::Failed { error }) => {
-            write_status(
-                &ctx.api,
-                &extension,
-                PublicationOutcome::Failed {
-                    task: id.clone(),
-                    error,
-                },
-            )
-            .await?;
-            if id.attempt() >= 3 {
-                return Ok(Action::await_change());
-            }
-            let deadline = *ctx
-                .retries
-                .lock()
-                .await
-                .entry(id.clone())
-                .or_insert_with(|| Instant::now() + Duration::from_secs(5 << id.attempt()));
-            if let Some(delay) = deadline.checked_duration_since(Instant::now()) {
-                return Ok(Action::requeue(delay));
-            }
-            ctx.retries.lock().await.remove(&id);
-            enqueue(&extension, &ctx, id.next_attempt()).await
-        }
-        None => enqueue(&extension, &ctx, id).await,
-    }
-}
-
-/// Enqueue before persisting identity; completion notifications retain the early-result race.
-async fn enqueue(
-    extension: &SuntitleExtension,
-    ctx: &PublicationContext,
-    id: ExecutionId,
-) -> Result<Action, Error> {
-    let destination = id.destination(&ctx.config.repository, &extension.name_any());
-    let id = ctx
-        .executor
-        .enqueue(PublishExtension {
-            id,
-            key: ObjectRef::from_obj(extension),
-            spec: extension.spec.clone(),
-            destination,
-        })
-        .await?;
-    write_status(
-        &ctx.api,
-        extension,
-        PublicationOutcome::Preparing { task: id },
-    )
-    .await?;
+    let id = identity::task_id(&extension, &ctx.config)?;
+    submit(&extension, &ctx, id.clone()).await?;
+    let state = ctx.storage.clone().check_status([id.clone()]).await?.pop();
+    write_status(&ctx.api, &extension, &id, &state).await?;
     Ok(Action::await_change())
 }
 
-/// Publication state from which Kubernetes status fields are derived together.
-enum PublicationOutcome {
-    /// Accepted work awaiting completion.
-    Preparing {
-        /// Current preparation attempt.
-        task: ExecutionId,
-    },
-    /// Complete artifact verified through its digest reference.
-    Published {
-        /// Completed preparation attempt.
-        task: ExecutionId,
-        /// Canonical artifact pull reference.
-        reference: String,
-    },
-    /// Terminal attempt awaiting a possible controller retry.
-    Failed {
-        /// Failed preparation attempt.
-        task: ExecutionId,
-        /// Credential-free explanation suitable for resource status.
-        error: String,
-    },
+/// Submit immutable source inputs without waiting for execution or capacity.
+async fn submit(
+    extension: &SuntitleExtension,
+    ctx: &PublicationContext,
+    id: TaskId,
+) -> Result<(), Error> {
+    let task = TaskBuilder::new(PublishExtension {
+        destination: format!(
+            "{}/{}:publication-{id}",
+            ctx.config.repository.trim_end_matches('/'),
+            extension.name_any()
+        ),
+        namespace: extension.namespace(),
+        name: extension.name_any(),
+        spec: extension.spec.clone(),
+    })
+    .task_id(id.clone())
+    .idempotency_key(id.to_string())
+    .max_attempts(extension.spec.max_attempts as usize)
+    .build();
+    ctx.storage.clone().push_task(task).await?;
+    Ok(())
 }
 
-/// Patch owned status fields only when the resource snapshot is still current.
+/// Derive publication status directly from SQLite's stored result.
+/// The patch MUST retain UID/resource-version preconditions to reject obsolete results.
 async fn write_status(
     api: &Api<SuntitleExtension>,
     extension: &SuntitleExtension,
-    outcome: PublicationOutcome,
+    task: &TaskId,
+    state: &Option<TaskResult<String>>,
 ) -> Result<(), Error> {
-    let (task, reference, ready, reason, message) = match outcome {
-        PublicationOutcome::Preparing { task } => (
-            task,
+    let (reference, ready, reason, message) = match state.as_ref().map(|task| &task.result) {
+        None => (
             None,
             false,
             "Preparing",
-            "Source preparation and registry publication are queued.".to_string(),
+            "Source preparation and registry publication are queued, running, or retrying."
+                .to_string(),
         ),
-        PublicationOutcome::Published { task, reference } => (
-            task,
-            Some(reference),
+        Some(Ok(reference)) => (
+            Some(reference.clone()),
             true,
             "ArtifactPublished",
             "Prepared extension artifact is available in the registry.".to_string(),
         ),
-        PublicationOutcome::Failed { task, error } => {
-            (task, None, false, "PreparationFailed", error)
-        }
+        Some(Err(error)) => (None, false, "PreparationFailed", error.clone()),
     };
     let previous = extension
         .status
@@ -288,7 +212,8 @@ async fn write_status(
         .unwrap_or_default();
     let mut status = ExtensionStatus {
         observed_generation: extension.metadata.generation,
-        task_id: Some(task.encode()),
+        task_id: Some(task.to_string()),
+        attempts: state.as_ref().map(|task| task.attempt),
         artifact_reference: reference,
         conditions: vec![Condition {
             type_: "Ready".into(),
@@ -303,6 +228,7 @@ async fn write_status(
     if serde_json::to_value(&extension.status)? == serde_json::to_value(&status)? {
         return Ok(());
     }
-    api.patch_status(&extension.name_any(), &PatchParams::default(), &Patch::Merge(serde_json::json!({ "metadata": {"uid": extension.uid(), "resourceVersion": extension.resource_version()}, "status": {"observedGeneration": status.observed_generation, "taskId": status.task_id, "artifactReference": status.artifact_reference, "conditions": status.conditions} }))).await?;
+
+    api.patch_status(&extension.name_any(), &PatchParams::default(), &Patch::Merge(serde_json::json!({ "metadata": {"uid": extension.uid(), "resourceVersion": extension.resource_version()}, "status": {"observedGeneration": status.observed_generation, "taskId": status.task_id, "attempts": status.attempts, "artifactReference": status.artifact_reference, "conditions": status.conditions} }))).await?;
     Ok(())
 }
