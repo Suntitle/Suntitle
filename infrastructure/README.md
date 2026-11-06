@@ -28,12 +28,47 @@ files are ignored by Git. Local deployment state is stored separately under
 `~/.pulumi` and also needs a backup.
 
 Subsequent deployments only need `just infra-up` while AWS credentials remain
-valid. The instance builds images after Pulumi finishes; startup takes time.
-No GitHub token or local Docker is required.
+valid. Each `just infra-up` resolves the latest published stable GitHub release.
+Pulumi records the concrete tag in instance user data, so a newer release triggers
+an instance replacement. An unchanged release does not trigger an update.
+The release MUST include `ws-proxy.x86_64-unknown-linux-musl.tar.xz` and
+`control-api.x86_64-unknown-linux-musl.tar.xz`, each with its `.sha256` file.
+The updated release workflow publishes these assets. Older releases without
+an API archive cannot be deployed by this path.
 
-The current checkout's build inputs are uploaded to private S3. Local `.env`
-files, certificates, and extension payloads are excluded. The instance generates
-its own Kubernetes certificates and database password.
+The instance downloads the resolved release from `Suntitle/Suntitle`, verifies
+both checksums, and installs the binaries in an Alpine runtime image.
+It does not compile Rust. Releases use a musl toolchain in Docker on the
+`ubuntu-latest` GitHub runner. The release build rejects shared-library dependencies
+and dynamic loaders, then checks each executable starts. The headless API, proxy,
+and Diamant binaries do not require glibc. The optional Qt GUI is excluded.
+Use a public fork by setting `infrastructure:releaseRepository` to `owner/repo`.
+No GitHub token or local Docker is required; private release downloads are not
+configured. Missing assets or checksum failures stop provisioning.
+
+The current checkout's Compose configuration, installation scripts, and UI build
+inputs are uploaded to private S3. Rust source, local `.env` files, certificates,
+and extension payloads are excluded. The instance builds the UI image and
+creates its own Kubernetes certificates and database password. Startup continues
+after Pulumi finishes; inspect cloud-init to check application readiness.
+
+Run `just infra-up` to deploy the latest release. Discovery failures or missing
+release assets stop deployment before AWS resources are changed.
+To pin a version or roll back, optionally set a specific tag:
+
+```bash
+pulumi -C infrastructure config set infrastructure:releaseVersion v1.2.3
+```
+
+Remove a previous pin to follow latest again:
+
+```bash
+pulumi -C infrastructure config rm infrastructure:releaseVersion
+```
+
+Setting `releaseVersion` to `latest` also enables automatic discovery. Keep the
+checkout's deployment configuration and UI compatible with the selected release.
+Release tags SHOULD remain immutable.
 
 ## Connect and inspect
 
@@ -64,8 +99,8 @@ The deployment retains the local HTTP/WebSocket exposure and Vite server.
 
 The Elastic IP and protected EBS disk survive instance replacement. Docker data,
 Kubernetes credentials, and extension payloads live under `/srv/suntitle`.
-Source updates replace the instance with downtime. Local extension payloads go
-in `/srv/suntitle/extensions`, mounted at `/opt/suntitle/extensions` in the proxy.
+Release version or deployment input updates replace the instance with downtime.
+Local extension payloads go in `/srv/suntitle/extensions`, mounted at `/opt/suntitle/extensions` in the proxy.
 
 To permanently delete everything, including database and registry data:
 

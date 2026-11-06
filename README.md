@@ -522,3 +522,14 @@ cargo check -p diamant --features gui
 Default workspace commands omit the Qt-only `diamant-ui` package. To build or
 test all headless packages explicitly, use `--workspace --exclude diamant-ui`.
 The optional GUI requires Qt development libraries.
+
+Headless Linux releases use static `x86_64-unknown-linux-musl` binaries for
+`ws-proxy`, `control_api`, and `diamant`. Build and verify them locally with:
+
+```sh
+docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile \
+  --target release-artifacts --output type=local,dest=target/static-release .
+```
+
+The build rejects shared libraries and dynamic loaders, then runs each binary's
+`--help`. The optional Qt GUI is excluded from these release artifacts.

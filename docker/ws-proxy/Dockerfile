@@ -1,7 +1,8 @@
-FROM rust:1.96-alpine AS build
+ARG RUST_IMAGE=rust:alpine
+FROM ${RUST_IMAGE} AS build
 RUN apk add --no-cache build-base cmake perl linux-headers pkgconf binutils
 WORKDIR /build
-ENV CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG=0
+ENV CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_BUILD_JOBS=2
 COPY Cargo.toml Cargo.lock ./
 COPY ws-proxy/Cargo.toml ./ws-proxy/
 COPY ws-proxy/src ./ws-proxy/src
@@ -13,10 +14,18 @@ COPY oci-artifact/Cargo.toml oci-artifact/README.md ./oci-artifact/
 COPY oci-artifact/src ./oci-artifact/src
 COPY kubernetes ./kubernetes
 COPY specs ./specs
+COPY docker/ws-proxy/check-static.sh /usr/local/bin/check-static
 RUN cargo build --locked --release -p control-api -p ws-proxy --bin control_api --bin ws-proxy \
-    && for binary in target/release/control_api target/release/ws-proxy; do \
-         if readelf -d "$binary" | grep -q '(NEEDED)'; then echo "Dynamic dependency in $binary" >&2; exit 1; fi; \
-       done
+    && sh /usr/local/bin/check-static target/release/control_api target/release/ws-proxy
+
+FROM build AS release
+RUN cargo build --locked --release -p diamant --bin diamant \
+    && sh /usr/local/bin/check-static target/release/control_api target/release/ws-proxy target/release/diamant
+
+FROM scratch AS release-artifacts
+COPY --from=release /build/target/release/control_api /
+COPY --from=release /build/target/release/ws-proxy /
+COPY --from=release /build/target/release/diamant /
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates curl bash

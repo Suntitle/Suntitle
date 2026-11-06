@@ -19,45 +19,38 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUST_BACKTRACE: full
-      RUSTFLAGS: -C link-arg=-fuse-ld=lld
     strategy:
       fail-fast: true
       matrix:
         target:
-          - name: x86_64-unknown-linux-gnu
+          - name: x86_64-unknown-linux-musl
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{env.RUST_TOOLCHAIN}}
-          targets: ${{ matrix.target.name }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          env-vars: "RUST_TOOLCHAIN=${{env.RUST_TOOLCHAIN}}"
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lld
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Build release
         timeout-minutes: 120
         run: |
-          cargo build --locked --release --workspace --exclude diamant-ui --bins --target ${{ matrix.target.name }}
+          rust_image=rust:alpine
+          if [ "$RUST_TOOLCHAIN" != stable ]; then
+            rust_image="rust:${RUST_TOOLCHAIN}-alpine"
+          fi
+          docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile \
+            --build-arg RUST_IMAGE="$rust_image" \
+            --target release-artifacts --output type=local,dest=release-binaries .
 
       - name: Package
         run: |
-          cd target/${{ matrix.target.name }}/release
+          cd release-binaries
           tar -cJf ws-proxy.${{ matrix.target.name }}.tar.xz ws-proxy
           tar -cJf control-api.${{ matrix.target.name }}.tar.xz control_api
           tar -cJf diamant.${{ matrix.target.name }}.tar.xz diamant
 
       - name: Generate checksums
         run: |
-          cd target/${{ matrix.target.name }}/release
+          cd release-binaries
           sha256sum ws-proxy.${{ matrix.target.name }}.tar.xz > ws-proxy.${{ matrix.target.name }}.tar.xz.sha256
           sha256sum control-api.${{ matrix.target.name }}.tar.xz > control-api.${{ matrix.target.name }}.tar.xz.sha256
           sha256sum diamant.${{ matrix.target.name }}.tar.xz > diamant.${{ matrix.target.name }}.tar.xz.sha256
@@ -68,7 +61,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
-            target/${{ matrix.target.name }}/release/*.tar.xz
-            target/${{ matrix.target.name }}/release/*.sha256
+            release-binaries/*.tar.xz
+            release-binaries/*.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
           tag_name: ${{ inputs.tag || github.ref_name }}

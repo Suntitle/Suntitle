@@ -64,6 +64,9 @@ POSTGRES_DB=suntitle
 POSTGRES_USER=suntitle
 POSTGRES_PASSWORD=$(cat /srv/suntitle/postgres-password)
 REGISTRY_HOST=${REGISTRY_HOST}
+COMPOSE_FILE=compose.yaml:compose.release.yaml
+SUNTITLE_RELEASE_VERSION=${SUNTITLE_RELEASE_VERSION}
+SUNTITLE_RELEASE_REPOSITORY=${SUNTITLE_RELEASE_REPOSITORY}
 LOCAL_EXTENSIONS_DIR=/srv/suntitle/extensions
 CONFIG
 
@@ -71,7 +74,7 @@ bash infrastructure/generate-pki.sh
 # Keep the existing optional fixture mount empty on the deployment host.
 mkdir -p ws-proxy/examples/custom_node_e2e/extensions
 systemctl enable --now docker
-# Sequential builds limit peak memory on the deployment instance.
+# Install verified release binaries before building the UI.
 docker compose --env-file .env.local build kubernetes-bootstrap
 docker compose --env-file .env.local build ui
 docker compose --env-file .env.local up -d --wait --wait-timeout 300
