@@ -39,8 +39,6 @@ jobs:
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ws-proxy
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
@@ -80,7 +78,7 @@ jobs:
           exit 1
 
       - name: Bootstrap Kubernetes
-        run: ws-proxy/target/debug/control_api bootstrap-kubernetes --kubeconfig pki/admin.kubeconfig --namespace suntitle
+        run: target/debug/control_api bootstrap-kubernetes --kubeconfig pki/admin.kubeconfig --namespace suntitle
 
       - name: Validate live resource contracts and RBAC
         run: just kubernetes-test
@@ -104,7 +102,7 @@ jobs:
         timeout-minutes: 2
         run: |
           mkdir -p test-results
-          ws-proxy/target/debug/ws-proxy --kubeconfig pki/suntitle-proxy.kubeconfig --namespace suntitle > test-results/relay-proxy.log 2>&1 &
+          target/debug/ws-proxy --kubeconfig pki/suntitle-proxy.kubeconfig --namespace suntitle > test-results/relay-proxy.log 2>&1 &
           proxy_pid=$!
           trap 'kill "$proxy_pid" 2>/dev/null || true; wait "$proxy_pid" 2>/dev/null || true' EXIT
           for attempt in {1..30}; do
@@ -148,8 +146,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ws-proxy
 
       - name: Install Qt development packages
         run: |
@@ -157,7 +153,7 @@ jobs:
           sudo apt-get install -y lld qt6-base-dev qt6-declarative-dev
 
       - name: Check GUI build
-        run: cargo check --locked --manifest-path ws-proxy/Cargo.toml --bin diamant --features gui
+        run: cargo check --locked -p diamant --bin diamant --features gui
 
   check-python:
     name: Python mock API and node CLI tests

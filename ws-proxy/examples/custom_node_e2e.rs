@@ -167,7 +167,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )?;
     }
     let kube_client =
-        ws_proxy::kubernetes::client_from_kubeconfig(&kubeconfigs.join("admin.kubeconfig"))
+        suntitle_core::kubernetes::client_from_kubeconfig(&kubeconfigs.join("admin.kubeconfig"))
             .await
             .map_err(io::Error::other)?;
     timeout(ACTION_TIMEOUT, async {

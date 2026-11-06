@@ -50,7 +50,12 @@ class InfrastructureTest(unittest.TestCase):
                 'compose.yaml', 'ui/src/main.tsx', 'ui/.env.local',
                 'ui/node_modules/secret', 'ui/dist/index.html',
                 'ui/cypress/videos/large.mp4', 'pki/admin.key', '.env.local',
-                'ws-proxy/src/main.rs', 'ws-proxy/target/debug/ws-proxy',
+                'Cargo.toml', 'Cargo.lock', 'ws-proxy/Cargo.toml', 'ws-proxy/src/main.rs',
+                'control-api/Cargo.toml', 'control-api/src/main.rs',
+                'suntitle-core/Cargo.toml', 'suntitle-core/src/lib.rs',
+                'diamant/Cargo.toml', 'diamant/src/main.rs',
+                'diamant-ui/Cargo.toml', 'diamant-ui/src/lib.rs',
+                'target/debug/ws-proxy', 'diamant/target/debug/diamant',
             ]
             for name in paths:
                 path = root / name
@@ -63,7 +68,12 @@ class InfrastructureTest(unittest.TestCase):
             self.assertEqual(digest, DEPLOYMENT.build_source_archive(root, second))
             with tarfile.open(first) as archive:
                 self.assertEqual(set(archive.getnames()), {
-                    'compose.yaml', 'ui/src/main.tsx', 'ws-proxy/src/main.rs',
+                    'compose.yaml', 'ui/src/main.tsx', 'Cargo.toml', 'Cargo.lock',
+                    'ws-proxy/Cargo.toml', 'ws-proxy/src/main.rs',
+                    'control-api/Cargo.toml', 'control-api/src/main.rs',
+                    'suntitle-core/Cargo.toml', 'suntitle-core/src/lib.rs',
+                    'diamant/Cargo.toml', 'diamant/src/main.rs',
+                    'diamant-ui/Cargo.toml', 'diamant-ui/src/lib.rs',
                 })
             (root / 'ui/src/main.tsx').write_text('updated')
             self.assertNotEqual(digest, DEPLOYMENT.build_source_archive(root, second))

@@ -3,9 +3,9 @@
 mod support;
 
 use std::{error::Error, io, process::Command, time::Duration};
+use suntitle_core::kubernetes::resources::{Presence, SuntitleHost};
 use support::{ApiClient, ChildProcess, binary_directory, binary_path, wait_for_services};
 use uuid::Uuid;
-use ws_proxy::kubernetes::resources::{Presence, SuntitleHost};
 
 /// Maximum time for host registration to appear in the control API.
 const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(10);

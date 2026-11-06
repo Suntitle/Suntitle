@@ -204,7 +204,7 @@ async fn slow_publication_keeps_the_command_api_responsive_and_bounds_concurrenc
     let worker = executor::start(storage.clone(), sources, 1, cancellation.clone(), notify);
     let mut resource = extension();
     resource.spec.max_attempts = 1;
-    resource.spec.source_type = crate::kubernetes::resources::ExtensionSourceType::Http;
+    resource.spec.source_type = suntitle_core::kubernetes::resources::ExtensionSourceType::Http;
     resource.spec.source = format!("http://{address}/fixture");
     let first_resource = resource.clone();
     let first = identity::task_id(&resource, &options).unwrap();

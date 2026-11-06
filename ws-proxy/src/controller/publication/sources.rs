@@ -4,10 +4,10 @@ use super::{
     archive::{self, DirectorySource},
     executor::PublishExtension,
 };
-use crate::kubernetes::resources::ExtensionSourceType;
 use futures_util::TryStreamExt;
 use oci_artifact::{CancellationToken, PayloadStream, PreparedUpload, Publisher, RegistryAuth};
 use std::{io, path::PathBuf, sync::Arc, time::Duration};
+use suntitle_core::kubernetes::resources::ExtensionSourceType;
 
 /// Shared source clients and destination credentials. Secrets never enter task identity.
 #[derive(Clone)]
@@ -26,7 +26,7 @@ impl Sources {
     pub fn new(
         config: PublicationConfig,
         cancellation: CancellationToken,
-    ) -> Result<Self, crate::kubernetes::Error> {
+    ) -> Result<Self, suntitle_core::kubernetes::Error> {
         Ok(Self {
             http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
@@ -61,7 +61,7 @@ impl Sources {
         &self,
         task: &PublishExtension,
         cancellation: &CancellationToken,
-    ) -> Result<String, crate::kubernetes::Error> {
+    ) -> Result<String, suntitle_core::kubernetes::Error> {
         let upload = match task.spec.source_type {
             ExtensionSourceType::Http => self.prepare_http(&task.spec.source, cancellation).await?,
             ExtensionSourceType::Local => self.prepare_local(task, cancellation)?,
@@ -84,7 +84,7 @@ impl Sources {
         &self,
         source: &str,
         cancellation: &CancellationToken,
-    ) -> Result<PreparedUpload, crate::kubernetes::Error> {
+    ) -> Result<PreparedUpload, suntitle_core::kubernetes::Error> {
         let url = reqwest::Url::parse(source)?;
         if !matches!(url.scheme(), "http" | "https")
             || !url.username().is_empty()
@@ -121,7 +121,7 @@ impl Sources {
         &self,
         task: &PublishExtension,
         cancellation: &CancellationToken,
-    ) -> Result<PreparedUpload, crate::kubernetes::Error> {
+    ) -> Result<PreparedUpload, suntitle_core::kubernetes::Error> {
         let source = PathBuf::from(&task.spec.source);
         if !source.is_absolute() || !source.is_dir() {
             return Err("local source MUST be an absolute HUB directory".into());
@@ -138,7 +138,7 @@ impl Sources {
         &self,
         task: &PublishExtension,
         cancellation: &CancellationToken,
-    ) -> Result<PreparedUpload, crate::kubernetes::Error> {
+    ) -> Result<PreparedUpload, suntitle_core::kubernetes::Error> {
         let authority = url::Url::parse(&task.spec.source)
             .ok()
             .map(|url| url[url::Position::BeforeHost..url::Position::AfterPort].to_owned());
@@ -159,7 +159,7 @@ impl Sources {
         &self,
         task: &PublishExtension,
         cancellation: &CancellationToken,
-    ) -> Result<String, crate::kubernetes::Error> {
+    ) -> Result<String, suntitle_core::kubernetes::Error> {
         let authority = task.spec.source.split('/').next().unwrap_or_default();
         let authentication = self
             .config

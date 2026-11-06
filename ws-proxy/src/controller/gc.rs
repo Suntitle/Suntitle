@@ -1,6 +1,5 @@
 //! Host deletion garbage collection.
 use super::{Context, ReconcileError, error_policy, finalizer_error, session::State};
-use crate::kubernetes::{Error, resources::*};
 use futures_util::StreamExt;
 use kube::{
     Api, ResourceExt,
@@ -12,6 +11,7 @@ use kube::{
     },
 };
 use std::sync::Arc;
+use suntitle_core::kubernetes::{Error, resources::*};
 
 /// Delete nodes referencing a terminating host.
 pub(super) async fn run(hosts: Api<SuntitleHost>, context: Arc<Context>) {

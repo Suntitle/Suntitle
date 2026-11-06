@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use ws_proxy::kubernetes::{
+use suntitle_core::kubernetes::{
     adapter::{ExtensionAdapter, MissingRequiredSettings},
     resources::{SuntitleExtensionSpec, SuntitleNodeSpec},
 };
@@ -138,7 +138,7 @@ fn optional_settings_omit_their_binding_only_when_absent_and_still_use_defaults(
 
 #[test]
 fn switch_requires_a_flag_in_the_crd_rule() {
-    use ws_proxy::kubernetes::adapter::ArgumentBinding;
+    use suntitle_core::kubernetes::adapter::ArgumentBinding;
     let valid = json!({"flag":"--gpu", "source":"settings.useGpu", "mode":"switch"});
     ArgumentBinding::validate_cel(&valid, None).unwrap();
     for flag in [None, Some(Value::Null)] {
@@ -192,7 +192,7 @@ fn settings_are_optional_unless_explicitly_required_and_defaults_supply_values()
 /// Standard binding sources are typed while setting keys and values remain user-owned.
 #[test]
 fn argument_sources_reuse_the_wire_contract_and_reject_unknown_runtime_fields() {
-    use ws_proxy::kubernetes::adapter::{ArgumentSource, RuntimeValue};
+    use suntitle_core::kubernetes::adapter::{ArgumentSource, RuntimeValue};
     for (wire, expected) in [
         (
             "runtime.websocketUrl",

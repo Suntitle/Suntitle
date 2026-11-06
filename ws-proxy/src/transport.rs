@@ -1,5 +1,7 @@
-use crate::{kubernetes::resources::ResourceIdentity, registration::RegistrationServerMessage};
 use std::collections::HashMap;
+use suntitle_core::{
+    kubernetes::resources::ResourceIdentity, registration::RegistrationServerMessage,
+};
 use tokio::sync::{mpsc, watch};
 
 const QUEUE_CAPACITY: usize = 32;
@@ -72,9 +74,12 @@ impl Connections {
     }
 
     pub fn dispatched(&self, uid: &str, node: &str, operation: &str) -> bool {
-        self.routes
-            .get(uid)
-            .is_some_and(|route| route.operations.get(node).is_some_and(|sent| sent == operation))
+        self.routes.get(uid).is_some_and(|route| {
+            route
+                .operations
+                .get(node)
+                .is_some_and(|sent| sent == operation)
+        })
     }
 
     pub fn mark_dispatched(&mut self, uid: &str, node: String, operation: String) {

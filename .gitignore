@@ -35,5 +35,5 @@ Thumbs.db
 /pki/
 
 target
-ws-proxy/.qmlls.ini
-ws-proxy/diamant-ui/.qmlls.ini
+diamant/.qmlls.ini
+diamant-ui/.qmlls.ini

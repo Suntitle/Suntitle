@@ -1,10 +1,6 @@
 //! Generation/deletion-driven dispatch intent.
 //! Pipeline input references MUST NOT gate installation or runnable startup.
 use super::{Context, ReconcileError, error_policy, plan::Plan, session::State};
-use crate::{
-    kubernetes::{Error, resources::*},
-    registration::Operation,
-};
 use futures_util::StreamExt;
 use kube::{
     Api, ResourceExt,
@@ -14,6 +10,10 @@ use kube::{
     },
 };
 use std::sync::Arc;
+use suntitle_core::{
+    kubernetes::{Error, resources::*},
+    registration::Operation,
+};
 
 /// Reconcile dispatch intent when node resources change.
 pub(super) async fn run(api: Api<SuntitleNode>, context: Arc<Context>) {

@@ -17,7 +17,7 @@ use kube::{
     Api, Client,
     api::{DeleteParams, ListParams, Patch, PatchParams},
 };
-use ws_proxy::kubernetes::{
+use suntitle_core::kubernetes::{
     self, Error,
     resources::{SuntitleExtension, SuntitleHost, SuntitleNode},
 };

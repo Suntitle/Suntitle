@@ -11,10 +11,6 @@ pub(super) use sources::Sources;
 #[cfg(test)]
 mod tests;
 
-use crate::kubernetes::{
-    Error,
-    resources::{ExtensionStatus, SuntitleExtension},
-};
 use apalis::prelude::*;
 use apalis_sqlite::SqliteStorage;
 use futures_util::StreamExt;
@@ -30,6 +26,10 @@ use kube::{
 };
 use oci_artifact::{CancellationToken, RegistryAuth, client::TransportOptions};
 use std::{sync::Arc, time::Duration};
+use suntitle_core::kubernetes::{
+    Error,
+    resources::{ExtensionStatus, SuntitleExtension},
+};
 use tokio::sync::mpsc;
 
 /// Destination and resource limits for automatic extension publication.

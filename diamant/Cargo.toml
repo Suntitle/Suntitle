@@ -1,0 +1,40 @@
+[package]
+name = "diamant"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+gui = ["dep:diamant-ui"]
+
+[dependencies.diamant-ui]
+workspace = true
+optional = true
+
+[dependencies]
+suntitle-core.workspace = true
+oci-artifact.workspace = true
+dirs.workspace = true
+tempfile.workspace = true
+uv.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+hostname.workspace = true
+ctrlc.workspace = true
+nix.workspace = true
+rootcause.workspace = true
+pretty_env_logger.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-tungstenite.workspace = true
+uuid.workspace = true
+url.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+warp.workspace = true
+tar.workspace = true
+flate2.workspace = true

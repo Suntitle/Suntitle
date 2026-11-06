@@ -3,16 +3,16 @@
 //! Notifications follow SQLite result storage and wake reconciliation without polling timers.
 //! Shutdown joins active transfers. The in-memory database is rebuilt from resources after restart.
 use super::sources::Sources;
-use crate::kubernetes::{
-    Error,
-    resources::{SuntitleExtension, SuntitleExtensionSpec},
-};
 use apalis::{layers::catch_panic::CatchPanicLayer, prelude::*};
 use apalis_sqlite::{SqlitePoolOptions, SqliteStorage};
 use futures_util::{StreamExt, TryStreamExt};
 use kube::runtime::reflector::ObjectRef;
 use oci_artifact::CancellationToken;
 use std::time::Duration;
+use suntitle_core::kubernetes::{
+    Error,
+    resources::{SuntitleExtension, SuntitleExtensionSpec},
+};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 /// Immutable inputs for one publication attempt. Credentials remain in the source client.

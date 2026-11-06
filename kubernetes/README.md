@@ -8,8 +8,8 @@ From the repository root, with the existing Compose Kine/API server running:
 
 ```sh
 bash scripts/generate-kubeconfigs.sh
-cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- generate-crds > kubernetes/crds.yaml
-cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- bootstrap-kubernetes --kubeconfig pki/admin.kubeconfig
+cargo run -p control-api --bin control_api -- generate-crds > kubernetes/crds.yaml
+cargo run -p control-api --bin control_api -- bootstrap-kubernetes --kubeconfig pki/admin.kubeconfig
 ```
 
 Generation needs no database or Kubernetes connection. Bootstrap applies the
@@ -21,7 +21,7 @@ namespace. Checked-in CRDs are generated from `src/kubernetes/resources.rs`.
 Start the Control API with its own certificate identity:
 
 ```sh
-cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- --kubeconfig pki/suntitle-api.kubeconfig
+cargo run -p control-api --bin control_api -- --kubeconfig pki/suntitle-api.kubeconfig
 ```
 
 `SUNTITLE_API_KUBECONFIG` also selects the credentials; `--namespace` or
@@ -75,7 +75,7 @@ also propagate immediately. Transport failures without an API-server response re
 Run the phase 2 API suite after bootstrap:
 
 ```sh
-cargo test --manifest-path ws-proxy/Cargo.toml --test control_api_resources -- --include-ignored
+cargo test -p control-api --test control_api_resources -- --include-ignored
 ```
 
 It uses unique resources, exercises actual API handlers with fresh in-memory API

@@ -1,10 +1,10 @@
 //! A stable Apalis task identity covers one desired resource revision and destination.
 //! Retries reuse that identity and remain entirely owned by SQLite storage.
 use super::PublicationConfig;
-use crate::kubernetes::{Error, resources::SuntitleExtension};
 use apalis::prelude::TaskId;
 use kube::ResourceExt;
 use sha2::{Digest, Sha256};
+use suntitle_core::kubernetes::{Error, resources::SuntitleExtension};
 
 /// Hash immutable resource inputs into the ULID representation required by Apalis SQLite.
 pub(super) fn task_id(

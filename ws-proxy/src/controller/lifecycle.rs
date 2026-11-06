@@ -5,7 +5,7 @@
 //! spawn success reports Running. Disabled apply reports Disabled. Preparation and
 //! apply failures report Failed. Removal stays Terminating until cleanup releases
 //! the finalizer. Only successful acknowledgements observe the desired revision.
-use crate::{
+use suntitle_core::{
     kubernetes::resources::{NodePhase, SuntitleNode},
     registration::Operation,
 };

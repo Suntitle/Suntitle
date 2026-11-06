@@ -2,7 +2,6 @@
 //! A new artifact MUST invalidate installation before download and apply.
 //! Configuration changes MUST retain installation and invalidate only apply.
 use super::{Context, ReconcileError, conditions, error_policy};
-use crate::kubernetes::resources::*;
 use futures_util::StreamExt;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{
@@ -15,6 +14,7 @@ use kube::{
     },
 };
 use std::sync::Arc;
+use suntitle_core::kubernetes::resources::*;
 
 /// Watch nodes and referenced extension publications.
 pub(super) async fn run(

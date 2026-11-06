@@ -1,4 +1,4 @@
-name: Release ws-proxy
+name: Release Suntitle
 on:
   push:
     tags:
@@ -45,22 +45,21 @@ jobs:
 
       - name: Build release
         timeout-minutes: 120
-        working-directory: ws-proxy
         run: |
-          cargo build --locked --release --bins --target ${{ matrix.target.name }}
+          cargo build --locked --release --workspace --exclude diamant-ui --bins --target ${{ matrix.target.name }}
 
       - name: Package
-        working-directory: ws-proxy
         run: |
           cd target/${{ matrix.target.name }}/release
           tar -cJf ws-proxy.${{ matrix.target.name }}.tar.xz ws-proxy
+          tar -cJf control-api.${{ matrix.target.name }}.tar.xz control_api
           tar -cJf diamant.${{ matrix.target.name }}.tar.xz diamant
 
       - name: Generate checksums
-        working-directory: ws-proxy
         run: |
           cd target/${{ matrix.target.name }}/release
           sha256sum ws-proxy.${{ matrix.target.name }}.tar.xz > ws-proxy.${{ matrix.target.name }}.tar.xz.sha256
+          sha256sum control-api.${{ matrix.target.name }}.tar.xz > control-api.${{ matrix.target.name }}.tar.xz.sha256
           sha256sum diamant.${{ matrix.target.name }}.tar.xz > diamant.${{ matrix.target.name }}.tar.xz.sha256
 
       - name: Upload Github Assets
@@ -69,7 +68,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
-            ws-proxy/target/${{ matrix.target.name }}/release/*.tar.xz
-            ws-proxy/target/${{ matrix.target.name }}/release/*.sha256
+            target/${{ matrix.target.name }}/release/*.tar.xz
+            target/${{ matrix.target.name }}/release/*.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
           tag_name: ${{ inputs.tag || github.ref_name }}

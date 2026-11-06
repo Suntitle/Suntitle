@@ -5,11 +5,11 @@ use kube::{
 };
 use serde_json::json;
 use std::{collections::BTreeMap, panic::AssertUnwindSafe, path::Path, time::Duration};
-use ws_proxy::{
-    controller::{Connection, Controller},
+use suntitle_core::{
     kubernetes::{client_from_kubeconfig, resources::*},
     registration::*,
 };
+use ws_proxy::controller::{Connection, Controller};
 
 fn wire<T: serde::Serialize + serde::de::DeserializeOwned>(message: T) -> T {
     let bytes = serde_json::to_vec(&Envelope::new(message)).unwrap();
@@ -127,7 +127,14 @@ async fn controller_apply_recovery_acceptance() {
         let mut connection = connect(&controller, &name).await;
         assert_ne!(connection.session_id, connection.host.uid);
         assert_eq!(
-            hosts.get(&name).await.unwrap().status.unwrap().session_id.as_deref(),
+            hosts
+                .get(&name)
+                .await
+                .unwrap()
+                .status
+                .unwrap()
+                .session_id
+                .as_deref(),
             Some(connection.session_id.as_str())
         );
         let first = apply(&mut connection).await;
@@ -260,11 +267,11 @@ async fn controller_apply_recovery_acceptance() {
         ack(&nodes, &controller, &connection, retry.clone(), true).await;
         quiet(&mut connection).await;
 
-        let store = ws_proxy::kubernetes::store::ResourceStore::new(client.clone(), "suntitle");
+        let store = control_api::store::ResourceStore::new(client.clone(), "suntitle");
         let app = actix_web::test::init_service(
             actix_web::App::new()
                 .app_data(actix_web::web::Data::new(store))
-                .service(ws_proxy::api::nodes::update_node),
+                .service(control_api::api::nodes::update_node),
         )
         .await;
         let mut disabled = nodes.get(&name).await.unwrap().spec;
@@ -489,10 +496,10 @@ async fn controller_deletion_acceptance() {
         nodes.create(&PostParams::default(), &SuntitleNode::new(&node_names[0], spec.clone())).await.unwrap();
         let applied = apply(&mut connection).await;
         ack(&nodes, &controller, &connection, applied.clone(), true).await;
-        let store = ws_proxy::kubernetes::store::ResourceStore::new(client.clone(), "suntitle");
+        let store = control_api::store::ResourceStore::new(client.clone(), "suntitle");
         let app = actix_web::test::init_service(actix_web::App::new()
             .app_data(actix_web::web::Data::new(store))
-            .service(ws_proxy::api::nodes::delete_node)).await;
+            .service(control_api::api::nodes::delete_node)).await;
         nodes.patch(&node_names[0], &PatchParams::default(), &Patch::Merge(json!({"metadata":{"finalizers":[NODE_FINALIZER,"test.suntitle.io/hold"]}}))).await.unwrap();
         let response = actix_web::test::call_service(&app, actix_web::test::TestRequest::delete()
             .uri(&format!("/nodes/{}", node_names[0])).to_request()).await;

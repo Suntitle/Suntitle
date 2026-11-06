@@ -7,6 +7,7 @@ use std::sync::{
 
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
+use suntitle_core::registration::{Envelope, RegistrationClientMessage, RegistrationServerMessage};
 use tokio::sync::{RwLock, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use warp::Filter;
@@ -14,7 +15,6 @@ use warp::filters::BoxedFilter;
 use warp::reply::Reply;
 use warp::ws::{Message, WebSocket};
 use ws_proxy::controller::Controller;
-use ws_proxy::registration::{Envelope, RegistrationClientMessage, RegistrationServerMessage};
 
 #[derive(Parser)]
 /// Proxy, Kubernetes, and extension publication configuration.
@@ -69,7 +69,7 @@ type Displays = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 async fn main() -> std::io::Result<()> {
     pretty_env_logger::init();
     let args = Args::parse();
-    let client = ws_proxy::kubernetes::client_from_kubeconfig(&args.kubeconfig)
+    let client = suntitle_core::kubernetes::client_from_kubeconfig(&args.kubeconfig)
         .await
         .map_err(std::io::Error::other)?;
     let credentials: std::collections::BTreeMap<String, ws_proxy::controller::RegistryCredential> =

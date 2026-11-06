@@ -5,10 +5,6 @@ use super::{
     plan::Plan,
     session::{State, identity},
 };
-use crate::{
-    kubernetes::{Error, resources::*},
-    registration::*,
-};
 use futures_util::StreamExt;
 use kube::{
     Api, ResourceExt,
@@ -20,6 +16,10 @@ use kube::{
     },
 };
 use std::sync::Arc;
+use suntitle_core::{
+    kubernetes::{Error, resources::*},
+    registration::*,
+};
 
 /// Observe node status and host sessions independently of spec revisions.
 pub(super) async fn run(nodes: Api<SuntitleNode>, hosts: Api<SuntitleHost>, context: Arc<Context>) {

@@ -3,7 +3,6 @@ use super::{
     Context, ReconcileError, error_policy,
     session::{EXPIRY, State},
 };
-use crate::kubernetes::{Error, resources::*};
 use futures_util::StreamExt;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use kube::{
@@ -14,6 +13,7 @@ use kube::{
     },
 };
 use std::sync::Arc;
+use suntitle_core::kubernetes::{Error, resources::*};
 
 /// Reconcile host presence.
 pub(super) async fn run(hosts: Api<SuntitleHost>, context: Arc<Context>) {

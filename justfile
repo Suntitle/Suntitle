@@ -10,11 +10,11 @@ setup:
 
 # Start the WebSocket proxy in release mode.
 proxy-release:
-    cargo run --release --manifest-path ws-proxy/Cargo.toml --bin ws-proxy -- --kubeconfig pki/suntitle-proxy.kubeconfig
+    cargo run --release -p ws-proxy --bin ws-proxy -- --kubeconfig pki/suntitle-proxy.kubeconfig
 
 # Start the WebSocket proxy in development mode.
 proxy:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin ws-proxy -- --kubeconfig pki/suntitle-proxy.kubeconfig
+    cargo run -p ws-proxy --bin ws-proxy -- --kubeconfig pki/suntitle-proxy.kubeconfig
 
 # Create local database configuration without overwriting existing settings.
 db-env:
@@ -34,7 +34,7 @@ db-drop-volume: db-env
 
 # Start the independent control API.
 api:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- --kubeconfig pki/suntitle-api.kubeconfig
+    cargo run -p control-api --bin control_api -- --kubeconfig pki/suntitle-api.kubeconfig
 
 # Start the subtitle window.
 subtitle host="localhost:3030":
@@ -66,7 +66,7 @@ listener-device device host="localhost:3030":
 
 # Start the local Diamant host as local-host.
 diamant-local:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin diamant -- --cli --host-name local-host --project-dir "{{ justfile_directory() }}"
+    cargo run -p diamant --bin diamant -- --cli --host-name local-host --project-dir "{{ justfile_directory() }}"
 
 # Run kubectl against the local Compose API server, forwarding all arguments.
 [positional-arguments]
@@ -122,8 +122,8 @@ local-stack:
     fi
 
     just _local-infra-up
-    cargo build --manifest-path ws-proxy/Cargo.toml --bin diamant
-    ws-proxy/target/debug/diamant --cli --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
+    cargo build -p diamant --bin diamant
+    target/debug/diamant --cli --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
     pids+=("$!")
 
     while true; do
@@ -138,7 +138,7 @@ local-stack:
 
 # Start a release-mode Diamant host agent.
 diamant proxy_url="ws://localhost/register":
-    cargo run --release --manifest-path ws-proxy/Cargo.toml --bin diamant -- --cli --proxy-url "{{ proxy_url }}"
+    cargo run --release -p diamant --bin diamant -- --cli --proxy-url "{{ proxy_url }}"
 
 # List registered hosts from the control API.
 hosts:
@@ -162,23 +162,23 @@ restart-node node_id:
 
 # Run the lightweight WebSocket relay end-to-end probe.
 e2e:
-    cargo run --locked --manifest-path ws-proxy/Cargo.toml --example e2e_probe
+    cargo run --locked -p ws-proxy --example e2e_probe
 
 # Prepare application binaries and E2E harnesses without starting services.
 e2e-build:
-    cargo build --locked --manifest-path ws-proxy/Cargo.toml --target-dir ws-proxy/target --bins --examples
+    cargo build --locked --workspace --exclude diamant-ui --bins --examples
 
 # Run the host-registration end-to-end test.
 host-e2e: e2e-build kubernetes-up
-    ws-proxy/target/debug/examples/host_registration_e2e
+    target/debug/examples/host_registration_e2e
 
 # Run the node-lifecycle end-to-end test.
 node-e2e: e2e-build kubernetes-up
-    ws-proxy/target/debug/examples/node_handling_e2e
+    target/debug/examples/node_handling_e2e
 
 # Build and retain the native development extension for the current host architecture.
 custom-node-fixtures: e2e-build
-    cp ws-proxy/target/debug/examples/custom_node_probe ws-proxy/examples/custom_node_e2e/extensions/native/bin/probe
+    cp target/debug/examples/custom_node_probe ws-proxy/examples/custom_node_e2e/extensions/native/bin/probe
 
 # Verify local and OCI native, Python script, and Python module extensions through the API.
 custom-node-e2e: custom-node-fixtures
@@ -195,15 +195,15 @@ custom-node-e2e: custom-node-fixtures
     }
     trap cleanup EXIT
     "${compose[@]}" up -d --wait --wait-timeout 90 kube-apiserver distribution traefik
-    ws-proxy/target/debug/examples/custom_node_e2e
+    target/debug/examples/custom_node_e2e
 
 # Run Rust tests that do not require a Kubernetes server.
 test-rust:
-    cargo test --locked --manifest-path ws-proxy/Cargo.toml
+    cargo test --locked --workspace --exclude diamant-ui
 
 # Run ignored integration tests against bootstrapped Kubernetes.
 test-rust-live:
-    cargo test --locked --manifest-path ws-proxy/Cargo.toml -- --ignored --test-threads=1
+    cargo test --locked -p ws-proxy -p control-api -p diamant -p suntitle-core -- --ignored --test-threads=1
 
 # Run the mock API and node CLI tests.
 test-python python="python3":
@@ -254,8 +254,8 @@ ui: _ui-dependencies kubernetes-up
     #!/usr/bin/env bash
     set -euo pipefail
 
-    cargo build --manifest-path ws-proxy/Cargo.toml --bin control_api
-    ws-proxy/target/debug/control_api --kubeconfig pki/suntitle-api.kubeconfig &
+    cargo build -p control-api --bin control_api
+    target/debug/control_api --kubeconfig pki/suntitle-api.kubeconfig &
     backend_pid=$!
 
     cleanup() {
@@ -324,7 +324,7 @@ generate-certs:
 
 # Generate the phase 1 Kubernetes custom-resource definitions without a server.
 generate-crds:
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- generate-crds > kubernetes/crds.yaml
+    cargo run -p control-api --bin control_api -- generate-crds > kubernetes/crds.yaml
 
 # Create separate local certificate kubeconfigs, retaining existing client keys.
 generate-kubeconfigs:
@@ -332,14 +332,14 @@ generate-kubeconfigs:
 
 # Install namespace, CRDs and runtime RBAC using explicit bootstrap credentials.
 kubernetes-bootstrap kubeconfig="pki/admin.kubeconfig" namespace="suntitle":
-    cargo run --manifest-path ws-proxy/Cargo.toml --bin control_api -- bootstrap-kubernetes --kubeconfig {{quote(kubeconfig)}} --namespace {{quote(namespace)}}
+    cargo run -p control-api --bin control_api -- bootstrap-kubernetes --kubeconfig {{quote(kubeconfig)}} --namespace {{quote(namespace)}}
 
 # Exercise new resource contracts on the running standalone Kubernetes API.
 kubernetes-test:
     python3 scripts/test-kubernetes-resources.py
 
 fmt:
-    cargo fmt --manifest-path ws-proxy/Cargo.toml
+    cargo fmt --all
 
 clippy:
-    cargo clippy --manifest-path ws-proxy/Cargo.toml --fix --allow-dirty
+    cargo clippy --workspace --exclude diamant-ui --all-targets --fix --allow-dirty

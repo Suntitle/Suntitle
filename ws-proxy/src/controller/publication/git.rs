@@ -25,7 +25,7 @@ impl Snapshot {
         source: &str,
         authentication: Option<&RegistryAuth>,
         cancellation: &CancellationToken,
-    ) -> Result<Self, crate::kubernetes::Error> {
+    ) -> Result<Self, suntitle_core::kubernetes::Error> {
         let url = url::Url::parse(source).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -62,8 +62,8 @@ impl Snapshot {
             signal.store(true, Ordering::Relaxed);
         });
         let source = url.to_string();
-        let result =
-            tokio::task::spawn_blocking(move || -> Result<Self, crate::kubernetes::Error> {
+        let result = tokio::task::spawn_blocking(
+            move || -> Result<Self, suntitle_core::kubernetes::Error> {
                 if interrupted.load(Ordering::Relaxed) {
                     return Err(io::Error::other("Git fetch cancelled").into());
                 }
@@ -99,8 +99,9 @@ impl Snapshot {
                 let commit = repository.head_commit()?.id;
                 drop(repository);
                 Ok(Self { directory, commit })
-            })
-            .await;
+            },
+        )
+        .await;
         watcher.abort();
         let _ = watcher.await;
         let snapshot = result??;

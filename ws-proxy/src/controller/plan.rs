@@ -4,7 +4,7 @@
 //! for a current publication, then download and apply. Artifact changes invalidate installation; configuration
 //! changes invalidate only apply. Both reconciliation loops
 //! and acknowledgement validation MUST use this selection.
-use crate::{
+use suntitle_core::{
     kubernetes::{
         adapter::ResolvedAdapter,
         resources::{DispatchStatus, NodePhase, SuntitleNode, SuntitleNodeSpec},
@@ -142,7 +142,7 @@ impl Plan {
             Self::CustomApply { reference, adapter } => RegistrationServerMessage::Apply {
                 identity,
                 spec: Box::new(spec),
-                custom: Some(Box::new(crate::registration::CustomExecution {
+                custom: Some(Box::new(suntitle_core::registration::CustomExecution {
                     reference,
                     adapter: *adapter,
                 })),

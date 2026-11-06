@@ -17,8 +17,8 @@ import tarfile
 # Only build inputs are eligible. Local environments and credentials MUST stay local.
 SOURCE_PATHS = (
     'compose.yaml', 'docker', 'kubernetes', 'specs', 'infrastructure/generate-pki.sh',
-    'ws-proxy/Cargo.toml', 'ws-proxy/Cargo.lock', 'ws-proxy/src',
-    'ws-proxy/diamant-ui', 'oci-artifact/Cargo.toml', 'oci-artifact/README.md',
+    'Cargo.toml', 'Cargo.lock', 'ws-proxy/Cargo.toml', 'ws-proxy/src',
+    'control-api', 'suntitle-core', 'diamant', 'diamant-ui', 'oci-artifact/Cargo.toml', 'oci-artifact/README.md',
     'oci-artifact/src', 'ui/Dockerfile', 'ui/.dockerignore', 'ui/package.json',
     'ui/package-lock.json', 'ui/index.html', 'ui/vite.config.ts',
     'ui/tsconfig.json', 'ui/tsconfig.app.json', 'ui/tsconfig.node.json',

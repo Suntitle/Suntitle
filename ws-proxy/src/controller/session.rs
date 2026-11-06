@@ -1,10 +1,6 @@
 //! Runtime registration, reports, and shared resource status writes.
 use super::{Connection, conditions};
-use crate::{
-    kubernetes::{Error, resources::*},
-    registration::*,
-    transport::Connections,
-};
+use crate::transport::Connections;
 use chrono::Utc;
 use kube::{
     Api, ResourceExt,
@@ -12,6 +8,10 @@ use kube::{
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
+use suntitle_core::{
+    kubernetes::{Error, resources::*},
+    registration::*,
+};
 
 pub(super) const EXPIRY: Duration = Duration::from_secs(45);
 

@@ -1,8 +1,8 @@
 use super::session::{current_session, heartbeat_expired, identity, matches_node};
 use super::*;
-use crate::{kubernetes::resources::*, registration::*};
 use chrono::Utc;
 use serde_json::{Value, json};
+use suntitle_core::{kubernetes::resources::*, registration::*};
 
 /// Build controller state with an unreachable API endpoint.
 fn state() -> State {
@@ -375,7 +375,7 @@ async fn custom_lifecycle_prepares_then_applies_and_reboots_only_changed_artifac
     assert_eq!(reference, "registry.test/extensions:v1");
     assert_eq!(adapter.settings["language"], "cs");
     assert!(
-        matches!(&adapter.execution.command, crate::kubernetes::execution::ExecutionCommand::Executable(path) if path == std::path::Path::new("./run"))
+        matches!(&adapter.execution.command, suntitle_core::kubernetes::execution::ExecutionCommand::Executable(path) if path == std::path::Path::new("./run"))
     );
     assert_eq!(adapter.arguments[0].flag.as_deref(), Some("--language"));
     let mut stale = identity.clone();

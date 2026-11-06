@@ -13,7 +13,7 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-use crate::{kubernetes::Error, registration::RegistrationClientMessage, transport::Connections};
+use crate::transport::Connections;
 use kube::{
     Api, Client,
     api::ListParams,
@@ -27,6 +27,7 @@ use std::{
     },
     time::Duration,
 };
+use suntitle_core::{kubernetes::Error, registration::RegistrationClientMessage};
 use tokio::{
     sync::{Mutex, Notify},
     task::JoinHandle,

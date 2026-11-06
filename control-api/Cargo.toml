@@ -1,0 +1,30 @@
+[package]
+name = "control-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "control_api"
+path = "src/main.rs"
+
+[dependencies]
+suntitle-core.workspace = true
+actix-web.workspace = true
+clap.workspace = true
+kube.workspace = true
+k8s-openapi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+utoipa.workspace = true
+utoipa-actix-web.workspace = true
+uuid.workspace = true
+validator.workspace = true
+json-patch.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+warp.workspace = true

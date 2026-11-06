@@ -406,7 +406,7 @@ ends. The health interval can be changed with `--health-interval-seconds` or
 To enable the optional desktop window, build with the `gui` Cargo feature:
 
 ```bash
-cargo build --manifest-path ws-proxy/Cargo.toml --bin diamant --features gui
+cargo build -p diamant --bin diamant --features gui
 ```
 
 GUI builds open the desktop window by default; `diamant --cli` runs headless.
@@ -490,3 +490,35 @@ streams that commit's files into the extension artifact without a working checko
 The temporary repository is removed when packaging finishes or fails. Cancellation
 interrupts fetching and waits for cleanup. SSH, Git submodules, and Git LFS content
 resolution are deferred. The application does not invoke external Git or SSH tools.
+
+## Rust workspace
+
+The repository root contains the Cargo workspace and its shared `Cargo.lock`.
+Build output is written to `target/` at the root.
+
+| Package | Location | Responsibility |
+| --- | --- | --- |
+| `ws-proxy` | `ws-proxy/` | WebSocket relay and reconciliation controller |
+| `control-api` | `control-api/` | HTTP control API, Kubernetes storage, and OpenAPI generation |
+| `diamant` | `diamant/` | Host agent, extension installation, and node processes |
+| `diamant-ui` | `diamant-ui/` | Optional Qt desktop UI for Diamant |
+| `oci-artifact` | `oci-artifact/` | OCI artifact publishing and downloading |
+| `suntitle-core` | `suntitle-core/` | Shared models, Kubernetes resources, and registration protocol |
+
+The proxy, API, and agent depend on `suntitle-core`; they do not depend on one
+another at runtime. Proxy integration tests use `control-api` as a development
+dependency. End-to-end examples remain in `ws-proxy/examples/` and use the
+workspace binaries.
+
+```sh
+cargo build --locked
+cargo test --locked
+cargo run -p control-api --bin control_api -- --help
+cargo run -p control-api --bin generate_openapi
+cargo run -p diamant -- --help
+cargo check -p diamant --features gui
+```
+
+Default workspace commands omit the Qt-only `diamant-ui` package. To build or
+test all headless packages explicitly, use `--workspace --exclude diamant-ui`.
+The optional GUI requires Qt development libraries.
