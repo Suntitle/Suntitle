@@ -17,8 +17,12 @@ env:
 jobs:
   build-release-linux:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     env:
       RUST_BACKTRACE: full
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     strategy:
       fail-fast: true
       matrix:
@@ -41,6 +45,22 @@ jobs:
             --build-arg RUST_IMAGE="$rust_image" \
             --target release-artifacts --output type=local,dest=release-binaries .
 
+      - name: Build runtime image from release binaries
+        id: runtime-image
+        run: |
+          image_name="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Release tag is not a valid container tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          release_revision="$(git rev-parse HEAD)"
+          docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile.binaries \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --label "org.opencontainers.image.revision=$release_revision" \
+            --tag "$image_name:$RELEASE_TAG" release-binaries
+          printf 'name=%s\n' "$image_name" >> "$GITHUB_OUTPUT"
+
       - name: Package
         run: |
           cd release-binaries
@@ -54,6 +74,23 @@ jobs:
           sha256sum ws-proxy.${{ matrix.target.name }}.tar.xz > ws-proxy.${{ matrix.target.name }}.tar.xz.sha256
           sha256sum control-api.${{ matrix.target.name }}.tar.xz > control-api.${{ matrix.target.name }}.tar.xz.sha256
           sha256sum diamant.${{ matrix.target.name }}.tar.xz > diamant.${{ matrix.target.name }}.tar.xz.sha256
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish runtime image
+        env:
+          IMAGE_NAME: ${{ steps.runtime-image.outputs.name }}
+        run: |
+          docker push "$IMAGE_NAME:$RELEASE_TAG"
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            docker tag "$IMAGE_NAME:$RELEASE_TAG" "$IMAGE_NAME:latest"
+            docker push "$IMAGE_NAME:latest"
+          fi
 
       - name: Upload Github Assets
         uses: softprops/action-gh-release@v2

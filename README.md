@@ -533,3 +533,8 @@ docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile \
 
 The build rejects shared libraries and dynamic loaders, then runs each binary's
 `--help`. The optional Qt GUI is excluded from these release artifacts.
+
+The release workflow also publishes `ghcr.io/suntitle/suntitle:<release-tag>`
+from those same compiled binaries. Stable releases update the `latest` image tag;
+prereleases publish only their version tag. The image contains `control_api`,
+`ws-proxy`, and headless `diamant`, and starts `control_api` by default.

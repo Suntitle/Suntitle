@@ -1,0 +1,7 @@
+FROM alpine:3.23
+RUN apk add --no-cache ca-certificates curl bash
+COPY control_api ws-proxy diamant /usr/local/bin/
+RUN control_api --help >/dev/null \
+    && ws-proxy --help >/dev/null \
+    && diamant --help >/dev/null
+CMD ["control_api"]
