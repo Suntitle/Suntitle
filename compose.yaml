@@ -51,6 +51,7 @@ services:
 
   postgres:
     image: postgres:18
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-suntitle}
       POSTGRES_USER: ${POSTGRES_USER:-suntitle}
@@ -131,6 +132,7 @@ services:
 
   api:
     image: suntitle-control:local
+    restart: unless-stopped
     depends_on:
       kubernetes-bootstrap:
         condition: service_completed_successfully
@@ -176,6 +178,7 @@ services:
 
   ws-proxy:
     image: suntitle-control:local
+    restart: unless-stopped
     environment:
       SUNTITLE_EXTENSION_REGISTRY: ${REGISTRY_HOST:-registry.localhost}/suntitle/extensions
       SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP: "true"

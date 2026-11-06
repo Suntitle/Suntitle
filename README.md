@@ -362,83 +362,14 @@ Compose mounts those fixtures into HUB at `/opt/suntitle/example-extensions`.
 The custom-node recipe explicitly depends on `custom-node-fixtures`, which builds
 the E2E binaries and copies the native probe into its retained source directory.
 
-## Run the proxy on AWS with Pulumi
+## Run the Compose stack on AWS with Pulumi
 
-The Pulumi program in `infrastructure/` creates an Amazon Linux EC2 instance and
-a security group, then installs the `ws-proxy` binary from the latest GitHub
-release. It does **not** deploy the Whisper transcriber, translator, microphone
-listener, or subtitle UI.
+The Pulumi setup in `infrastructure/` installs Docker on EC2 and runs the same
+Compose stack used locally. Diamant and audio processing run on client hosts.
 
-In addition to the local prerequisites, this setup needs:
-
-- the Pulumi CLI, logged in to a backend;
-- AWS credentials able to create EC2 instances and security groups; and
-- a GitHub token in `GITHUB_TOKEN` that can read this repository's releases.
-
-The repository's latest GitHub release must contain an asset named exactly:
-
-```text
-ws-proxy.x86_64-unknown-linux-gnu.tar.xz
-```
-
-The archive must extract a `ws-proxy` executable. Provisioning will not produce
-or upload this release asset.
-
-From the repository root, deploy the `dev` stack:
-
-```bash
-export GITHUB_TOKEN="<token>"
-just infra-select
-just infra-preview
-just infra-up
-```
-
-For a new Pulumi backend where the stack does not exist yet, initialize it with
-`just infra-init` instead of selecting it. The checked-in dev configuration
-uses AWS region `eu-north-1`; change it before deployment if needed:
-
-```bash
-just infra-region <region>
-```
-
-Get the proxy address after deployment:
-
-```bash
-just infra-ip
-```
-
-Cloud-init downloads and starts the release after the instance is created. Wait
-until TCP port `3030` accepts connections, then return to the repository root
-and run the local components in separate terminals, replacing `<public-ip>`:
-
-```bash
-just subtitle <public-ip>:3030
-```
-
-```bash
-just translator <public-ip>:3030
-```
-
-```bash
-just transcriber <public-ip>:3030
-```
-
-```bash
-just listener <public-ip>:3030
-```
-
-Port `3030` is currently exposed publicly and uses unencrypted WebSockets
-(`ws://`). Do not send sensitive audio over this deployment without first
-adding transport security and restricting the security-group ingress rules.
-The current Pulumi program also places `GITHUB_TOKEN` in EC2 user data and the
-Pulumi state; use a short-lived, read-only token.
-
-Destroy the AWS resources when they are no longer needed:
-
-```bash
-export GITHUB_TOKEN="<token>"
-just infra-destroy
-```
+Open `http://<public-ip>` after cloud-init finishes. The gateway exposes port 80;
+backing services stay private. See [AWS setup](infrastructure/README.md) for
+deployment commands, credentials, logs, persistent data, and destruction instructions.
 
 ## WebSocket routes
 

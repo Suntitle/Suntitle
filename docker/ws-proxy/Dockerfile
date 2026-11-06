@@ -4,6 +4,7 @@ WORKDIR /build
 ENV CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG=0
 COPY ws-proxy/Cargo.toml ws-proxy/Cargo.lock ./ws-proxy/
 COPY ws-proxy/src ./ws-proxy/src
+COPY ws-proxy/diamant-ui ./ws-proxy/diamant-ui
 COPY oci-artifact/Cargo.toml oci-artifact/README.md ./oci-artifact/
 COPY oci-artifact/src ./oci-artifact/src
 COPY kubernetes ./kubernetes

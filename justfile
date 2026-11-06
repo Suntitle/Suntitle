@@ -233,6 +233,14 @@ infra-region region:
 infra-ip:
     pulumi -C infrastructure stack output publicIp
 
+# Open an SSM shell on the selected stack's instance in its configured AWS region.
+infra-ssh:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    aws_region="$(pulumi -C infrastructure config get aws:region)"
+    instance_id="$(pulumi -C infrastructure stack output instanceId)"
+    exec aws ssm start-session --region "$aws_region" --target "$instance_id"
+
 # Destroy the Pulumi stack's AWS resources.
 infra-destroy:
     pulumi -C infrastructure destroy

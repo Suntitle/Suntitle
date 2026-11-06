@@ -1,92 +1,78 @@
- # AWS Python S3 Bucket Pulumi Template
+# AWS deployment
 
- A minimal Pulumi template for provisioning a single AWS S3 bucket using Python.
+Pulumi installs Docker on Amazon Linux and runs the existing `compose.yaml`.
+Traefik exposes the UI, `/api`, WebSocket routes, and registry on port 80.
+Backing services stay private. Diamant runs on client hosts.
 
- ## Overview
+## Deploy
 
- This template provisions an S3 bucket (`pulumi_aws.s3.BucketV2`) in your AWS account and exports its ID as an output. It’s an ideal starting point when:
-  - You want to learn Pulumi with AWS in Python.
-  - You need a barebones S3 bucket deployment to build upon.
-  - You prefer a minimal template without extra dependencies.
+Requires Pulumi, uv, an AWS login, and a default public subnet in `eu-north-1`.
+For a fresh deployment using local Pulumi state, choose your own stack name
+(`alice-dev` in this example):
 
- ## Prerequisites
+```bash
+pulumi login --local
+just infra-init alice-dev
+just infra-region eu-north-1
+# Export temporary credentials if using aws login.
+eval "$(aws configure export-credentials --profile default --format env)"
+just infra-up
+just infra-ip
+```
 
- - An AWS account with permissions to create S3 buckets.
- - AWS credentials configured in your environment (for example via AWS CLI or environment variables).
- - Python 3.6 or later installed.
- - Pulumi CLI already installed and logged in.
+For an existing stack, use `just infra-select alice-dev` instead of initializing it.
+Replace `alice-dev` with your stack name. `dev` is only the recipes' default.
+Pulumi stores this stack's configuration in `Pulumi.alice-dev.yaml`, including
+its encryption salt. Keep the file and your passphrase backed up; personal stack
+files are ignored by Git. Local deployment state is stored separately under
+`~/.pulumi` and also needs a backup.
 
- ## Getting Started
+Subsequent deployments only need `just infra-up` while AWS credentials remain
+valid. The instance builds images after Pulumi finishes; startup takes time.
+No GitHub token or local Docker is required.
 
- 1. Generate a new project from this template:
-    ```bash
-    pulumi new aws-python
-    ```
- 2. Follow the prompts to set your project name and AWS region (default: `us-east-1`).
- 3. Change into your project directory:
-    ```bash
-    cd <project-name>
-    ```
- 4. Preview the planned changes:
-    ```bash
-    pulumi preview
-    ```
- 5. Deploy the stack:
-    ```bash
-    pulumi up
-    ```
- 6. Tear down when finished:
-    ```bash
-    pulumi destroy
-    ```
+The current checkout's build inputs are uploaded to private S3. Local `.env`
+files, certificates, and extension payloads are excluded. The instance generates
+its own Kubernetes certificates and database password.
 
- ## Project Layout
+## Connect and inspect
 
- After running `pulumi new`, your directory will look like:
- ```
- ├── __main__.py         # Entry point of the Pulumi program
- ├── Pulumi.yaml         # Project metadata and template configuration
- ├── requirements.txt    # Python dependencies
- └── Pulumi.<stack>.yaml # Stack-specific configuration (e.g., Pulumi.dev.yaml)
- ```
+On macOS, install the SSM client once:
 
- ## Configuration
+```bash
+brew install --cask session-manager-plugin
+just infra-ssh
+```
 
- This template defines the following config value:
+On the instance:
 
- - `aws:region` (string)
-   The AWS region to deploy resources into.
-   Default: `us-east-1`
+```bash
+sudo cloud-init status --long
+sudo tail -f /var/log/cloud-init-output.log
+cd /opt/suntitle
+sudo docker compose --env-file .env.local ps -a
+sudo docker compose --env-file .env.local logs --follow
+```
 
- View or update configuration with:
- ```bash
- pulumi config get aws:region
- pulumi config set aws:region us-west-2
- ```
+Open `http://<public-ip>`. Get the registry hostname with
+`pulumi -C infrastructure stack output registryHost`. It defaults to
+`registry.<public-ip>.nip.io`; set `infrastructure:registryHost` to use your DNS.
+Client Diamant uses `--proxy-url ws://<public-ip>/register --artifact-plain-http`.
+The deployment retains the local HTTP/WebSocket exposure and Vite server.
 
- ## Outputs
+## Data and destruction
 
- Once deployed, the stack exports:
+The Elastic IP and protected EBS disk survive instance replacement. Docker data,
+Kubernetes credentials, and extension payloads live under `/srv/suntitle`.
+Source updates replace the instance with downtime. Local extension payloads go
+in `/srv/suntitle/extensions`, mounted at `/opt/suntitle/extensions` in the proxy.
 
- - `bucket_name` — the ID of the created S3 bucket.
+To permanently delete everything, including database and registry data:
 
- Retrieve outputs with:
- ```bash
- pulumi stack output bucket_name
- ```
+```bash
+pulumi -C infrastructure stack --show-urns
+pulumi -C infrastructure state unprotect 'DATA_VOLUME_URN'
+just infra-destroy
+```
 
- ## Next Steps
-
- - Customize `__main__.py` to add or configure additional resources.
- - Explore the Pulumi AWS SDK: https://www.pulumi.com/registry/packages/aws/
- - Break your infrastructure into modules for better organization.
- - Integrate into CI/CD pipelines for automated deployments.
-
- ## Help and Community
-
- If you have questions or need assistance:
- - Pulumi Documentation: https://www.pulumi.com/docs/
- - Community Slack: https://slack.pulumi.com/
- - GitHub Issues: https://github.com/pulumi/pulumi/issues
-
- Contributions and feedback are always welcome!
+Replace `DATA_VOLUME_URN` with the `suntitle-data` EBS volume's URN.
