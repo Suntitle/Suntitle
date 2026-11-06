@@ -24,18 +24,13 @@ FROM sources AS ws-proxy-build
 RUN cargo build --locked --release -p ws-proxy --bin ws-proxy \
     && sh /usr/local/bin/check-static target/release/ws-proxy
 
-FROM sources AS diamant-build
-RUN cargo build --locked --release -p diamant --bin diamant \
-    && sh /usr/local/bin/check-static target/release/diamant
-
 FROM sources AS release
-RUN cargo build --locked --release -p control-api -p ws-proxy -p diamant --bin control_api --bin ws-proxy --bin diamant \
-    && sh /usr/local/bin/check-static target/release/control_api target/release/ws-proxy target/release/diamant
+RUN cargo build --locked --release -p control-api -p ws-proxy --bin control_api --bin ws-proxy \
+    && sh /usr/local/bin/check-static target/release/control_api target/release/ws-proxy
 
 FROM scratch AS release-artifacts
 COPY --from=release /build/target/release/control_api /
 COPY --from=release /build/target/release/ws-proxy /
-COPY --from=release /build/target/release/diamant /
 
 FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates curl bash
@@ -43,10 +38,6 @@ RUN apk add --no-cache ca-certificates curl bash
 FROM runtime AS control-api
 COPY --from=control-api-build /build/target/release/control_api /usr/local/bin/control_api
 CMD ["control_api"]
-
-FROM runtime AS diamant
-COPY --from=diamant-build /build/target/release/diamant /usr/local/bin/diamant
-CMD ["diamant"]
 
 FROM runtime AS ws-proxy
 COPY --from=ws-proxy-build /build/target/release/ws-proxy /usr/local/bin/ws-proxy
