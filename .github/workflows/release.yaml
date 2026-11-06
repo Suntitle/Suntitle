@@ -62,6 +62,11 @@ jobs:
               --label "org.opencontainers.image.revision=$release_revision" \
               --tag "$image_name/$component:$RELEASE_TAG" release-binaries
           done
+          docker build --platform linux/amd64 --file ui/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --label "org.opencontainers.image.revision=$release_revision" \
+            --tag "$image_name/ui:$RELEASE_TAG" ui
           printf 'name=%s\n' "$image_name" >> "$GITHUB_OUTPUT"
 
       - name: Package
@@ -89,7 +94,7 @@ jobs:
         env:
           IMAGE_NAME: ${{ steps.component-images.outputs.name }}
         run: |
-          for component in control-api ws-proxy diamant; do
+          for component in control-api ws-proxy diamant ui; do
             docker push "$IMAGE_NAME/$component:$RELEASE_TAG"
             if [[ "$RELEASE_TAG" != *-* ]]; then
               docker tag "$IMAGE_NAME/$component:$RELEASE_TAG" "$IMAGE_NAME/$component:latest"

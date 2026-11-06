@@ -35,15 +35,7 @@ mkdir -p "$plugin_dir"
 curl -fsSL --retry 5 "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" -o "$plugin_dir/docker-compose"
 curl -fsSL --retry 5 "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64.sha256" -o /tmp/compose.sha256
 printf '%s  %s\n' "$(awk '{print $1}' /tmp/compose.sha256)" "$plugin_dir/docker-compose" | sha256sum -c -
-curl -fsSL --retry 5 "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o "$plugin_dir/docker-buildx"
-curl -fsSL --retry 5 "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/checksums.txt" -o /tmp/buildx.sha256
-buildx_sum="$(awk -v name="buildx-${BUILDX_VERSION}.linux-amd64" '{sub(/^\*/, "", $2)} $2 == name {print $1}' /tmp/buildx.sha256)"
-if [[ ! "$buildx_sum" =~ ^[[:xdigit:]]{64}$ ]]; then
-    echo "Missing or invalid checksum for buildx-${BUILDX_VERSION}.linux-amd64." >&2
-    exit 1
-fi
-printf '%s  %s\n' "$buildx_sum" "$plugin_dir/docker-buildx" | sha256sum -c -
-chmod 755 "$plugin_dir/docker-compose" "$plugin_dir/docker-buildx"
+chmod 755 "$plugin_dir/docker-compose"
 usermod -aG docker ec2-user
 
 mkdir -p /opt/suntitle
@@ -65,8 +57,9 @@ POSTGRES_USER=suntitle
 POSTGRES_PASSWORD=$(cat /srv/suntitle/postgres-password)
 REGISTRY_HOST=${REGISTRY_HOST}
 COMPOSE_FILE=compose.yaml:compose.release.yaml
-SUNTITLE_RELEASE_VERSION=${SUNTITLE_RELEASE_VERSION}
-SUNTITLE_RELEASE_REPOSITORY=${SUNTITLE_RELEASE_REPOSITORY}
+SUNTITLE_API_IMAGE=${SUNTITLE_API_IMAGE}
+SUNTITLE_PROXY_IMAGE=${SUNTITLE_PROXY_IMAGE}
+SUNTITLE_UI_IMAGE=${SUNTITLE_UI_IMAGE}
 LOCAL_EXTENSIONS_DIR=/srv/suntitle/extensions
 CONFIG
 
@@ -74,8 +67,7 @@ bash infrastructure/generate-pki.sh
 # Keep the existing optional fixture mount empty on the deployment host.
 mkdir -p ws-proxy/examples/custom_node_e2e/extensions
 systemctl enable --now docker
-# Install verified release binaries before building the UI.
-docker compose --env-file .env.local build kubernetes-bootstrap ws-proxy
-docker compose --env-file .env.local build ui
-docker compose --env-file .env.local up -d --wait --wait-timeout 300
+# Pull failures MUST stop provisioning before the stack is changed.
+docker compose --env-file .env.local pull
+docker compose --env-file .env.local up --no-build -d --wait --wait-timeout 300
 docker compose --env-file .env.local ps

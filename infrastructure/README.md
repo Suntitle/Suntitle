@@ -31,45 +31,53 @@ Subsequent deployments only need `just infra-up` while AWS credentials remain
 valid. Each `just infra-up` resolves the latest published stable GitHub release.
 Pulumi records the concrete tag in instance user data, so a newer release triggers
 an instance replacement. An unchanged release does not trigger an update.
-The release MUST include `ws-proxy.x86_64-unknown-linux-musl.tar.xz` and
-`control-api.x86_64-unknown-linux-musl.tar.xz`, each with its `.sha256` file.
-The updated release workflow publishes these assets. Older releases without
-an API archive cannot be deployed by this path.
+Pulumi resolves the release tag into images under
+`ghcr.io/suntitle/suntitle`: `control-api:<tag>`, `ws-proxy:<tag>`, and `ui:<tag>`.
+The release workflow publishes these images. The API image also runs Kubernetes
+bootstrap. EC2 pulls images and runs Compose without compiling or building images.
 
-The instance downloads the resolved release from `Suntitle/Suntitle`, verifies
-checksums, and installs each binary in its own Alpine runtime image. The API and
-Kubernetes bootstrap share the control API image; the proxy uses its own image.
-It does not compile Rust. Releases use a musl toolchain in Docker on the
-`ubuntu-latest` GitHub runner. The release build rejects shared-library dependencies
-and dynamic loaders, then checks each executable starts. The headless API, proxy,
-and Diamant binaries do not require glibc. The optional Qt GUI is excluded.
-Use a public fork by setting `infrastructure:releaseRepository` to `owner/repo`.
-No GitHub token or local Docker is required; private release downloads are not
-configured. Missing assets or checksum failures stop provisioning.
+Use `infrastructure:releaseRepository` to select a public fork (`owner/repo`);
+its default image prefix becomes `ghcr.io/owner/repo`. The selected images MUST
+be readable by the instance. Registry authentication is not configured here;
+public GHCR packages permit anonymous pulls.
 
-The current checkout's Compose configuration, installation scripts, and UI build
-inputs are uploaded to private S3. Rust source, local `.env` files, certificates,
-and extension payloads are excluded. The instance builds the UI image and
-creates its own Kubernetes certificates and database password. Startup continues
-after Pulumi finishes; inspect cloud-init to check application readiness.
+For custom image sources, set any of:
 
-Run `just infra-up` to deploy the latest release. Discovery failures or missing
-release assets stop deployment before AWS resources are changed.
-To pin a version or roll back, optionally set a specific tag:
+```bash
+pulumi -C infrastructure config set infrastructure:apiImage registry.example.com/suntitle/api:v2
+pulumi -C infrastructure config set infrastructure:proxyImage registry.example.com/suntitle/proxy:v2
+pulumi -C infrastructure config set infrastructure:uiImage registry.example.com/suntitle/ui:v2
+```
+
+References may use tags or digests (`registry.example.com/image@sha256:...`).
+An override replaces just that component. If all three images are supplied,
+Pulumi skips GitHub discovery and needs no release tag. The `images` stack output
+shows the exact selected references. Custom images MUST support the existing
+Compose commands, ports, health checks, and mounted configuration; API images
+MUST include the `control_api` bootstrap commands.
+
+Run `just infra-up` to select the latest release. To pin a release or roll back:
 
 ```bash
 pulumi -C infrastructure config set infrastructure:releaseVersion v1.2.3
 ```
 
-Remove a previous pin to follow latest again:
+Remove a pin to follow latest again:
 
 ```bash
 pulumi -C infrastructure config rm infrastructure:releaseVersion
 ```
 
-Setting `releaseVersion` to `latest` also enables automatic discovery. Keep the
-checkout's deployment configuration and UI compatible with the selected release.
-Release tags SHOULD remain immutable.
+Setting `releaseVersion` to `latest` also enables discovery. Discovery failures
+stop deployment before AWS resources change; image pull failures stop instance
+provisioning. Mutable custom image tags are pulled on provisioning; changing the
+remote tag alone does not change Pulumi inputs. Use a new tag or digest to trigger
+an instance replacement.
+
+The checkout's Compose configuration and certificate setup are uploaded to private
+S3. Rust/UI source, binary installers, local `.env` files, certificates, and
+extension payloads are excluded. The instance creates its own credentials.
+Startup continues after Pulumi finishes; inspect cloud-init for readiness.
 
 ## Connect and inspect
 

@@ -6,11 +6,15 @@ from pathlib import Path
 import pulumi
 import pulumi_aws as aws
 
-from deployment import build_source_archive, render_user_data, resolve_release
+from deployment import build_source_archive, render_user_data, resolve_images
 
 config = pulumi.Config()
 release_repository = config.get('releaseRepository') or 'Suntitle/Suntitle'
-release_version = resolve_release(config.get('releaseVersion'), release_repository)
+release_version, images = resolve_images(
+    config.get('releaseVersion'), release_repository,
+    api_image=config.get('apiImage'), proxy_image=config.get('proxyImage'),
+    ui_image=config.get('uiImage'),
+)
 region = aws.config.region
 if not region:
     raise ValueError('Set aws:region before deploying.')
@@ -82,8 +86,7 @@ user_data = pulumi.Output.all(
     source_bucket.id, source_object.key, data_volume.id, registry_host,
 ).apply(lambda values: render_user_data(
     bucket=values[0], key=values[1], region=region, volume_id=values[2],
-    registry_host=values[3], compose_version='v5.6.0', buildx_version='v0.38.2',
-    release_version=release_version, release_repository=release_repository,
+    registry_host=values[3], compose_version='v5.6.0', images=images,
 ))
 
 instance = aws.ec2.Instance(
@@ -123,3 +126,5 @@ pulumi.export('dataVolumeId', data_volume.id)
 pulumi.export('sourceDigest', source_digest)
 pulumi.export('releaseVersion', release_version)
 pulumi.export('releaseRepository', release_repository)
+
+pulumi.export('images', images)

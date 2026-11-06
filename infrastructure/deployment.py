@@ -1,8 +1,8 @@
 """Package deployment inputs and render first-boot provisioning.
 
 Pulumi uploads deployment inputs before EC2 starts. Cloud-init waits for the data
-attachment, mounts persistent Docker storage, prepares credentials, installs
-released binaries in separate runtime images, builds the UI image, then starts Compose.
+attachment, mounts persistent Docker storage, prepares credentials, pulls selected
+container images, then starts Compose.
 Container restart policies own subsequent boot recovery. Provisioning failure
 remains visible in cloud-init logs; Pulumi resource creation is not an application
 readiness signal.
@@ -19,15 +19,10 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
-# Only build inputs are eligible. Local environments and credentials MUST stay local.
+# Only deployment inputs are eligible. Local environments and credentials MUST stay local.
 SOURCE_PATHS = (
     'compose.yaml', 'compose.release.yaml', 'docker/distribution/config.yml',
-    'docker/ws-proxy/Dockerfile.release', 'infrastructure/generate-pki.sh',
-    'infrastructure/install-release.sh',
-    'ui/Dockerfile', 'ui/.dockerignore', 'ui/package.json',
-    'ui/package-lock.json', 'ui/index.html', 'ui/vite.config.ts',
-    'ui/tsconfig.json', 'ui/tsconfig.app.json', 'ui/tsconfig.node.json',
-    'ui/src', 'ui/public',
+    'infrastructure/generate-pki.sh',
 )
 
 
@@ -58,16 +53,17 @@ def build_source_archive(root: Path, destination: Path) -> str:
 
 
 def render_user_data(bucket: str, key: str, region: str, volume_id: str,
-                     registry_host: str, compose_version: str, buildx_version: str,
-                     release_version: str, release_repository: str) -> str:
+                     registry_host: str, compose_version: str, images: dict[str, str]) -> str:
     """Render shell-safe cloud-init inputs without embedding local credentials."""
-    validate_release(release_version, release_repository)
+    for component in ('api', 'proxy', 'ui'):
+        validate_image(images[component])
     values = {
         'SOURCE_BUCKET': bucket, 'SOURCE_KEY': key, 'AWS_DEFAULT_REGION': region,
         'DATA_VOLUME_ID': volume_id, 'REGISTRY_HOST': registry_host,
-        'COMPOSE_VERSION': compose_version, 'BUILDX_VERSION': buildx_version,
-        'SUNTITLE_RELEASE_VERSION': release_version,
-        'SUNTITLE_RELEASE_REPOSITORY': release_repository,
+        'COMPOSE_VERSION': compose_version,
+        'SUNTITLE_API_IMAGE': images['api'],
+        'SUNTITLE_PROXY_IMAGE': images['proxy'],
+        'SUNTITLE_UI_IMAGE': images['ui'],
     }
     assignments = '\n'.join(f'export {name}={shlex.quote(value)}' for name, value in values.items())
     script = Path(__file__).with_name('bootstrap.sh').read_text()
@@ -106,12 +102,29 @@ def resolve_release(version: str | None, repository: str) -> str:
     if not isinstance(version, str):
         raise ValueError(f'The latest release of {repository} has no tag_name.')
     validate_release(version, repository)
-    assets = {asset['name'] for asset in release.get('assets', [])}
-    required = {
-        f'{component}.x86_64-unknown-linux-musl.tar.xz{suffix}'
-        for component in ['ws-proxy', 'control-api'] for suffix in ['', '.sha256']
-    }
-    missing = required - assets
-    if missing:
-        raise ValueError(f'Release {version} is missing deployment assets: {", ".join(sorted(missing))}')
     return version
+
+
+def validate_image(image: str) -> None:
+    """Require a Docker reference that is safe in Compose dotenv values."""
+    if not isinstance(image, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@-]*', image) or '://' in image:
+        raise ValueError('Image sources MUST be Docker image references without whitespace or URL schemes.')
+
+
+def resolve_images(version: str | None, repository: str,
+                   api_image: str | None = None, proxy_image: str | None = None,
+                   ui_image: str | None = None) -> tuple[str | None, dict[str, str]]:
+    """Select release images with per-component overrides before AWS resources exist.
+
+    Full overrides MUST skip GitHub discovery. Partial overrides share one resolved
+    release tag for remaining components. The returned tag is None for full overrides.
+    """
+    overrides = {'api': api_image, 'proxy': proxy_image, 'ui': ui_image}
+    for image in overrides.values():
+        if image is not None:
+            validate_image(image)
+    release = resolve_release(version, repository) if None in overrides.values() else None
+    components = {'api': 'control-api', 'proxy': 'ws-proxy', 'ui': 'ui'}
+    images = {name: image if image is not None else f'ghcr.io/{repository.lower()}/{components[name]}:{release}'
+              for name, image in overrides.items()}
+    return release, images

@@ -245,6 +245,9 @@ infra-ssh:
 infra-destroy:
     pulumi -C infrastructure destroy
 
+# Destroy the Pulumi stack through the infra-up/infra-down command pair.
+alias infra-down := infra-destroy
+
 # Install the UI dependencies when they are not already present.
 _ui-dependencies:
     @if [[ ! -x ui/node_modules/.bin/vite ]]; then npm --prefix ui install; fi

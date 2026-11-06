@@ -534,16 +534,17 @@ docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile \
 The build rejects shared libraries and dynamic loaders, then runs each binary's
 `--help`. The optional Qt GUI is excluded from these release artifacts.
 
-The release workflow publishes a separate image for each component from the same
-compiled binaries used in release archives:
+The release workflow publishes separate component images. Rust images use the
+compiled release binaries; the UI image builds from the release checkout:
 
 | Component | Image | Default executable |
 | --- | --- | --- |
 | Control API | `ghcr.io/suntitle/suntitle/control-api:<release-tag>` | `control_api` |
 | WebSocket proxy | `ghcr.io/suntitle/suntitle/ws-proxy:<release-tag>` | `ws-proxy` |
 | Headless Diamant | `ghcr.io/suntitle/suntitle/diamant:<release-tag>` | `diamant` |
+| UI | `ghcr.io/suntitle/suntitle/ui:<release-tag>` | Vite server |
 
 Stable releases update each image's `latest` tag; prereleases publish only their
-version tag. Each image contains its component's executable. The API also serves
+version tag. Each image contains its component's runtime. The API also serves
 Kubernetes bootstrap commands. Local Compose builds the `control-api` and
 `ws-proxy` Docker targets independently.

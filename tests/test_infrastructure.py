@@ -1,6 +1,5 @@
 """Verify deployment packaging, rendered provisioning, and retained PKI identities."""
 
-import hashlib
 import importlib.util
 import io
 import json
@@ -10,7 +9,6 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import sys
 import unittest
 from unittest.mock import patch
 from urllib.error import URLError
@@ -24,30 +22,6 @@ SPEC.loader.exec_module(DEPLOYMENT)
 
 class InfrastructureTest(unittest.TestCase):
     """Exercise deployable artifacts without contacting AWS or starting Docker."""
-
-    def test_buildx_checksum_manifest_formats(self):
-        """Accept SHA-256 binary/text markers and reject missing or invalid entries."""
-        bootstrap = (ROOT / 'infrastructure/bootstrap.sh').read_text()
-        start = bootstrap.index('buildx_sum=')
-        end = bootstrap.index("printf '%s  %s", start)
-        parser = bootstrap[start:end].replace('/tmp/buildx.sha256', '"$1"')
-        script = 'set -euo pipefail\nBUILDX_VERSION=v0.38.2\n' + parser + 'printf "%s" "$buildx_sum"'
-        digest = '7992ec09413b80ff57ba4e081f56fc833d7bac1d5e71143c6c809e7e6065f6d6'
-        with tempfile.TemporaryDirectory() as temporary:
-            manifest = Path(temporary) / 'checksums.txt'
-            for marker in ['*', '']:
-                with self.subTest(marker=marker):
-                    manifest.write_text(f'{digest} {marker}buildx-v0.38.2.linux-amd64\n')
-                    result = subprocess.run(['bash', '-c', script, 'checksum-test', str(manifest)],
-                                            check=True, capture_output=True, text=True)
-                    self.assertEqual(result.stdout, digest)
-            for entry in ['other-artifact', 'bad-hash *buildx-v0.38.2.linux-amd64']:
-                with self.subTest(entry=entry):
-                    manifest.write_text(entry + '\n')
-                    result = subprocess.run(['bash', '-c', script, 'checksum-test', str(manifest)],
-                                            capture_output=True, text=True)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('Missing or invalid checksum', result.stderr)
 
     def test_archive_excludes_credentials_and_build_outputs(self):
         """Only eligible source files enter the reproducible deployment archive."""
@@ -77,27 +51,26 @@ class InfrastructureTest(unittest.TestCase):
             self.assertEqual(digest, DEPLOYMENT.build_source_archive(root, second))
             with tarfile.open(first) as archive:
                 self.assertEqual(set(archive.getnames()), {
-                    'compose.yaml', 'compose.release.yaml', 'ui/src/main.tsx',
-                    'docker/ws-proxy/Dockerfile.release', 'infrastructure/install-release.sh',
+                    'compose.yaml', 'compose.release.yaml',
                 })
             (root / 'ui/src/main.tsx').write_text('updated')
+            self.assertEqual(digest, DEPLOYMENT.build_source_archive(root, second))
+            (root / 'compose.release.yaml').write_text('updated')
             self.assertNotEqual(digest, DEPLOYMENT.build_source_archive(root, second))
 
     def test_latest_release_discovery_and_explicit_override(self):
         """Resolve fresh tags, bypass discovery for pins, and fail on unusable releases."""
-        assets = [{'name': f'{component}.x86_64-unknown-linux-musl.tar.xz{suffix}'}
-                  for component in ['ws-proxy', 'control-api'] for suffix in ['', '.sha256']]
         for requested, tag in [(None, 'v1.2.3'), ('latest', 'v1.2.4')]:
             with self.subTest(requested=requested), patch.object(DEPLOYMENT, 'urlopen') as lookup:
                 lookup.return_value.__enter__.return_value = io.StringIO(
-                    json.dumps({'tag_name': tag, 'assets': assets}))
+                    json.dumps({'tag_name': tag}))
                 self.assertEqual(DEPLOYMENT.resolve_release(requested, 'owner/repo'), tag)
                 request = lookup.call_args.args[0]
                 self.assertEqual(request.full_url, 'https://api.github.com/repos/owner/repo/releases/latest')
         with patch.object(DEPLOYMENT, 'urlopen') as lookup:
             self.assertEqual(DEPLOYMENT.resolve_release('v1.0.0', 'owner/repo'), 'v1.0.0')
             lookup.assert_not_called()
-        for payload in [{'tag_name': 'v1.2.3', 'assets': []}, {}, {'tag_name': 'main'}]:
+        for payload in [{}, {'tag_name': 'main'}]:
             with self.subTest(payload=payload), patch.object(DEPLOYMENT, 'urlopen') as lookup:
                 lookup.return_value.__enter__.return_value = io.StringIO(json.dumps(payload))
                 with self.assertRaises(ValueError):
@@ -107,49 +80,92 @@ class InfrastructureTest(unittest.TestCase):
                 DEPLOYMENT.resolve_release(None, 'owner/repo')
 
     def test_release_configuration_and_rendered_bootstrap(self):
-        """Require pinned releases and render a valid script selecting the release overlay."""
+        """Render selected images safely and require pulls without instance-side builds."""
         arguments = dict(bucket='source-bucket', key='digest.tar.gz', region='eu-north-1',
                          volume_id='vol-123', registry_host='registry.example.com',
-                         compose_version='v5.6.0', buildx_version='v0.38.2',
-                         release_version='v1.2.3-rc.1', release_repository='owner/Suntitle')
+                         compose_version='v5.6.0', images={'api': 'example/api:v2',
+                         'proxy': 'example/proxy:v2', 'ui': 'example/ui:v2'})
         script = DEPLOYMENT.render_user_data(**arguments)
         subprocess.run(['bash', '-n'], input=script, text=True, check=True)
-        self.assertIn('export SUNTITLE_RELEASE_VERSION=v1.2.3-rc.1', script)
-        self.assertIn('export SUNTITLE_RELEASE_REPOSITORY=owner/Suntitle', script)
+        self.assertIn('export SUNTITLE_API_IMAGE=example/api:v2', script)
+        self.assertIn('docker compose --env-file .env.local pull', script)
+        self.assertIn('up --no-build', script)
+        self.assertNotIn('docker compose --env-file .env.local build', script)
         self.assertIn('COMPOSE_FILE=compose.yaml:compose.release.yaml', script)
-        for version in ['', 'latest', 'main', 'v1/other', 'v1\nmalformed']:
-            with self.subTest(version=version), self.assertRaises(ValueError):
-                DEPLOYMENT.render_user_data(**(arguments | {'release_version': version}))
-        for repository in ['https://github.com/owner/repo', 'owner/repo/extra', 'owner/repo?query']:
-            with self.subTest(repository=repository), self.assertRaises(ValueError):
-                DEPLOYMENT.render_user_data(**(arguments | {'release_repository': repository}))
+        for image in ['', 'https://registry/image', 'image\nINJECTED=x', 'image${VALUE}', 'image name', 'image#comment']:
+            with self.subTest(image=image), self.assertRaises(ValueError):
+                DEPLOYMENT.render_user_data(**(arguments | {'images': arguments['images'] | {'api': image}}))
+
+    def test_pull_failure_stops_stack_start(self):
+        """Pull failure MUST prevent startup; successful pulls MUST use --no-build."""
+        bootstrap = (ROOT / 'infrastructure/bootstrap.sh').read_text()
+        script = 'set -e\n' + bootstrap[bootstrap.index('docker compose --env-file .env.local pull'):]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docker = root / 'docker'
+            docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALLS"\n'
+                              'case "$*" in *" pull") exit "$PULL_EXIT" ;; esac\n')
+            docker.chmod(0o755)
+            calls = root / 'calls'
+            for exit_code in [0, 1]:
+                with self.subTest(exit_code=exit_code):
+                    calls.write_text('')
+                    environment = os.environ | {'PATH': str(root) + os.pathsep + os.environ['PATH'],
+                                                'DOCKER_CALLS': str(calls), 'PULL_EXIT': str(exit_code)}
+                    result = subprocess.run(['bash', '-c', script], env=environment, capture_output=True)
+                    self.assertEqual(result.returncode, exit_code)
+                    commands = calls.read_text().splitlines()
+                    self.assertEqual(len(commands), 3 if exit_code == 0 else 1)
+                    if exit_code == 0:
+                        self.assertIn('up --no-build', commands[1])
+
+    def test_image_overrides_and_release_defaults(self):
+        """Resolve missing images once; full overrides MUST work without GitHub."""
+        digest = 'registry.example/api@sha256:' + 'a' * 64
+        with patch.object(DEPLOYMENT, 'resolve_release', return_value='v1.2.3') as lookup:
+            version, images = DEPLOYMENT.resolve_images(None, 'Suntitle/Suntitle')
+            self.assertEqual(version, 'v1.2.3')
+            self.assertEqual(images, {'api': 'ghcr.io/suntitle/suntitle/control-api:v1.2.3',
+                                     'proxy': 'ghcr.io/suntitle/suntitle/ws-proxy:v1.2.3',
+                                     'ui': 'ghcr.io/suntitle/suntitle/ui:v1.2.3'})
+            lookup.assert_called_once_with(None, 'Suntitle/Suntitle')
+        with patch.object(DEPLOYMENT, 'resolve_release', return_value='v2') as lookup:
+            _, images = DEPLOYMENT.resolve_images('v2', 'owner/fork', api_image=digest)
+            self.assertEqual(images['api'], digest)
+            self.assertEqual(images['proxy'], 'ghcr.io/owner/fork/ws-proxy:v2')
+            lookup.assert_called_once()
+        with patch.object(DEPLOYMENT, 'urlopen') as lookup:
+            version, images = DEPLOYMENT.resolve_images(None, 'Suntitle/Suntitle',
+                api_image=digest, proxy_image='custom/proxy:latest', ui_image='custom/ui:v3')
+            self.assertIsNone(version)
+            self.assertEqual(images, {'api': digest, 'proxy': 'custom/proxy:latest', 'ui': 'custom/ui:v3'})
+            lookup.assert_not_called()
+        with patch.object(DEPLOYMENT, 'urlopen') as lookup:
+            with self.assertRaises(ValueError):
+                DEPLOYMENT.resolve_images(None, 'Suntitle/Suntitle', api_image='image\nINJECTED=true')
+            lookup.assert_not_called()
 
     @unittest.skipUnless(shutil.which('docker'), 'Docker Compose is required')
     def test_compose_release_overlay_uses_runtime_image(self):
         """Resolve deployment Compose without inheriting the Rust source Dockerfile."""
         environment = {key: value for key, value in os.environ.items()
-                       if key not in {'COMPOSE_FILE', 'SUNTITLE_RELEASE_VERSION',
-                                      'SUNTITLE_RELEASE_REPOSITORY'}}
+                       if key not in {'COMPOSE_FILE', 'SUNTITLE_API_IMAGE', 'SUNTITLE_PROXY_IMAGE', 'SUNTITLE_UI_IMAGE'}}
         with tempfile.TemporaryDirectory() as temporary:
             dotenv = Path(temporary) / '.env.local'
             dotenv.write_text(f'COMPOSE_FILE={ROOT}/compose.yaml:{ROOT}/compose.release.yaml\n'
-                              'SUNTITLE_RELEASE_VERSION=v1.2.3\n'
-                              'SUNTITLE_RELEASE_REPOSITORY=owner/repo\n')
+                              'SUNTITLE_API_IMAGE=custom/api:v1\n'
+                              'SUNTITLE_PROXY_IMAGE=custom/proxy:v2\n'
+                              'SUNTITLE_UI_IMAGE=custom/ui:v3\n')
             output = subprocess.check_output([
                 'docker', 'compose', '--env-file', str(dotenv), 'config', '--format', 'json',
             ], cwd=ROOT, env=environment, text=True)
         services = json.loads(output)['services']
-        build = services['kubernetes-bootstrap']['build']
-        self.assertEqual(build['dockerfile'], 'docker/ws-proxy/Dockerfile.release')
-        self.assertEqual(build['args']['SUNTITLE_RELEASE_VERSION'], 'v1.2.3')
-        self.assertEqual(build['args']['SUNTITLE_RELEASE_REPOSITORY'], 'owner/repo')
-        self.assertEqual(build['target'], 'control-api')
-        for service in ['kubernetes-bootstrap', 'api']:
-            self.assertEqual(services[service]['image'], 'suntitle-control-api:v1.2.3')
-        proxy = services['ws-proxy']
-        self.assertEqual(proxy['image'], 'suntitle-ws-proxy:v1.2.3')
-        self.assertEqual(proxy['build']['dockerfile'], 'docker/ws-proxy/Dockerfile.release')
-        self.assertEqual(proxy['build']['target'], 'ws-proxy')
+        self.assertEqual(services['kubernetes-bootstrap']['image'], 'custom/api:v1')
+        self.assertEqual(services['api']['image'], 'custom/api:v1')
+        self.assertEqual(services['ws-proxy']['image'], 'custom/proxy:v2')
+        self.assertEqual(services['ui']['image'], 'custom/ui:v3')
+        for service in services.values():
+            self.assertNotIn('build', service)
         local = json.loads(subprocess.check_output([
             'docker', 'compose', '--env-file', '/dev/null', '-f', 'compose.yaml',
             'config', '--format', 'json',
@@ -158,69 +174,6 @@ class InfrastructureTest(unittest.TestCase):
         self.assertEqual(local['ws-proxy']['build']['target'], 'ws-proxy')
         self.assertEqual(local['api']['image'], 'suntitle-control-api:local')
         self.assertEqual(local['ws-proxy']['image'], 'suntitle-ws-proxy:local')
-        self.assertEqual(services['ui']['build']['context'], str(ROOT / 'ui'))
-
-    @unittest.skipUnless(shutil.which('sha256sum'), 'sha256sum is required')
-    def test_release_installer_verifies_both_archives_before_installing(self):
-        """Install mock release executables and reject corrupt, absent, or mismatched assets."""
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            fixtures = root / 'fixtures'
-            fixtures.mkdir()
-            tools = root / 'tools'
-            tools.mkdir()
-            curl = tools / 'curl'
-            curl.write_text(f'#!{sys.executable}\n' +
-                            'import os, pathlib, shutil, sys\n'
-                            'args = sys.argv[1:]\n'
-                            'url = args[args.index("-o") - 1]\n'
-                            'assert url.startswith("https://github.com/owner/repo/releases/download/v1.2.3/")\n'
-                            'shutil.copyfile(pathlib.Path(os.environ["RELEASE_FIXTURES"]) / url.rsplit("/", 1)[1], args[args.index("-o") + 1])\n')
-            curl.chmod(0o755)
-            for component, binary in [('ws-proxy', 'ws-proxy'), ('control-api', 'control_api'), ('diamant', 'diamant')]:
-                archive = fixtures / f'{component}.x86_64-unknown-linux-musl.tar.xz'
-                payload = b'#!/bin/sh\nprintf "release executable\\n"\n'
-                with tarfile.open(archive, 'w:xz') as output:
-                    info = tarfile.TarInfo(binary)
-                    info.size = len(payload)
-                    info.mode = 0o755
-                    output.addfile(info, io.BytesIO(payload))
-                digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-                archive.with_suffix('.xz.sha256').write_text(f'{digest}  {archive.name}\n')
-            environment = os.environ | {'PATH': str(tools) + os.pathsep + os.environ['PATH'],
-                                        'RELEASE_FIXTURES': str(fixtures)}
-            destination = root / 'installed'
-            command = ['bash', str(ROOT / 'infrastructure/install-release.sh'),
-                       'v1.2.3', 'owner/repo', str(destination)]
-            subprocess.run(command, env=environment, check=True, capture_output=True)
-            for binary in ['ws-proxy', 'control_api']:
-                output = subprocess.check_output([str(destination / binary)], text=True)
-                self.assertEqual(output, 'release executable\n')
-            shutil.rmtree(destination)
-            for component, binary in [('control-api', 'control_api'), ('ws-proxy', 'ws-proxy'), ('diamant', 'diamant')]:
-                with self.subTest(component=component):
-                    subprocess.run(command + [component], env=environment, check=True, capture_output=True)
-                    self.assertEqual({path.name for path in destination.iterdir()}, {binary})
-                    shutil.rmtree(destination)
-            result = subprocess.run(command + ['unknown'], env=environment, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(destination.exists())
-            archive = fixtures / 'control-api.x86_64-unknown-linux-musl.tar.xz'
-            original = archive.read_bytes()
-            archive.write_bytes(original + b'corrupt')
-            result = subprocess.run(command, env=environment, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(destination.exists())
-            archive.write_bytes(original)
-            checksum = archive.with_suffix('.xz.sha256')
-            checksum.write_text('0' * 64 + '  wrong-archive.tar.xz\n')
-            result = subprocess.run(command, env=environment, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(destination.exists())
-            checksum.unlink()
-            result = subprocess.run(command, env=environment, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(destination.exists())
 
     def test_static_binary_checks_reject_dependencies_and_loaders(self):
         """Reject dynamic ELF requirements and inspection or startup failures."""
