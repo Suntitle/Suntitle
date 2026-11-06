@@ -69,7 +69,7 @@ resources, stop `just local-stack`, then run `just db-drop-volume`. The next
 After generating certificates and kubeconfigs, the container stack can also run on its own:
 
 ```bash
-docker compose --env-file .env.local build kubernetes-bootstrap ui
+docker compose --env-file .env.local build kubernetes-bootstrap ws-proxy ui
 docker compose --env-file .env.local up -d --wait
 ```
 
@@ -534,7 +534,16 @@ docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile \
 The build rejects shared libraries and dynamic loaders, then runs each binary's
 `--help`. The optional Qt GUI is excluded from these release artifacts.
 
-The release workflow also publishes `ghcr.io/suntitle/suntitle:<release-tag>`
-from those same compiled binaries. Stable releases update the `latest` image tag;
-prereleases publish only their version tag. The image contains `control_api`,
-`ws-proxy`, and headless `diamant`, and starts `control_api` by default.
+The release workflow publishes a separate image for each component from the same
+compiled binaries used in release archives:
+
+| Component | Image | Default executable |
+| --- | --- | --- |
+| Control API | `ghcr.io/suntitle/suntitle/control-api:<release-tag>` | `control_api` |
+| WebSocket proxy | `ghcr.io/suntitle/suntitle/ws-proxy:<release-tag>` | `ws-proxy` |
+| Headless Diamant | `ghcr.io/suntitle/suntitle/diamant:<release-tag>` | `diamant` |
+
+Stable releases update each image's `latest` tag; prereleases publish only their
+version tag. Each image contains its component's executable. The API also serves
+Kubernetes bootstrap commands. Local Compose builds the `control-api` and
+`ws-proxy` Docker targets independently.

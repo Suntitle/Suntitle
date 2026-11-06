@@ -143,8 +143,21 @@ class InfrastructureTest(unittest.TestCase):
         self.assertEqual(build['dockerfile'], 'docker/ws-proxy/Dockerfile.release')
         self.assertEqual(build['args']['SUNTITLE_RELEASE_VERSION'], 'v1.2.3')
         self.assertEqual(build['args']['SUNTITLE_RELEASE_REPOSITORY'], 'owner/repo')
-        for service in ['kubernetes-bootstrap', 'api', 'ws-proxy']:
-            self.assertEqual(services[service]['image'], 'suntitle-control:v1.2.3')
+        self.assertEqual(build['target'], 'control-api')
+        for service in ['kubernetes-bootstrap', 'api']:
+            self.assertEqual(services[service]['image'], 'suntitle-control-api:v1.2.3')
+        proxy = services['ws-proxy']
+        self.assertEqual(proxy['image'], 'suntitle-ws-proxy:v1.2.3')
+        self.assertEqual(proxy['build']['dockerfile'], 'docker/ws-proxy/Dockerfile.release')
+        self.assertEqual(proxy['build']['target'], 'ws-proxy')
+        local = json.loads(subprocess.check_output([
+            'docker', 'compose', '--env-file', '/dev/null', '-f', 'compose.yaml',
+            'config', '--format', 'json',
+        ], cwd=ROOT, env=environment, text=True))['services']
+        self.assertEqual(local['kubernetes-bootstrap']['build']['target'], 'control-api')
+        self.assertEqual(local['ws-proxy']['build']['target'], 'ws-proxy')
+        self.assertEqual(local['api']['image'], 'suntitle-control-api:local')
+        self.assertEqual(local['ws-proxy']['image'], 'suntitle-ws-proxy:local')
         self.assertEqual(services['ui']['build']['context'], str(ROOT / 'ui'))
 
     @unittest.skipUnless(shutil.which('sha256sum'), 'sha256sum is required')
@@ -164,7 +177,7 @@ class InfrastructureTest(unittest.TestCase):
                             'assert url.startswith("https://github.com/owner/repo/releases/download/v1.2.3/")\n'
                             'shutil.copyfile(pathlib.Path(os.environ["RELEASE_FIXTURES"]) / url.rsplit("/", 1)[1], args[args.index("-o") + 1])\n')
             curl.chmod(0o755)
-            for component, binary in [('ws-proxy', 'ws-proxy'), ('control-api', 'control_api')]:
+            for component, binary in [('ws-proxy', 'ws-proxy'), ('control-api', 'control_api'), ('diamant', 'diamant')]:
                 archive = fixtures / f'{component}.x86_64-unknown-linux-musl.tar.xz'
                 payload = b'#!/bin/sh\nprintf "release executable\\n"\n'
                 with tarfile.open(archive, 'w:xz') as output:
@@ -184,6 +197,14 @@ class InfrastructureTest(unittest.TestCase):
                 output = subprocess.check_output([str(destination / binary)], text=True)
                 self.assertEqual(output, 'release executable\n')
             shutil.rmtree(destination)
+            for component, binary in [('control-api', 'control_api'), ('ws-proxy', 'ws-proxy'), ('diamant', 'diamant')]:
+                with self.subTest(component=component):
+                    subprocess.run(command + [component], env=environment, check=True, capture_output=True)
+                    self.assertEqual({path.name for path in destination.iterdir()}, {binary})
+                    shutil.rmtree(destination)
+            result = subprocess.run(command + ['unknown'], env=environment, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(destination.exists())
             archive = fixtures / 'control-api.x86_64-unknown-linux-musl.tar.xz'
             original = archive.read_bytes()
             archive.write_bytes(original + b'corrupt')

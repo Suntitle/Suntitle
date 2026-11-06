@@ -109,7 +109,8 @@ services:
     build:
       context: .
       dockerfile: docker/ws-proxy/Dockerfile
-    image: suntitle-control:local
+      target: control-api
+    image: suntitle-control-api:local
     depends_on:
       kube-apiserver:
         condition: service_started
@@ -131,7 +132,7 @@ services:
       - control-plane
 
   api:
-    image: suntitle-control:local
+    image: suntitle-control-api:local
     restart: unless-stopped
     depends_on:
       kubernetes-bootstrap:
@@ -177,7 +178,11 @@ services:
       - control-plane
 
   ws-proxy:
-    image: suntitle-control:local
+    build:
+      context: .
+      dockerfile: docker/ws-proxy/Dockerfile
+      target: ws-proxy
+    image: suntitle-ws-proxy:local
     restart: unless-stopped
     environment:
       SUNTITLE_EXTENSION_REGISTRY: ${REGISTRY_HOST:-registry.localhost}/suntitle/extensions

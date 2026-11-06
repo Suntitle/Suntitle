@@ -1,10 +1,17 @@
-FROM alpine:3.23
+FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates curl bash xz
 ARG SUNTITLE_RELEASE_VERSION
 ARG SUNTITLE_RELEASE_REPOSITORY
 COPY infrastructure/install-release.sh /tmp/install-release.sh
-RUN bash /tmp/install-release.sh "$SUNTITLE_RELEASE_VERSION" "$SUNTITLE_RELEASE_REPOSITORY" /usr/local/bin \
+
+FROM runtime AS control-api
+RUN bash /tmp/install-release.sh "$SUNTITLE_RELEASE_VERSION" "$SUNTITLE_RELEASE_REPOSITORY" /usr/local/bin control-api \
     && control_api --help >/dev/null \
-    && ws-proxy --help >/dev/null \
     && rm /tmp/install-release.sh
 CMD ["control_api"]
+
+FROM runtime AS ws-proxy
+RUN bash /tmp/install-release.sh "$SUNTITLE_RELEASE_VERSION" "$SUNTITLE_RELEASE_REPOSITORY" /usr/local/bin ws-proxy \
+    && ws-proxy --help >/dev/null \
+    && rm /tmp/install-release.sh
+CMD ["ws-proxy"]

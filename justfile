@@ -84,7 +84,7 @@ _local-infra-up: db-env
         fi
     done
     bash scripts/generate-kubeconfigs.sh
-    docker compose --env-file .env.local build kubernetes-bootstrap ui
+    docker compose --env-file .env.local build kubernetes-bootstrap ws-proxy ui
     docker compose --env-file .env.local up -d --wait --wait-timeout 180
 
 # Start Kubernetes and install resource contracts for local applications and E2Es.

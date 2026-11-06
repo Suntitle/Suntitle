@@ -1,14 +1,18 @@
-# Deployment uses release binaries. Local Compose keeps its source build.
+# Deployment uses separate component images built from release binaries.
 services:
   kubernetes-bootstrap:
-    build:
+    build: &release-build
       context: .
       dockerfile: docker/ws-proxy/Dockerfile.release
+      target: control-api
       args:
         SUNTITLE_RELEASE_VERSION: ${SUNTITLE_RELEASE_VERSION:?Set a pinned Suntitle release tag}
         SUNTITLE_RELEASE_REPOSITORY: ${SUNTITLE_RELEASE_REPOSITORY:?Set the GitHub release repository}
-    image: suntitle-control:${SUNTITLE_RELEASE_VERSION}
+    image: suntitle-control-api:${SUNTITLE_RELEASE_VERSION}
   api:
-    image: suntitle-control:${SUNTITLE_RELEASE_VERSION}
+    image: suntitle-control-api:${SUNTITLE_RELEASE_VERSION}
   ws-proxy:
-    image: suntitle-control:${SUNTITLE_RELEASE_VERSION}
+    build:
+      <<: *release-build
+      target: ws-proxy
+    image: suntitle-ws-proxy:${SUNTITLE_RELEASE_VERSION}

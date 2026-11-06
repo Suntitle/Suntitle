@@ -45,8 +45,8 @@ jobs:
             --build-arg RUST_IMAGE="$rust_image" \
             --target release-artifacts --output type=local,dest=release-binaries .
 
-      - name: Build runtime image from release binaries
-        id: runtime-image
+      - name: Build component images from release binaries
+        id: component-images
         run: |
           image_name="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           if [[ ! "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
@@ -54,11 +54,14 @@ jobs:
             exit 1
           fi
           release_revision="$(git rev-parse HEAD)"
-          docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile.binaries \
-            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-            --label "org.opencontainers.image.version=$RELEASE_TAG" \
-            --label "org.opencontainers.image.revision=$release_revision" \
-            --tag "$image_name:$RELEASE_TAG" release-binaries
+          for component in control-api ws-proxy diamant; do
+            docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile.binaries \
+              --target "$component" \
+              --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+              --label "org.opencontainers.image.version=$RELEASE_TAG" \
+              --label "org.opencontainers.image.revision=$release_revision" \
+              --tag "$image_name/$component:$RELEASE_TAG" release-binaries
+          done
           printf 'name=%s\n' "$image_name" >> "$GITHUB_OUTPUT"
 
       - name: Package
@@ -82,15 +85,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish runtime image
+      - name: Publish component images
         env:
-          IMAGE_NAME: ${{ steps.runtime-image.outputs.name }}
+          IMAGE_NAME: ${{ steps.component-images.outputs.name }}
         run: |
-          docker push "$IMAGE_NAME:$RELEASE_TAG"
-          if [[ "$RELEASE_TAG" != *-* ]]; then
-            docker tag "$IMAGE_NAME:$RELEASE_TAG" "$IMAGE_NAME:latest"
-            docker push "$IMAGE_NAME:latest"
-          fi
+          for component in control-api ws-proxy diamant; do
+            docker push "$IMAGE_NAME/$component:$RELEASE_TAG"
+            if [[ "$RELEASE_TAG" != *-* ]]; then
+              docker tag "$IMAGE_NAME/$component:$RELEASE_TAG" "$IMAGE_NAME/$component:latest"
+              docker push "$IMAGE_NAME/$component:latest"
+            fi
+          done
 
       - name: Upload Github Assets
         uses: softprops/action-gh-release@v2

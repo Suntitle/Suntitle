@@ -75,7 +75,7 @@ bash infrastructure/generate-pki.sh
 mkdir -p ws-proxy/examples/custom_node_e2e/extensions
 systemctl enable --now docker
 # Install verified release binaries before building the UI.
-docker compose --env-file .env.local build kubernetes-bootstrap
+docker compose --env-file .env.local build kubernetes-bootstrap ws-proxy
 docker compose --env-file .env.local build ui
 docker compose --env-file .env.local up -d --wait --wait-timeout 300
 docker compose --env-file .env.local ps

@@ -2,7 +2,7 @@
 
 Pulumi uploads deployment inputs before EC2 starts. Cloud-init waits for the data
 attachment, mounts persistent Docker storage, prepares credentials, installs
-released binaries in a runtime image, builds the UI image, then starts Compose.
+released binaries in separate runtime images, builds the UI image, then starts Compose.
 Container restart policies own subsequent boot recovery. Provisioning failure
 remains visible in cloud-init logs; Pulumi resource creation is not an application
 readiness signal.

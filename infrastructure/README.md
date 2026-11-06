@@ -37,7 +37,8 @@ The updated release workflow publishes these assets. Older releases without
 an API archive cannot be deployed by this path.
 
 The instance downloads the resolved release from `Suntitle/Suntitle`, verifies
-both checksums, and installs the binaries in an Alpine runtime image.
+checksums, and installs each binary in its own Alpine runtime image. The API and
+Kubernetes bootstrap share the control API image; the proxy uses its own image.
 It does not compile Rust. Releases use a musl toolchain in Docker on the
 `ubuntu-latest` GitHub runner. The release build rejects shared-library dependencies
 and dynamic loaders, then checks each executable starts. The headless API, proxy,

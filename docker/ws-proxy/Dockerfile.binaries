@@ -1,7 +1,17 @@
-FROM alpine:3.23
+FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates curl bash
-COPY control_api ws-proxy diamant /usr/local/bin/
-RUN control_api --help >/dev/null \
-    && ws-proxy --help >/dev/null \
-    && diamant --help >/dev/null
+
+FROM runtime AS control-api
+COPY control_api /usr/local/bin/control_api
+RUN control_api --help >/dev/null
 CMD ["control_api"]
+
+FROM runtime AS diamant
+COPY diamant /usr/local/bin/diamant
+RUN diamant --help >/dev/null
+CMD ["diamant"]
+
+FROM runtime AS ws-proxy
+COPY ws-proxy /usr/local/bin/ws-proxy
+RUN ws-proxy --help >/dev/null
+CMD ["ws-proxy"]
