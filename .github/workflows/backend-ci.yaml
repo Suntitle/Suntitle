@@ -135,7 +135,7 @@ jobs:
         run: docker compose down --volumes --remove-orphans
 
   check-gui:
-    name: Optional Diamant GUI
+    name: Diamant GUI (default build)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -147,13 +147,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install Qt development packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lld qt6-base-dev qt6-declarative-dev
-
-      - name: Check GUI build
-        run: cargo check --locked -p diamant --bin diamant --features gui
+      - name: Check default GUI build
+        run: cargo check --locked -p diamant --bin diamant
 
   check-python:
     name: Python mock API and node CLI tests

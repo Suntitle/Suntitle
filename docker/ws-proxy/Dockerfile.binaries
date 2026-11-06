@@ -6,11 +6,6 @@ COPY control_api /usr/local/bin/control_api
 RUN control_api --help >/dev/null
 CMD ["control_api"]
 
-FROM runtime AS diamant
-COPY diamant /usr/local/bin/diamant
-RUN diamant --help >/dev/null
-CMD ["diamant"]
-
 FROM runtime AS ws-proxy
 COPY ws-proxy /usr/local/bin/ws-proxy
 RUN ws-proxy --help >/dev/null

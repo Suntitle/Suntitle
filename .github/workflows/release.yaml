@@ -15,7 +15,65 @@ env:
   RUST_TOOLCHAIN: stable
 
 jobs:
-  build-release-linux:
+  build-diamant:
+    name: Diamant release (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            source: target/release/diamant
+            asset: diamant.linux-x86_64
+            rustflags: ""
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            source: target/release/diamant.exe
+            asset: diamant.windows-x86_64.exe
+            rustflags: -C target-feature=+crt-static
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            source: target/release/diamant
+            asset: diamant.macos-aarch64
+            rustflags: ""
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            source: target/release/diamant
+            asset: diamant.macos-x86_64
+            rustflags: ""
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Select Rust toolchain
+        run: rustup override set "$RUST_TOOLCHAIN"
+        shell: bash
+
+      - name: Build primary Diamant executable
+        run: cargo build --locked --release -p diamant --bin diamant
+        shell: bash
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+
+      - name: Prepare release asset
+        run: cp "${{ matrix.source }}" "${{ matrix.asset }}"
+        shell: bash
+
+      - name: Upload primary Diamant executable
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: ${{ matrix.asset }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+
+  build-server-release-linux:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -54,7 +112,7 @@ jobs:
             exit 1
           fi
           release_revision="$(git rev-parse HEAD)"
-          for component in control-api ws-proxy diamant; do
+          for component in control-api ws-proxy; do
             docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile.binaries \
               --target "$component" \
               --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
@@ -74,14 +132,12 @@ jobs:
           cd release-binaries
           tar -cJf ws-proxy.${{ matrix.target.name }}.tar.xz ws-proxy
           tar -cJf control-api.${{ matrix.target.name }}.tar.xz control_api
-          tar -cJf diamant.${{ matrix.target.name }}.tar.xz diamant
 
       - name: Generate checksums
         run: |
           cd release-binaries
           sha256sum ws-proxy.${{ matrix.target.name }}.tar.xz > ws-proxy.${{ matrix.target.name }}.tar.xz.sha256
           sha256sum control-api.${{ matrix.target.name }}.tar.xz > control-api.${{ matrix.target.name }}.tar.xz.sha256
-          sha256sum diamant.${{ matrix.target.name }}.tar.xz > diamant.${{ matrix.target.name }}.tar.xz.sha256
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -94,7 +150,7 @@ jobs:
         env:
           IMAGE_NAME: ${{ steps.component-images.outputs.name }}
         run: |
-          for component in control-api ws-proxy diamant ui; do
+          for component in control-api ws-proxy ui; do
             docker push "$IMAGE_NAME/$component:$RELEASE_TAG"
             if [[ "$RELEASE_TAG" != *-* ]]; then
               docker tag "$IMAGE_NAME/$component:$RELEASE_TAG" "$IMAGE_NAME/$component:latest"
@@ -110,5 +166,85 @@ jobs:
           files: |
             release-binaries/*.tar.xz
             release-binaries/*.sha256
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+
+  build-diamant-cli-linux:
+    name: Diamant CLI release (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Build pure CLI release
+        timeout-minutes: 120
+        run: |
+          rust_image=rust:alpine
+          if [ "$RUST_TOOLCHAIN" != stable ]; then
+            rust_image="rust:${RUST_TOOLCHAIN}-alpine"
+          fi
+          docker build --platform linux/amd64 --file docker/diamant/Dockerfile \
+            --build-arg RUST_IMAGE="$rust_image" \
+            --target release-artifact --output type=local,dest=diamant-cli-binary .
+
+      - name: Package CLI release
+        run: |
+          cd diamant-cli-binary
+          tar -cJf diamant-cli.x86_64-unknown-linux-musl.tar.xz diamant
+          sha256sum diamant-cli.x86_64-unknown-linux-musl.tar.xz > diamant-cli.x86_64-unknown-linux-musl.tar.xz.sha256
+
+      - name: Build CLI container image
+        id: cli-image
+        run: |
+          image_name="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')/diamant"
+          if [[ ! "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Release tag is not a valid container tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          rust_image=rust:alpine
+          if [ "$RUST_TOOLCHAIN" != stable ]; then
+            rust_image="rust:${RUST_TOOLCHAIN}-alpine"
+          fi
+          docker build --platform linux/amd64 --file docker/diamant/Dockerfile \
+            --build-arg RUST_IMAGE="$rust_image" \
+            --target runtime \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+            --tag "$image_name:$RELEASE_TAG" .
+          printf 'name=%s\n' "$image_name" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish CLI container image
+        env:
+          IMAGE_NAME: ${{ steps.cli-image.outputs.name }}
+        run: |
+          docker push "$IMAGE_NAME:$RELEASE_TAG"
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            docker tag "$IMAGE_NAME:$RELEASE_TAG" "$IMAGE_NAME:latest"
+            docker push "$IMAGE_NAME:latest"
+          fi
+
+      - name: Upload CLI release assets
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            diamant-cli-binary/*.tar.xz
+            diamant-cli-binary/*.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
           tag_name: ${{ inputs.tag || github.ref_name }}

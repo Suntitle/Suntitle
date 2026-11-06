@@ -166,7 +166,8 @@ e2e:
 
 # Prepare application binaries and E2E harnesses without starting services.
 e2e-build:
-    cargo build --locked --workspace --exclude diamant-ui --bins --examples
+    cargo build --locked --workspace --exclude diamant --exclude diamant-ui --bins --examples
+    cargo build --locked -p diamant --bin diamant --no-default-features
 
 # Run the host-registration end-to-end test.
 host-e2e: e2e-build kubernetes-up

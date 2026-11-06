@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
+default = ["gui"]
 gui = ["dep:diamant-ui"]
 
 [dependencies.diamant-ui]

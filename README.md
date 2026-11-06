@@ -403,28 +403,39 @@ UID. Diamant reports health every 30 seconds and reconnects when the connection
 ends. The health interval can be changed with `--health-interval-seconds` or
 `SUNTITLE_HEALTH_INTERVAL_SECONDS`.
 
-To enable the optional desktop window, build with the `gui` Cargo feature:
+The desktop window is the default Diamant build:
 
 ```bash
-cargo build -p diamant --bin diamant --features gui
+cargo build -p diamant --bin diamant
 ```
 
-GUI builds open the desktop window by default; `diamant --cli` runs headless.
+The default build opens the desktop window; `diamant --cli` runs headless.
 The window stores connection settings locally, connects to the hub on demand,
 and shows the nodes running on the host with their command parameters.
 The desktop fields map to the same CLI options. `diamant uv ...` remains
 available in both builds for invoking the embedded uv CLI. The `--cli` flag
 also remains accepted in default builds.
 
-Building with `gui` requires the Qt 6 base and declarative development packages.
-GUI binaries require the corresponding Qt 6 runtime libraries, even in CLI mode.
-CI release builds use the default features and do not require Qt.
+The desktop window uses `eframe` and is compiled into the Diamant
+executable. GUI builds do not require Qt or another separately installed UI
+runtime. Releases publish directly runnable GUI executables for Linux x86-64,
+Windows x86-64, and both Apple Silicon and Intel macOS. A separate pure CLI
+build is available with `--no-default-features` and is published with a
+`diamant-cli` asset name.
 
 Host identity, health, desired nodes, and dispatch status persist in Kubernetes resources.
 Disconnected hosts become offline; missing health reports expire after 45 seconds,
 so configure the health interval below that limit. Nodes remain available through
-the API while the host is offline. CI publishes
-Diamant as `diamant.<target>.tar.xz` alongside the proxy release.
+the API while the host is offline. CI publishes the GUI as the primary
+`diamant.<platform>` executable and the headless agent separately as
+`diamant-cli.<target>.tar.xz`.
+
+GUI release assets use platform-specific names such as
+`diamant.windows-x86_64.exe`, `diamant.linux-x86_64`, and
+`diamant.macos-aarch64`. They are single executables rather than installers or
+archives. Linux and macOS users may need to preserve or restore the executable
+permission when downloading through a browser. Unsigned macOS development
+builds may also require the standard Gatekeeper confirmation.
 
 ## Presubmit checks
 
@@ -501,7 +512,7 @@ Build output is written to `target/` at the root.
 | `ws-proxy` | `ws-proxy/` | WebSocket relay and reconciliation controller |
 | `control-api` | `control-api/` | HTTP control API, Kubernetes storage, and OpenAPI generation |
 | `diamant` | `diamant/` | Host agent, extension installation, and node processes |
-| `diamant-ui` | `diamant-ui/` | Optional Qt desktop UI for Diamant |
+| `diamant-ui` | `diamant-ui/` | Native `egui` desktop UI for Diamant |
 | `oci-artifact` | `oci-artifact/` | OCI artifact publishing and downloading |
 | `suntitle-core` | `suntitle-core/` | Shared models, Kubernetes resources, and registration protocol |
 
@@ -516,23 +527,32 @@ cargo test --locked
 cargo run -p control-api --bin control_api -- --help
 cargo run -p control-api --bin generate_openapi
 cargo run -p diamant -- --help
-cargo check -p diamant --features gui
+cargo check -p diamant
 ```
 
-Default workspace commands omit the Qt-only `diamant-ui` package. To build or
-test all headless packages explicitly, use `--workspace --exclude diamant-ui`.
-The optional GUI requires Qt development libraries.
+Default workspace commands include the Diamant GUI. Build the pure CLI agent
+explicitly with:
+
+```sh
+cargo build -p diamant --bin diamant --no-default-features
+```
 
 Headless Linux releases use static `x86_64-unknown-linux-musl` binaries for
-`ws-proxy`, `control_api`, and `diamant`. Build and verify them locally with:
+`ws-proxy`, `control_api`, and `diamant`. The agent is published as
+`diamant-cli.x86_64-unknown-linux-musl.tar.xz`. Build and verify the static
+artifacts locally with:
 
 ```sh
 docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile \
   --target release-artifacts --output type=local,dest=target/static-release .
+docker build --platform linux/amd64 --file docker/diamant/Dockerfile \
+  --target release-artifact --output type=local,dest=target/diamant-cli-release .
 ```
 
-The build rejects shared libraries and dynamic loaders, then runs each binary's
-`--help`. The optional Qt GUI is excluded from these release artifacts.
+The ws-proxy build produces only `ws-proxy` and `control_api`; Diamant is built
+independently by its dedicated Dockerfile and GitHub Actions job. The Diamant
+build rejects shared libraries and dynamic loaders. The default native GUI is
+explicitly disabled for the separate Diamant CLI artifact.
 
 The release workflow publishes separate component images. Rust images use the
 compiled release binaries; the UI image builds from the release checkout:
