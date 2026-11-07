@@ -162,9 +162,10 @@ impl Controller {
             });
             tokio::select! {
                 _ = host::run(hosts_api.clone(), run_context.clone()) => {},
-                _ = gc::run(hosts_api.clone(), run_context.clone()) => {},
+                _ = gc::clean_nodes(hosts_api.clone(), run_context.clone()) => {},
                 _ = dispatch::run(nodes_api.clone(), run_context.clone()) => {},
-                _ = extension::run(nodes_api.clone(), extensions_api, run_context.clone()) => {},
+                _ = gc::clean_extensions(extensions_api.clone(), run_context.clone()) => {},
+                _ = extension::run(nodes_api.clone(), extensions_api.clone(), run_context.clone()) => {},
                 _ = runtime::run(nodes_api.clone(), hosts_api.clone(), run_context.clone()) => {},
                 _ = run_context.stopped.notified() => {},
             }

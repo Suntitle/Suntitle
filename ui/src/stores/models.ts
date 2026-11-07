@@ -1,4 +1,5 @@
-export type NodeType = "audio_source" | "transcriber" | "translator" | "display"
+/** Pipeline role, including general-purpose extension execution. */
+export type NodeRole = "audio_source" | "transcriber" | "translator" | "display" | "custom"
 export type NodeSettingInput = "text" | "number" | "select" | "checkbox"
 export type NodeSettingValueType = "string" | "integer" | "number" | "boolean"
 export type NodeSettingValue = string | number | boolean | null
@@ -18,7 +19,7 @@ export type ExtensionRuntime = "executable" | "python" | "pythonModule"
 /** Desired extension configuration; registration does not imply installation. */
 export interface ExtensionSpec {
   /** Human-readable name, between one and 128 characters. */
-  name: string
+  displayName: string
   /** Determines how the worker interprets source. */
   sourceType: ExtensionSourceType
   /** Worker-accessible source path or reference. */
@@ -30,7 +31,7 @@ export interface ExtensionSpec {
   /** Execution contract packaged with the extension. */
   adapter: {
     /** Pipeline role of this adapter. */
-    type: NodeType
+    nodeRole: NodeRole
     /** Executable or module configuration. */
     execution: {
       /** Executable path or module name. MUST be nonempty. */
@@ -59,21 +60,10 @@ export interface ExtensionSpec {
   }
 }
 
-/** Registered resource; status may be absent or describe an older generation. */
-export interface Extension {
-  /** Resource API version. */
-  apiVersion: string
-  /** Resource kind. */
-  kind: "SuntitleExtension"
-  /** Resource identity; metadata.name addresses API requests. */
-  metadata: {
-    /** Server resource name. */
-    name: string
-    /** Current desired revision. */
-    generation?: number
-  }
-  /** Desired preparation configuration. */
-  spec: ExtensionSpec
+/** Registered extension with resource status passed through by the API. */
+export interface Extension extends ExtensionSpec {
+  /** Stable identity used in API URLs and node extension references. */
+  name: string
   /** Asynchronous publication result; never proves host installation. */
   status?: {
     /** Desired revision represented by this status. */
@@ -119,11 +109,9 @@ export interface ExtensionRegistration {
 }
 
 /** Registration request. The server generates a resource name when omitted. */
-export interface ExtensionCreate {
-  /** Optional Kubernetes resource name. */
+export interface ExtensionCreate extends ExtensionSpec {
+  /** Optional URL identity; the server generates one when omitted. */
   name?: string | null
-  /** Desired source and execution contract. */
-  spec: ExtensionSpec
 }
 
 export interface NodeSettingOption {
@@ -146,10 +134,10 @@ export interface NodeSettingDefinition {
 }
 
 export interface NodeTypeDefinition {
-  type: NodeType
+  type: NodeRole
   name: string
   description: string
-  inputTypes: NodeType[]
+  inputTypes: NodeRole[]
   settings: NodeSettingDefinition[]
 }
 
@@ -192,7 +180,7 @@ export interface HostList {
 export interface NodeConnection {
   id: string
   peerNodeId: string
-  peerNodeType: NodeType
+  peerNodeType: NodeRole
   peerName?: string
   direction: ConnectionDirection
   dataType: DataType
@@ -269,13 +257,21 @@ export interface DisplayNode extends NodeBase {
   settings: DisplaySettings
 }
 
-export type Node = AudioSourceNode | TranscriberNode | TranslatorNode | DisplayNode
+/** General-purpose extension instance with user-defined settings. */
+export interface CustomNode extends NodeBase {
+  /** No predefined pipeline endpoint. */
+  type: "custom"
+  /** Values supplied to the referenced extension. */
+  settings: Record<string, unknown>
+}
+
+export type Node = AudioSourceNode | TranscriberNode | TranslatorNode | DisplayNode | CustomNode
 
 export interface NodeCreate {
   /** Resource identity of a custom extension; omission selects a built-in node. */
   extensionRef?: string
   inputNodeId: string | null
-  type: NodeType
+  type: NodeRole
   name: string
   description?: string | null
   enabled: boolean
@@ -300,7 +296,7 @@ export type NodeUpdate =
 /** Edit custom instance values while retaining extension identity. */
 export interface CustomNodeUpdate extends NodeUpdateBase {
   /** Pipeline role resolved from the extension. */
-  type: NodeType
+  type: NodeRole
   /** Resource name of the referenced extension. */
   extensionRef: string
   /** Arbitrary JSON values declared by the extension manifest. */
@@ -329,15 +325,12 @@ export interface ValidationProblem extends Problem {
   errors: ValidationError[]
 }
 
-export interface ResourceMetadata {
-  name: string
-  uid: string
-  creationTimestamp?: string
-}
-
+/** Flat host resource returned by the control API. */
 export interface HostResource {
-  metadata: ResourceMetadata
-  spec: { name: string }
+  /** Resource name used in API URLs and references. */
+  name: string
+  /** Human-readable host label. */
+  displayName: string
   status?: {
     ip?: string
     agentVersion?: string
@@ -350,19 +343,21 @@ export interface HostResource {
 export interface NodeSpec {
   /** Referenced extension for custom settings; absent for built-in nodes. */
   extensionRef?: { name: string } | null
-  name: string
+  /** Human-readable node label. */
+  displayName: string
   description?: string | null
   hostRef: { name: string }
   enabled: boolean
   inputRef?: { name: string } | null
   restartToken?: string | null
   /** Exactly one built-in variant or the custom JSON setting map. */
-  settings: Partial<Record<NodeType, Node["settings"]>> & { custom?: Record<string, unknown> }
+  settings: Partial<Record<NodeRole, Node["settings"]>> & { custom?: Record<string, unknown> }
 }
 
-export interface NodeResource {
-  metadata: ResourceMetadata
-  spec: NodeSpec
+/** Flat node resource returned by the control API. */
+export interface NodeResource extends NodeSpec {
+  /** Resource name used in API URLs and references. */
+  name: string
   /** Observed runtime state and the resolved custom adapter role. */
   status?: {
     /** Current lifecycle phase reported by the host controller. */
@@ -370,7 +365,7 @@ export interface NodeResource {
     /** Observed custom execution contract; absent before preparation. */
     resolvedAdapter?: {
       /** Pipeline role preserved independently of custom setting values. */
-      type: NodeType
+      nodeRole: NodeRole
     }
   }
 }

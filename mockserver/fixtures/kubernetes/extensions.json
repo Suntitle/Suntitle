@@ -11,11 +11,9 @@
         "resourceVersion": "10"
       },
       "spec": {
-        "name": "Custom transcriber",
         "sourceType": "local",
         "source": "/opt/suntitle/extensions/custom-transcriber",
         "adapter": {
-          "type": "transcriber",
           "execution": {
             "runtime": "executable",
             "command": "./bin/transcriber"
@@ -34,8 +32,10 @@
               "flag": "--language",
               "source": "settings.language"
             }
-          ]
-        }
+          ],
+          "nodeRole": "transcriber"
+        },
+        "displayName": "Custom transcriber"
       }
     }
   ],

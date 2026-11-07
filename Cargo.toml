@@ -21,6 +21,12 @@ tokio-util = { version = "0.7", features = ["io", "io-util", "rt"] }
 tar = "0.4"
 flate2 = "1"
 oci-artifact = { path = "oci-artifact" }
+oci-client = { version = "0.18", default-features = false }
+oci-spec = { version = "0.10", default-features = false, features = ["image"] }
+ocirender = "=0.3.0"
+xz2 = { version = "0.1", features = ["static"] }
+backon = "1.6"
+thiserror = "2"
 dirs = "6"
 tempfile = "3"
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs", "derive", "runtime", "unstable-runtime", "cel"] }
@@ -31,6 +37,8 @@ actix-web = "4"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 diamant-ui = { path = "diamant-ui" }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 futures-util = "0.3.31"
 hostname = "0.4"
 ctrlc = { version = "3", features = ["termination"] }

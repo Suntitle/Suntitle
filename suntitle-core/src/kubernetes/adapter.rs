@@ -4,16 +4,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::models::NodeType;
+use crate::models::NodeRole;
 
 /// Standard adapter fields shared by an extension and its resolved node instance.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[serde(bound(deserialize = "S: Deserialize<'de> + Default"))]
 pub struct Adapter<S: Default> {
-    /// Pipeline role defining communication and input compatibility.
-    #[serde(rename = "type")]
-    pub node_type: NodeType,
+    /// UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
+    #[serde(default)]
+    pub node_role: NodeRole,
     /// Typed execution contract, unchanged by plugin setting resolution.
     pub execution: super::execution::ExecutionSpec,
     /// User-defined setting declarations or resolved instance values.
@@ -167,7 +167,7 @@ impl ExtensionAdapter {
             .cloned()
             .collect();
         Ok(ResolvedAdapter {
-            node_type: self.node_type,
+            node_role: self.node_role,
             execution: self.execution.clone(),
             settings,
             arguments,
@@ -178,7 +178,7 @@ impl ExtensionAdapter {
 /// Standard runtime values available independently of plugin settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeValue {
-    /// Full WebSocket URL selected for the extension's pipeline type.
+    /// Configured data-plane base WebSocket URL, independent of the node role.
     WebsocketUrl,
 }
 

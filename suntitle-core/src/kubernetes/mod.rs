@@ -129,7 +129,7 @@ mod client_tests {
             socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n").await.unwrap();
             socket.flush().await.unwrap();
             tokio::time::sleep(Duration::from_secs(11)).await;
-            let event = serde_json::json!({"type":"ADDED","object":{"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleHost","metadata":{"name":"quiet-host","resourceVersion":"2"},"spec":{"name":"Quiet host"}}}).to_string() + "\n";
+            let event = serde_json::json!({"type":"ADDED","object":{"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleHost","metadata":{"name":"quiet-host","resourceVersion":"2"},"spec":{"displayName":"Quiet host"}}}).to_string() + "\n";
             socket.write_all(format!("{:x}\r\n{}\r\n0\r\n\r\n", event.len(), event).as_bytes()).await.unwrap();
         });
         let directory = tempfile::tempdir().unwrap();

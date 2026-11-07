@@ -5,16 +5,15 @@ const accessToken = "mock-token"
 /** Build a resource whose API identity differs from its display name. */
 function resource(spec?: Partial<ExtensionSpec>): Extension {
   return {
-    apiVersion: "control.suntitle.io/v1alpha1", kind: "SuntitleExtension",
-    metadata: { name: "custom-captioner", generation: 1 },
-    spec: { name: "Custom captioner", sourceType: "local", source: "/opt/extensions/captioner", adapter: { type: "transcriber", execution: { command: "./captioner", runtime: "executable" } }, ...spec },
+    name: "custom-captioner",
+    displayName: "Custom captioner", sourceType: "local", source: "/opt/extensions/captioner", adapter: { nodeRole: "transcriber", execution: { command: "./captioner", runtime: "executable" } }, ...spec,
   }
 }
 
 /** Visit with authentication and a spec-conforming resource list. */
-function visitAuthenticatedExtensions() {
+function visitAuthenticatedExtensions(items?: Extension[]) {
   cy.intercept("GET", "**/api/v1/auth/me", { fixture: "api/v1/auth/me.json" }).as("getCurrentUser")
-  cy.intercept("GET", "**/api/v1/extensions", { fixture: "api/v1/extensions.json" }).as("getExtensions")
+  cy.intercept("GET", "**/api/v1/extensions", items ? { body: { items, resourceVersion: "1" } } : { fixture: "api/v1/extensions.json" }).as("getExtensions")
   cy.visit("/extensions", { onBeforeLoad(window) { window.localStorage.setItem("suntitle.accessToken", accessToken) } })
   cy.wait(["@getCurrentUser", "@getExtensions"])
 }
@@ -31,12 +30,37 @@ function stubRegistration(extension: Extension) {
 }
 
 describe("Extensions page", () => {
-  it("reads the resource envelope and treats accepted refresh with stale status as pending", () => {
+  it("uses the existing node icon for each extension role", () => {
+    const roles = [
+      ["audio_source", "mic"],
+      ["transcriber", "audio-waveform"],
+      ["translator", "languages"],
+      ["display", "monitor"],
+      ["custom", "blocks"],
+    ] as const
+    visitAuthenticatedExtensions(roles.map(([nodeRole]) => ({
+      ...resource({ displayName: `${nodeRole} extension`, adapter: { nodeRole, execution: { command: "./run" } } }),
+      name: nodeRole,
+    })))
+    for (const [role, icon] of roles) {
+      cy.contains("tr", `${role} extension`).find(`svg.lucide-${icon}`).should("be.visible")
+    }
+    cy.screenshot("extension-role-icons")
+  })
+
+  it("reads flat extensions and preserves resource status after an accepted refresh", () => {
     cy.fixture("api/v1/extensions.json").then((list) => {
-      const refreshed = { ...list.items[0], metadata: { ...list.items[0].metadata, generation: 2 } }
+      const refreshed = { ...list.items[0] }
       cy.intercept("POST", "**/api/v1/extensions/obs-captions/refresh", { statusCode: 202, body: refreshed }).as("refreshExtension")
     })
     visitAuthenticatedExtensions()
+    cy.get("@getExtensions").its("response.body.items").then((items: Extension[]) => {
+      for (const item of items) {
+        expect(item).to.have.property("displayName")
+        expect(item).to.have.property("name")
+        for (const field of ["apiVersion", "kind", "metadata", "spec", "generation", "observedGeneration"]) expect(item).not.to.have.property(field)
+      }
+    })
     cy.contains("2 extensions").should("be.visible")
     cy.contains("tr", "obs-captions").within(() => {
       cy.contains("Published").should("be.visible")
@@ -47,8 +71,8 @@ describe("Extensions page", () => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
       expect(request.body ?? "").to.equal("")
     })
-    cy.contains("tr", "obs-captions").should("contain.text", "Pending").and("contain.text", "Previous artifact:")
-    cy.contains("tr", "obs-captions").should("not.contain.text", "Published")
+    cy.contains("tr", "obs-captions").should("contain.text", "Published")
+    cy.contains("tr", "obs-captions").should("not.contain.text", "Previous artifact:")
   })
 
   for (const [sourceType, label, source] of [

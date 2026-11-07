@@ -51,15 +51,23 @@ pub struct User {
     pub username: String,
 }
 
+/// Pipeline role of a node or extension, independent of its execution implementation.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum NodeType {
+pub enum NodeRole {
+    /// Produces audio for the pipeline.
     AudioSource,
+    /// Transcribes audio into text.
     Transcriber,
+    /// Translates text between languages.
     Translator,
+    /// Presents pipeline output.
     Display,
+    /// Default classification for extension-defined work outside the predefined pipeline roles.
+    #[default]
+    Custom,
 }
 
 /// A value accepted by a node setting field.
@@ -146,13 +154,13 @@ pub struct NodeSettingDefinition {
 pub struct NodeTypeDefinition {
     /// Node type described by this definition.
     #[serde(rename = "type")]
-    pub node_type: NodeType,
+    pub node_type: NodeRole,
     /// Display name of the node type.
     pub name: String,
     /// Purpose of this node type.
     pub description: String,
     /// Node types that may be selected as this node's upstream input.
-    pub input_types: Vec<NodeType>,
+    pub input_types: Vec<NodeRole>,
     /// Editable settings supported by this node type.
     pub settings: Vec<NodeSettingDefinition>,
 }
@@ -186,7 +194,7 @@ mod tests {
         let mut tags = std::collections::BTreeSet::new();
         for path in [
             "nodes.json",
-            "hosts/20000000-0000-4000-8000-000000000001/nodes.json",
+            "hosts/studio-host-resource/nodes.json",
             "nodes/30000000-0000-4000-8000-000000000001.json",
             "nodes/30000000-0000-4000-8000-000000000003.json",
         ] {
@@ -198,11 +206,11 @@ mod tests {
                 .cloned()
                 .unwrap_or_else(|| vec![fixture]);
             for wire in nodes {
-                let node: crate::kubernetes::resources::SuntitleNode =
+                let spec: crate::kubernetes::resources::SuntitleNodeSpec =
                     serde_json::from_value(wire.clone()).unwrap();
-                let settings = serde_json::to_value(&node.spec.settings).unwrap();
+                let settings = serde_json::to_value(&spec.settings).unwrap();
                 let expected: crate::kubernetes::resources::NodeSettings =
-                    serde_json::from_value(wire["spec"]["settings"].clone()).unwrap();
+                    serde_json::from_value(wire["settings"].clone()).unwrap();
                 assert_eq!(settings, serde_json::to_value(expected).unwrap());
                 tags.extend(settings.as_object().unwrap().keys().cloned());
             }

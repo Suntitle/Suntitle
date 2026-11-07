@@ -82,7 +82,7 @@ impl ApiClient {
         processes: &mut [&mut ChildProcess],
     ) -> Result<Value, Box<dyn Error>> {
         let matches =
-            |host: &Value| host["spec"]["name"] == name && host["status"]["presence"] == presence;
+            |host: &Value| host["displayName"] == name && host["status"]["presence"] == presence;
         let hosts = self
             .wait_for("/api/v1/hosts", duration, |hosts| {
                 for process in processes.iter_mut() {

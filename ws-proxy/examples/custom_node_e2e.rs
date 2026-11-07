@@ -56,7 +56,7 @@ fn substitute(value: &mut Value, replacements: &[(&str, &str)]) {
     }
 }
 
-/// Match a condition only when it describes the resource's current generation.
+/// Match current resource conditions; flat extension responses retain the observed status revision.
 fn condition(resource: &Value, kind: &str, status: &str, reason: Option<&str>) -> bool {
     resource["status"]["conditions"]
         .as_array()
@@ -64,7 +64,7 @@ fn condition(resource: &Value, kind: &str, status: &str, reason: Option<&str>) -
             conditions.iter().any(|c| {
                 c["type"] == kind
                     && c["status"] == status
-                    && c["observedGeneration"] == resource["metadata"]["generation"]
+                    && &c["observedGeneration"] == resource["metadata"].get("generation").unwrap_or(&resource["status"]["observedGeneration"])
                     && reason.is_none_or(|reason| c["reason"] == reason)
             })
         })
@@ -75,14 +75,12 @@ async fn installed_then_running(
     namespace: &support::TestNamespace,
     created: &Value,
     reference: &Value,
+    version: &str,
 ) -> Result<(), Box<dyn Error>> {
     let nodes = namespace.nodes();
-    let name = created["metadata"]["name"]
+    let name = created["name"]
         .as_str()
         .ok_or("node name missing")?;
-    let version = created["metadata"]["resourceVersion"]
-        .as_str()
-        .ok_or("node resourceVersion missing")?;
     let stream = nodes
         .watch(
             &WatchParams::default().fields(&format!("metadata.name={name}")),
@@ -238,7 +236,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             &mut [&mut proxy, &mut diamant],
         )
         .await?;
-    let host_id = host["metadata"]["uid"].as_str().ok_or("host UID missing")?;
+    let host_id = host["name"].as_str().ok_or("host name missing")?;
     let scenarios = fixture(&data.join("scenarios.yaml"), &[])?;
     let publisher = Publisher::new(TransportOptions {
         plain_http: true,
@@ -256,7 +254,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 publisher
                     .republish(
                         source,
-                        extension["spec"]["source"]
+                        extension["source"]
                             .as_str()
                             .ok_or("OCI source missing")?,
                         &RegistryAuth::Anonymous,
@@ -268,9 +266,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } else {
             None
         };
-        client
+        let registered = client
             .request("POST", "/api/v1/extensions", Some(&extension), 201)
             .await?;
+        assert_eq!(
+            registered["adapter"]["nodeRole"],
+            extension["adapter"]["nodeRole"].as_str().unwrap_or("custom")
+        );
         let published = client
             .wait_for(
                 &format!("/api/v1/extensions/{}", extension["name"].as_str().unwrap()),
@@ -305,6 +307,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .to_owned(),
         );
         let node = fixture(&data.join(format!("{name}-node.yaml")), &replacements)?;
+        let version = namespace.nodes().list(&Default::default()).await?.metadata.resource_version
+            .ok_or("node collection resourceVersion missing")?;
         let created = client
             .request(
                 "POST",
@@ -313,7 +317,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 201,
             )
             .await?;
-        installed_then_running(&namespace, &created, reference).await?;
+        installed_then_running(&namespace, &created, reference, &version).await?;
         let report_path = run.path().join(format!("{name}.json"));
         let report = timeout(ACTION_TIMEOUT, async {
             loop {

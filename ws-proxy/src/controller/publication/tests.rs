@@ -4,7 +4,7 @@ use serde_json::json;
 
 /// Build a local-source resource with immutable Kubernetes identity.
 pub(super) fn extension() -> SuntitleExtension {
-    serde_json::from_value(json!({"metadata":{"name":"fixture","namespace":"test","uid":"uid-1","resourceVersion":"1","generation":1},"spec":{"name":"Fixture","sourceType":"local","source":"/missing-extension","adapter":{"type":"transcriber","execution":{"runtime":"executable","command":"./run"}}}})).unwrap()
+    serde_json::from_value(json!({"metadata":{"name":"fixture","namespace":"test","uid":"uid-1","resourceVersion":"1","generation":1},"spec":{"displayName":"Fixture","sourceType":"local","source":"/missing-extension","adapter":{"nodeRole":"transcriber","execution":{"runtime":"executable","command":"./run"}}}})).unwrap()
 }
 /// Use anonymous loopback publication without credentials or implicit TLS exceptions.
 pub(super) fn config() -> PublicationConfig {

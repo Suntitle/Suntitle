@@ -97,7 +97,7 @@ with log.open('a') as f:
                 201,
             )
             .await?;
-        let audio_id = audio["metadata"]["name"]
+        let audio_id = audio["name"]
             .as_str()
             .ok_or("missing node name")?
             .to_owned();
@@ -109,7 +109,7 @@ with log.open('a') as f:
                 201,
             )
             .await?;
-        let display_id = display["metadata"]["name"]
+        let display_id = display["name"]
             .as_str()
             .ok_or("missing node name")?
             .to_owned();
@@ -177,11 +177,11 @@ with log.open('a') as f:
     }
 
     fn node_body(host: &str, name: &str, settings: Value) -> Value {
-        json!({"spec": {
-            "name": name, "description": null, "enabled": true,
+        json!({
+            "displayName": name, "description": null, "enabled": true,
             "hostRef": {"name": host}, "inputRef": null, "restartToken": null,
             "settings": settings
-        }})
+        })
     }
 
     fn audio_body(host: &str, name: &str, sample_rate: u32) -> Value {
@@ -206,20 +206,14 @@ with log.open('a') as f:
         )
     }
 
-    fn value_uuid(value: &Value, key: &str) -> Result<Uuid, Box<dyn Error>> {
-        Ok(Uuid::parse_str(value[key].as_str().ok_or_else(|| {
-            io::Error::other(format!("response has no string {key}"))
-        })?)?)
-    }
-
-    /// Resolve a host UID after shared presence polling.
+    /// Resolve a host resource name after shared presence polling.
     async fn wait_for_host(
         client: &ApiClient,
         name: &str,
         status: &str,
         proxy: &mut ChildProcess,
         diamant: &mut ChildProcess,
-    ) -> Result<Uuid, Box<dyn Error>> {
+    ) -> Result<String, Box<dyn Error>> {
         let mut required = vec![proxy];
         if status == "Online" {
             required.push(diamant);
@@ -227,7 +221,7 @@ with log.open('a') as f:
         let host = client
             .wait_for_host(name, status, ACTION_TIMEOUT, &mut required)
             .await?;
-        value_uuid(&host["metadata"], "uid")
+        Ok(host["name"].as_str().ok_or("host name missing")?.to_owned())
     }
 
     /// Wait for every desired node to reflect the expected connection state.
@@ -265,7 +259,7 @@ with log.open('a') as f:
     ) -> Result<(), Box<dyn Error>> {
         client
             .wait_for(&format!("/api/v1/nodes/{id}"), ACTION_TIMEOUT, |node| {
-                Ok(node["spec"]["name"] == name
+                Ok(node["displayName"] == name
                     && (!connected || node["status"]["phase"] == "Running"))
             })
             .await?;

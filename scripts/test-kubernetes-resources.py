@@ -45,7 +45,7 @@ def replace_spec(node, mutate, fails=None):
 
 def main():
     host_name = PREFIX + '-host'
-    host = create('suntitle-proxy', 'SuntitleHost', host_name, {'name': 'Phase 1 host'},
+    host = create('suntitle-proxy', 'SuntitleHost', host_name, {'displayName': 'Phase 1 host'},
                   {'finalizers': [f'{GROUP}/host-cleanup']})
     variants = {
         'audio_source': {'sampleRateHz': 16000, 'channels': 1, 'encoding': 'pcm_s16le', 'deviceName': None},
@@ -56,7 +56,7 @@ def main():
     nodes = {}
     for kind, settings in variants.items():
         nodes[kind] = create('suntitle-api', 'SuntitleNode', PREFIX + '-' + kind.replace('_', '-'),
-            {'name': kind, 'hostRef': {'name': host_name}, 'settings': {kind: settings}, 'inputRef': None})
+            {'displayName': kind, 'hostRef': {'name': host_name}, 'settings': {kind: settings}, 'inputRef': None})
         nodes[kind] = kubectl('suntitle-proxy', 'patch', NODES, nodes[kind]['metadata']['name'],
             '--type=merge', '-p', json.dumps({'metadata': {'finalizers': [f'{GROUP}/runtime-cleanup']}}), '-o', 'json')
         assert nodes[kind]['spec']['enabled'] is True
@@ -88,7 +88,7 @@ def main():
                             lambda spec: spec['settings']['audio_source'].__setitem__('channels', 2))
     assert editable['spec']['settings']['audio_source']['channels'] == 2
     minimal = create('suntitle-api', 'SuntitleNode', PREFIX + '-defaults',
-                     {'name': 'Defaults', 'hostRef': {'name': host_name},
+                     {'displayName': 'Defaults', 'hostRef': {'name': host_name},
                       'settings': {'transcriber': {'model': 'small', 'language': 'en'}}})
     assert minimal['spec']['settings'] == {'transcriber': variants['transcriber']}
     print('PASS invalid settings, variant selection, defaults and immutable fields')
@@ -108,8 +108,8 @@ def main():
     assert updated['spec'] == node['spec']
     assert updated['metadata']['generation'] == node['metadata']['generation']
     assert updated['metadata']['resourceVersion'] != old_version
-    replace_spec(node, lambda spec: spec.__setitem__('name', 'Stale'), fails='Conflict')
-    updated = replace_spec(updated, lambda spec: spec.__setitem__('name', 'Fresh'))
+    replace_spec(node, lambda spec: spec.__setitem__('displayName', 'Stale'), fails='Conflict')
+    updated = replace_spec(updated, lambda spec: spec.__setitem__('displayName', 'Fresh'))
     assert updated['status'] == status
     assert updated['metadata']['generation'] == node['metadata']['generation'] + 1
     # Main endpoint cannot write status even for an otherwise authorized writer.

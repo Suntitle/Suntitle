@@ -145,8 +145,8 @@ hosts:
     curl -sS http://127.0.0.1:3031/api/v1/hosts | python3 -m json.tool
 
 # Install and start a default audio-source node on a host.
-install-audio-source host_id host_name:
-    curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/{{ host_id }}/nodes" -H 'Content-Type: application/json' -d '{"spec":{"hostRef":{"name":"{{ host_name }}"},"inputRef":null,"restartToken":null,"name":"Local microphone","description":"Default local audio input","enabled":true,"settings":{"audio_source":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null}}}}' | python3 -m json.tool
+install-audio-source host_name:
+    curl -sS -X POST "http://127.0.0.1:3031/api/v1/hosts/{{ host_name }}/nodes" -H 'Content-Type: application/json' -d '{"hostRef":{"name":"{{ host_name }}"},"inputRef":null,"restartToken":null,"description":"Default local audio input","enabled":true,"settings":{"audio_source":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":null}},"displayName":"Local microphone"}' | python3 -m json.tool
 
 # List all nodes from the control API.
 nodes:
@@ -248,7 +248,7 @@ infra-ssh:
 infra-destroy:
     pulumi -C infrastructure destroy
 
-# Destroy the Pulumi stack through the infra-up/infra-down command pair.
+# Destroy the stack, including its persistent data volume.
 alias infra-down := infra-destroy
 
 # Install the UI dependencies when they are not already present.

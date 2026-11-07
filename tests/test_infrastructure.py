@@ -1,7 +1,6 @@
 """Verify deployment packaging, rendered provisioning, and retained PKI identities."""
 
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
@@ -11,7 +10,6 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
-from urllib.error import URLError
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,27 +56,6 @@ class InfrastructureTest(unittest.TestCase):
             (root / 'compose.release.yaml').write_text('updated')
             self.assertNotEqual(digest, DEPLOYMENT.build_source_archive(root, second))
 
-    def test_latest_release_discovery_and_explicit_override(self):
-        """Resolve fresh tags, bypass discovery for pins, and fail on unusable releases."""
-        for requested, tag in [(None, 'v1.2.3'), ('latest', 'v1.2.4')]:
-            with self.subTest(requested=requested), patch.object(DEPLOYMENT, 'urlopen') as lookup:
-                lookup.return_value.__enter__.return_value = io.StringIO(
-                    json.dumps({'tag_name': tag}))
-                self.assertEqual(DEPLOYMENT.resolve_release(requested, 'owner/repo'), tag)
-                request = lookup.call_args.args[0]
-                self.assertEqual(request.full_url, 'https://api.github.com/repos/owner/repo/releases/latest')
-        with patch.object(DEPLOYMENT, 'urlopen') as lookup:
-            self.assertEqual(DEPLOYMENT.resolve_release('v1.0.0', 'owner/repo'), 'v1.0.0')
-            lookup.assert_not_called()
-        for payload in [{}, {'tag_name': 'main'}]:
-            with self.subTest(payload=payload), patch.object(DEPLOYMENT, 'urlopen') as lookup:
-                lookup.return_value.__enter__.return_value = io.StringIO(json.dumps(payload))
-                with self.assertRaises(ValueError):
-                    DEPLOYMENT.resolve_release(None, 'owner/repo')
-        with patch.object(DEPLOYMENT, 'urlopen', side_effect=URLError('unavailable')):
-            with self.assertRaisesRegex(ValueError, 'Cannot resolve the latest release'):
-                DEPLOYMENT.resolve_release(None, 'owner/repo')
-
     def test_release_configuration_and_rendered_bootstrap(self):
         """Render selected images safely and require pulls without instance-side builds."""
         arguments = dict(bucket='source-bucket', key='digest.tar.gz', region='eu-north-1',
@@ -119,31 +96,24 @@ class InfrastructureTest(unittest.TestCase):
                     if exit_code == 0:
                         self.assertIn('up --no-build', commands[1])
 
-    def test_image_overrides_and_release_defaults(self):
-        """Resolve missing images once; full overrides MUST work without GitHub."""
+    def test_image_overrides_and_latest_defaults(self):
+        """Default to GHCR latest without network access and preserve image overrides."""
+        defaults = {'api': 'ghcr.io/suntitle/suntitle/control-api:latest',
+                    'proxy': 'ghcr.io/suntitle/suntitle/ws-proxy:latest',
+                    'ui': 'ghcr.io/suntitle/suntitle/ui:latest'}
         digest = 'registry.example/api@sha256:' + 'a' * 64
-        with patch.object(DEPLOYMENT, 'resolve_release', return_value='v1.2.3') as lookup:
-            version, images = DEPLOYMENT.resolve_images(None, 'Suntitle/Suntitle')
-            self.assertEqual(version, 'v1.2.3')
-            self.assertEqual(images, {'api': 'ghcr.io/suntitle/suntitle/control-api:v1.2.3',
-                                     'proxy': 'ghcr.io/suntitle/suntitle/ws-proxy:v1.2.3',
-                                     'ui': 'ghcr.io/suntitle/suntitle/ui:v1.2.3'})
-            lookup.assert_called_once_with(None, 'Suntitle/Suntitle')
-        with patch.object(DEPLOYMENT, 'resolve_release', return_value='v2') as lookup:
-            _, images = DEPLOYMENT.resolve_images('v2', 'owner/fork', api_image=digest)
-            self.assertEqual(images['api'], digest)
-            self.assertEqual(images['proxy'], 'ghcr.io/owner/fork/ws-proxy:v2')
-            lookup.assert_called_once()
-        with patch.object(DEPLOYMENT, 'urlopen') as lookup:
-            version, images = DEPLOYMENT.resolve_images(None, 'Suntitle/Suntitle',
-                api_image=digest, proxy_image='custom/proxy:latest', ui_image='custom/ui:v3')
-            self.assertIsNone(version)
-            self.assertEqual(images, {'api': digest, 'proxy': 'custom/proxy:latest', 'ui': 'custom/ui:v3'})
-            lookup.assert_not_called()
-        with patch.object(DEPLOYMENT, 'urlopen') as lookup:
-            with self.assertRaises(ValueError):
-                DEPLOYMENT.resolve_images(None, 'Suntitle/Suntitle', api_image='image\nINJECTED=true')
-            lookup.assert_not_called()
+        with patch('socket.socket', side_effect=AssertionError('Network lookup is forbidden')):
+            self.assertEqual(DEPLOYMENT.resolve_images(), defaults)
+            for component in defaults:
+                with self.subTest(component=component):
+                    self.assertEqual(DEPLOYMENT.resolve_images(**{f'{component}_image': digest}),
+                                     defaults | {component: digest})
+            self.assertEqual(DEPLOYMENT.resolve_images(
+                api_image=digest, proxy_image='custom/proxy:latest', ui_image='custom/ui:v3'),
+                {'api': digest, 'proxy': 'custom/proxy:latest', 'ui': 'custom/ui:v3'})
+            for component in defaults:
+                with self.subTest(component=component), self.assertRaises(ValueError):
+                    DEPLOYMENT.resolve_images(**{f'{component}_image': 'image\nINJECTED=true'})
 
     @unittest.skipUnless(shutil.which('docker'), 'Docker Compose is required')
     def test_compose_release_overlay_uses_runtime_image(self):

@@ -112,7 +112,7 @@ async fn resource_api_acceptance() {
             &SuntitleHost::new(
                 &host_name,
                 SuntitleHostSpec {
-                    name: "Phase 2 fixture".into(),
+                    display_name: "Phase 2 fixture".into(),
                 },
             ),
         )
@@ -125,20 +125,21 @@ async fn resource_api_acceptance() {
         let variants: Value = serde_json::from_str(include_str!("fixtures/kubernetes-node-specs.json")).unwrap();
         for kind in ["audio_source", "transcriber", "translator", "display"] {
             let name = format!("{prefix}-{}", kind.replace('_', "-"));
-            let spec = json!({"name":kind,"hostRef":{"name":"ignored-host"},"settings":{kind:variants[kind]},"inputRef":{"name":"missing-input"}});
-            let (status, node, location) = request(&store, Method::POST, &format!("/api/v1/hosts/{host_uid}/nodes"), Some(json!({"name":name,"spec":spec}))).await;
+            let spec = json!({"displayName":kind,"hostRef":{"name":"ignored-host"},"settings":{kind:variants[kind]},"inputRef":{"name":"missing-input"}});
+            let (status, node, location) = request(&store, Method::POST, &format!("/api/v1/hosts/{host_name}/nodes"), Some({ let mut body = spec; body["name"] = json!(name); body })).await;
             assert_eq!(status, StatusCode::CREATED, "{node}");
             created.push(name.clone());
             assert_eq!(location, Some(format!("/api/v1/nodes/{name}")));
-            assert_eq!(node["metadata"]["ownerReferences"], json!([{
+            let persisted = serde_json::to_value(nodes.get(&name).await.unwrap()).unwrap();
+            assert_eq!(persisted["metadata"]["ownerReferences"], json!([{
                 "apiVersion": "control.suntitle.io/v1alpha1",
                 "kind": "SuntitleHost",
                 "name": host_name,
                 "uid": host_uid,
                 "controller": true,
             }]));
-            assert!(node["metadata"]["finalizers"].is_null());
-            assert_eq!(node["spec"]["hostRef"]["name"], host_name);
+            assert!(persisted["metadata"]["finalizers"].is_null());
+            assert_eq!(node["hostRef"]["name"], host_name);
             assert!(node.get("status").is_none_or(Value::is_null));
         }
         assert!(hosts.get(&host_name).await.unwrap().finalizers().is_empty());
@@ -146,45 +147,47 @@ async fn resource_api_acceptance() {
         let uri = format!("/api/v1/nodes/{name}");
         nodes.patch_status(name, &PatchParams::default(), &Patch::Merge(&json!({"status":{"phase":"Running","observedGeneration":1}}))).await.unwrap();
         let initial = expect(&store, Method::GET, &uri, None, 200).await;
-        let mut spec = initial["spec"].clone(); spec["name"] = json!("Edited");
-        let updated = expect(&store, Method::PUT, &uri, Some(json!({"spec":spec})), 200).await;
+        let initial_spec = serde_json::to_value(nodes.get(name).await.unwrap().spec).unwrap();
+        let mut spec = initial_spec.clone(); spec["displayName"] = json!("Edited");
+        let updated = expect(&store, Method::PUT, &uri, Some(spec), 200).await;
         assert_eq!(updated["status"], initial["status"]);
-        assert_eq!(updated["metadata"]["ownerReferences"], initial["metadata"]["ownerReferences"]);
+        assert_eq!(nodes.get(name).await.unwrap().metadata.owner_references.as_ref().unwrap()[0].uid, host_uid);
         // Kubernetes/CEL MUST reject invalid specs and immutable field changes.
-        for changes in [json!({"hostRef":{"name":"other"}}), json!({"settings":{"display":variants["display"]}}), json!({"name":""}), json!({"settings":{"audio_source":{"sampleRateHz":12345,"channels":1,"encoding":"pcm_s16le"}}})] {
-            let mut spec = updated["spec"].clone();
+        for changes in [json!({"hostRef":{"name":"other"}}), json!({"settings":{"display":variants["display"]}}), json!({"displayName":""}), json!({"settings":{"audio_source":{"sampleRateHz":12345,"channels":1,"encoding":"pcm_s16le"}}})] {
+            let mut spec = serde_json::to_value(nodes.get(name).await.unwrap().spec).unwrap();
             for (k,v) in changes.as_object().unwrap() { spec[k] = v.clone(); }
-            let error = expect(&store, Method::PUT, &uri, Some(json!({"spec":spec})), 422).await;
+            let error = expect(&store, Method::PUT, &uri, Some(spec), 422).await;
             assert_eq!(error["error"]["code"], "Invalid");
             assert!(error["error"]["details"]["causes"].is_array());
         }
         let restart_uri = format!("{uri}/restart");
         let first = expect(&store, Method::POST, &restart_uri, None, 202).await;
         let second = expect(&store, Method::POST, &restart_uri, None, 202).await;
-        assert_ne!(first["spec"]["restartToken"], second["spec"]["restartToken"]);
+        assert_ne!(first["restartToken"], second["restartToken"]);
         assert_eq!(second["status"], updated["status"]);
-        assert_eq!(second["spec"]["name"], "Edited");
+        assert_eq!(second["displayName"], "Edited");
         // API updates MUST accept older desired data without a version precondition.
-        let overwritten = expect(&store, Method::PUT, &uri, Some(json!({"spec":initial["spec"]})), 200).await;
-        assert_eq!(overwritten["spec"], initial["spec"]);
+        let overwritten = expect(&store, Method::PUT, &uri, Some(initial_spec.clone()), 200).await;
+        assert_eq!(overwritten["displayName"], initial_spec["displayName"]);
         assert_eq!(overwritten["status"], updated["status"]);
-        let duplicate = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_uid}/nodes"), Some(json!({"name":name,"spec":initial["spec"]})), 409).await;
+        let duplicate = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_name}/nodes"), Some({ let mut body = initial_spec.clone(); body["name"] = json!(name); body }), 409).await;
         assert_eq!(duplicate["error"]["code"], "AlreadyExists");
-        expect(&store, Method::POST, "/api/v1/hosts/missing-host/nodes", Some(json!({"spec":initial["spec"]})), 404).await;
+        expect(&store, Method::POST, "/api/v1/hosts/missing-host/nodes", Some(initial_spec.clone()), 404).await;
         expect(&store, Method::POST, "/api/v1/nodes/missing-node/restart", None, 404).await;
         nodes.patch(name, &PatchParams::default(), &Patch::Merge(&json!({"metadata":{"finalizers":[NODE_FINALIZER]}}))).await.unwrap();
         expect(&store, Method::DELETE, &uri, None, 202).await;
         expect(&store, Method::DELETE, &uri, None, 202).await;
         expect(&store, Method::DELETE, "/api/v1/nodes/missing-node", None, 404).await;
         let terminating = expect(&store, Method::POST, &restart_uri, None, 202).await;
-        assert!(terminating["metadata"]["deletionTimestamp"].is_string());
-        assert_eq!(terminating["metadata"]["finalizers"], json!([NODE_FINALIZER]));
-        expect(&store, Method::PUT, &uri, Some(json!({"spec":initial["spec"]})), 200).await;
+        assert_eq!(terminating["name"], *name);
+        assert!(nodes.get(name).await.unwrap().metadata.deletion_timestamp.is_some());
+        assert_eq!(nodes.get(name).await.unwrap().finalizers(), &[NODE_FINALIZER]);
+        expect(&store, Method::PUT, &uri, Some(initial_spec.clone()), 200).await;
         hosts.patch(&host_name, &PatchParams::default(), &Patch::Merge(&json!({"metadata":{"finalizers":[HOST_FINALIZER]}}))).await.unwrap();
         hosts.delete(&host_name, &DeleteParams::default()).await.unwrap();
-        let allocated = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_uid}/nodes"), Some(json!({"spec":initial["spec"]})), 201).await;
-        created.push(allocated["metadata"]["name"].as_str().unwrap().to_owned());
-        assert!(allocated["metadata"]["finalizers"].is_null());
+        let allocated = expect(&store, Method::POST, &format!("/api/v1/hosts/{host_name}/nodes"), Some(initial_spec.clone()), 201).await;
+        created.push(allocated["name"].as_str().unwrap().to_owned());
+        assert!(nodes.get(allocated["name"].as_str().unwrap()).await.unwrap().finalizers().is_empty());
     }).catch_unwind().await;
     for name in &created {
         nodes
@@ -295,7 +298,7 @@ async fn readiness_rejects_unestablished_crds() {
 }
 
 #[actix_web::test]
-async fn installation_resolves_host_uid_from_each_list_request() {
+async fn installation_resolves_host_name_with_direct_resource_lookup() {
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -311,12 +314,16 @@ async fn installation_resolves_host_uid_from_each_list_request() {
         .and(warp::body::bytes())
         .map(move |method: warp::http::Method, path: warp::path::FullPath, body: actix_web::web::Bytes| {
             let value = if method == warp::http::Method::GET {
-                assert_eq!(path.as_str(), "/apis/control.suntitle.io/v1alpha1/namespaces/suntitle/suntitlehosts");
+                assert!(path.as_str().starts_with("/apis/control.suntitle.io/v1alpha1/namespaces/suntitle/suntitlehosts/"));
                 list_count.fetch_add(1, Ordering::SeqCst);
-                json!({"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleHostList","metadata":{"resourceVersion":"1"},"items":[
-                    {"metadata":{"name":"other-host","uid":"other-uid"},"spec":{"name":"Other"}},
-                    {"metadata":{"name":"target-host","uid":"target-uid"},"spec":{"name":"Target"}}
-                ]})
+                if path.as_str().ends_with("/target-host") {
+                    json!({"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleHost",
+                        "metadata":{"name":"target-host","uid":"target-uid"},"spec":{"displayName":"Target"}})
+                } else {
+                    return warp::reply::with_status(warp::reply::json(&json!({
+                        "apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound", "message":"Host not found", "code":404
+                    })), warp::http::StatusCode::NOT_FOUND);
+                }
             } else {
                 assert_eq!(method, warp::http::Method::POST);
                 assert_eq!(path.as_str(), "/apis/control.suntitle.io/v1alpha1/namespaces/suntitle/suntitlenodes");
@@ -325,7 +332,7 @@ async fn installation_resolves_host_uid_from_each_list_request() {
                 assert_eq!(node["spec"]["hostRef"]["name"], "target-host");
                 node
             };
-            warp::reply::json(&value)
+            warp::reply::with_status(warp::reply::json(&value), warp::http::StatusCode::OK)
         });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -335,20 +342,86 @@ async fn installation_resolves_host_uid_from_each_list_request() {
     ))
     .unwrap();
     let store = ResourceStore::new(client, "suntitle");
-    let body = json!({"spec":{"name":"Screen","hostRef":{"name":"ignored"},"settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}}});
-    for uid in ["target-uid", "target-uid", "target-host", "missing-uid"] {
-        let status = if uid == "target-uid" { 201 } else { 404 };
-        expect(
+    let body = json!({"displayName":"Screen","hostRef":{"name":"ignored"},"settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}});
+    for name in ["target-host", "target-host", "target-uid", "missing-host"] {
+        let status = if name == "target-host" { 201 } else { 404 };
+        let response = expect(
             &store,
             Method::POST,
-            &format!("/api/v1/hosts/{uid}/nodes"),
+            &format!("/api/v1/hosts/{name}/nodes"),
             Some(body.clone()),
             status,
         )
         .await;
+        if status == 201 {
+            assert_eq!(response["displayName"], "Screen");
+            assert_eq!(response["hostRef"]["name"], "target-host");
+            for field in ["apiVersion", "kind", "metadata", "spec"] { assert!(response.get(field).is_none()); }
+        }
     }
     assert_eq!(lists.load(Ordering::SeqCst), 4);
     assert_eq!(creates.load(Ordering::SeqCst), 2);
+    server.abort();
+}
+
+/// Flat host and node responses MUST preserve controller status through desired-state writes.
+#[actix_web::test]
+async fn host_and_node_responses_are_flat_and_preserve_status() {
+    use std::sync::{Arc, Mutex};
+    use warp::Filter;
+    let hosts: Value = serde_json::from_str(include_str!("../../mockserver/fixtures/kubernetes/hosts.json")).unwrap();
+    let mut nodes: Value = serde_json::from_str(include_str!("../../mockserver/fixtures/kubernetes/nodes.json")).unwrap();
+    let status = json!({"phase":"Running","observedGeneration":1});
+    nodes["items"][0]["status"] = status.clone();
+    let state = Arc::new(Mutex::new(nodes));
+    let stored = state.clone();
+    let route = warp::method().and(warp::path::full()).and(warp::body::bytes())
+        .map(move |method: warp::http::Method, path: warp::path::FullPath, body: actix_web::web::Bytes| {
+            let mut nodes = stored.lock().unwrap();
+            let response = if path.as_str().ends_with("/suntitlehosts") {
+                json!({"apiVersion":"control.suntitle.io/v1alpha1", "kind":"SuntitleHostList",
+                    "metadata":{"resourceVersion":hosts["resourceVersion"]}, "items":hosts["items"]})
+            } else if path.as_str().ends_with("/suntitlenodes") {
+                json!({"apiVersion":"control.suntitle.io/v1alpha1", "kind":"SuntitleNodeList",
+                    "metadata":{"resourceVersion":nodes["resourceVersion"]}, "items":nodes["items"]})
+            }
+            else {
+                if method == warp::http::Method::PATCH {
+                    let patch: Value = serde_json::from_slice(&body).unwrap();
+                    if patch.is_array() {
+                        json_patch::patch(&mut nodes["items"][0], &serde_json::from_value::<json_patch::Patch>(patch).unwrap()).unwrap();
+                    } else {
+                        nodes["items"][0]["spec"]["restartToken"] = patch["spec"]["restartToken"].clone();
+                    }
+                }
+                nodes["items"][0].clone()
+            };
+            warp::reply::json(&response)
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+    let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "suntitle");
+    let hosts = expect(&store, Method::GET, "/api/v1/hosts", None, 200).await;
+    assert_eq!(hosts["items"][0]["name"], "studio-host");
+    assert!(hosts["items"][0]["displayName"].is_string());
+    let listed = expect(&store, Method::GET, "/api/v1/nodes", None, 200).await;
+    let name = listed["items"][0]["name"].as_str().unwrap();
+    let uri = format!("/api/v1/nodes/{name}");
+    let mut spec = state.lock().unwrap()["items"][0]["spec"].clone();
+    spec["displayName"] = json!("Edited label");
+    let updated = expect(&store, Method::PUT, &uri, Some(spec), 200).await;
+    assert_eq!(updated["displayName"], "Edited label");
+    let fetched = expect(&store, Method::GET, &uri, None, 200).await;
+    let restarted = expect(&store, Method::POST, &format!("{uri}/restart"), None, 202).await;
+    assert!(restarted["restartToken"].is_string());
+    for response in [&listed["items"][0], &updated, &fetched, &restarted] {
+        assert_eq!(response["status"], status);
+        assert_eq!(response["name"], name);
+    }
+    for response in [&hosts["items"][0], &updated, &fetched, &restarted] {
+        for field in ["apiVersion", "kind", "metadata", "spec", "uid"] { assert!(response.get(field).is_none()); }
+    }
     server.abort();
 }
 
@@ -436,8 +509,17 @@ async fn extension_requests_persist_resources_and_refresh_only_the_request_token
         location.as_deref(),
         Some("/api/v1/extensions/custom-transcriber")
     );
-    assert_eq!(created["spec"], body["spec"]);
-    let publication = json!({"observedGeneration":1,"taskId":"old-task","artifactReference":"registry/example@sha256:old"});
+    for field in ["apiVersion", "kind", "metadata", "spec", "generation"] {
+        assert!(created.get(field).is_none(), "unexpected Kubernetes field: {field}");
+    }
+    assert_eq!(created["name"], body["name"]);
+    for (field, value) in body.as_object().unwrap() {
+        assert_eq!(&created[field], value);
+    }
+    assert!(created["status"].is_null());
+    let publication = json!({"observedGeneration":1,"taskId":"old-task","artifactReference":"registry/example@sha256:old",
+        "conditions":[{"type":"Ready","status":"True","reason":"ArtifactPublished","message":"Artifact published.",
+            "lastTransitionTime":"2026-11-06T12:00:00Z","observedGeneration":1}]});
     stored.lock().unwrap().as_mut().unwrap()["status"] = publication.clone();
     let fetched = expect(&store, Method::GET, location.as_deref().unwrap(), None, 200).await;
     assert_eq!(fetched["status"], publication);
@@ -452,12 +534,15 @@ async fn extension_requests_persist_resources_and_refresh_only_the_request_token
             202,
         )
         .await;
-        assert_eq!(refreshed["metadata"]["generation"], generation);
-        assert_eq!(refreshed["metadata"]["uid"], created["metadata"]["uid"]);
+        assert!(refreshed.get("generation").is_none());
+        assert_eq!(stored.lock().unwrap().as_ref().unwrap()["metadata"]["generation"], generation);
+        assert_eq!(refreshed["name"], created["name"]);
         assert_eq!(refreshed["status"], publication);
-        let mut spec = refreshed["spec"].clone();
-        spec.as_object_mut().unwrap().remove("refreshToken");
-        assert_eq!(spec, body["spec"]);
+        for (field, value) in body.as_object().unwrap() {
+            assert_eq!(&refreshed[field], value);
+        }
+        assert!(refreshed["refreshToken"].is_string());
+        assert!(refreshed.get("spec").is_none());
     }
     {
         let tokens = tokens.lock().unwrap();
@@ -472,7 +557,7 @@ async fn extension_requests_persist_resources_and_refresh_only_the_request_token
         location.unwrap(),
         format!(
             "/api/v1/extensions/{}",
-            resource["metadata"]["name"].as_str().unwrap()
+            resource["name"].as_str().unwrap()
         )
     );
     server.abort();
@@ -529,7 +614,10 @@ async fn extension_api_preserves_kubernetes_errors_and_rejects_malformed_request
         for malformed in [
             json!({}),
             json!({"source":"legacy"}),
-            json!({"spec":{"name":"Missing adapter","sourceType":"git","source":"example"}}),
+            json!({"spec":{"displayName":"Missing adapter","sourceType":"git","source":"example"}}),
+            json!({"name":"legacy-id", "spec":body}),
+            { let mut value = body.clone(); value["apiVersion"] = json!("control.suntitle.io/v1alpha1"); value },
+            { let mut value = body.clone(); value["metadata"] = json!({"name":"legacy-id"}); value },
         ] {
             expect(
                 &store,
@@ -618,16 +706,16 @@ async fn source_registration_resolves_manifest_before_kubernetes_write() {
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
     let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "test");
     let directory = tempfile::tempdir().unwrap();
-    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"name":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"type":"translator","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
+    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"displayName":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"nodeRole":"translator","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
     std::fs::write(directory.path().join("manifest.yaml"), serde_yaml::to_string(&manifest).unwrap()).unwrap();
     let source = directory.path().to_str().unwrap();
     let (status, created, location) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":source}))).await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     assert_eq!(location.as_deref(), Some("/api/v1/extensions/hello"));
-    assert_eq!(created["metadata"]["name"], "hello");
-    assert_eq!(created["spec"]["source"], source);
-    assert_eq!(created["spec"]["sourceType"], "local");
-    assert_eq!(created["spec"]["adapter"], json!({"type":"translator","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}));
+    assert_eq!(created["name"], "hello");
+    assert_eq!(created["source"], source);
+    assert_eq!(created["sourceType"], "local");
+    assert_eq!(created["adapter"], json!({"nodeRole":"translator","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}));
     expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":directory.path().join("missing")})), 422).await;
     expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"zip","source":source})), 400).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);

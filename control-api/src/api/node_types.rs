@@ -3,7 +3,7 @@ use actix_web::{get, web};
 use super::errors::{ApiResult, Unauthorized};
 use super::models::{
     NodeSettingDefinition, NodeSettingInput, NodeSettingOption, NodeSettingValue,
-    NodeSettingValueType, NodeType, NodeTypeDefinition, NodeTypeDefinitionList,
+    NodeSettingValueType, NodeRole, NodeTypeDefinition, NodeTypeDefinitionList,
 };
 
 fn setting(
@@ -100,10 +100,10 @@ fn transcriber_definition() -> NodeTypeDefinition {
     vad_enabled.description = Some("Skip silent audio before transcription.".to_owned());
 
     NodeTypeDefinition {
-        node_type: NodeType::Transcriber,
+        node_type: NodeRole::Transcriber,
         name: "Transcriber".to_owned(),
         description: "Turns incoming audio into timestamped text.".to_owned(),
-        input_types: vec![NodeType::AudioSource],
+        input_types: vec![NodeRole::AudioSource],
         settings: vec![model, language, task, beam_size, vad_enabled],
     }
 }
@@ -162,7 +162,7 @@ fn audio_source_definition() -> NodeTypeDefinition {
     device_name.placeholder = Some("USB Audio Device".to_owned());
 
     NodeTypeDefinition {
-        node_type: NodeType::AudioSource,
+        node_type: NodeRole::AudioSource,
         name: "Audio source".to_owned(),
         description: "Captures audio from a device or stream.".to_owned(),
         input_types: vec![],
@@ -224,10 +224,10 @@ fn translator_definition() -> NodeTypeDefinition {
     );
 
     NodeTypeDefinition {
-        node_type: NodeType::Translator,
+        node_type: NodeRole::Translator,
         name: "Translator".to_owned(),
         description: "Translates transcription text into another language.".to_owned(),
-        input_types: vec![NodeType::Transcriber],
+        input_types: vec![NodeRole::Transcriber],
         settings: vec![
             source_language,
             target_language,
@@ -288,10 +288,10 @@ fn display_definition() -> NodeTypeDefinition {
     ]);
 
     NodeTypeDefinition {
-        node_type: NodeType::Display,
+        node_type: NodeRole::Display,
         name: "Display".to_owned(),
         description: "Presents transcription and translation output.".to_owned(),
-        input_types: vec![NodeType::Transcriber, NodeType::Translator],
+        input_types: vec![NodeRole::Transcriber, NodeRole::Translator],
         settings: vec![max_lines, font_scale, show_original, theme],
     }
 }

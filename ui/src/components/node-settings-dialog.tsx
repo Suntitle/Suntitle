@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { AudioWaveform, Languages, Mic, Monitor } from "lucide-react"
+import { Mic } from "lucide-react"
 import { observer } from "mobx-react-lite"
 
 import { SettingField } from "@/components/node-setting-field"
@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { nodeTypeIcons } from "@/lib/node-icons"
 import { cn } from "@/lib/utils"
 import { extensionDefinition, extensionFormValues, extensionSettings } from "@/stores/extension-nodes"
 import { useStores } from "@/stores"
@@ -26,24 +27,18 @@ import type {
   Node,
   NodeSettingValue,
   NodeStatus,
-  NodeType,
+  NodeRole,
   NodeUpdate,
   TranscriberSettings,
   TranslatorSettings,
 } from "@/stores/models"
 
-const nodeTypeLabels: Record<NodeType, string> = {
+const nodeTypeLabels: Record<NodeRole, string> = {
   audio_source: "Audio source",
   transcriber: "Transcriber",
   translator: "Translator",
   display: "Display",
-}
-
-const nodeTypeIcons: Record<NodeType, typeof Mic> = {
-  audio_source: Mic,
-  transcriber: AudioWaveform,
-  translator: Languages,
-  display: Monitor,
+  custom: "Custom",
 }
 
 const statusStyles: Record<NodeStatus, string> = {
@@ -87,6 +82,7 @@ function createNodeUpdate(node: Node, name: string, inputNodeId: string | null, 
     case "transcriber": return { ...base, type: node.type, settings: settings as unknown as TranscriberSettings }
     case "translator": return { ...base, type: node.type, settings: settings as unknown as TranslatorSettings }
     case "display": return { ...base, type: node.type, settings: settings as unknown as DisplaySettings }
+    case "custom": throw new Error("Custom nodes require an extension")
   }
 }
 
@@ -98,7 +94,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
   const [inputNodeId, setInputNodeId] = useState<string | null>(null)
   const [settings, setSettings] = useState<Record<string, NodeSettingValue>>({})
 
-  const extension = extensionsStore.items.find((item) => item.metadata.name === node?.spec.extensionRef?.name)
+  const extension = extensionsStore.items.find((item) => item.name === node?.spec.extensionRef?.name)
   const builtInDefinition = node ? nodesStore.nodeTypes.find((item) => item.type === node.type) : undefined
   const definition = node?.spec.extensionRef
     ? extension ? extensionDefinition(extension, builtInDefinition) : null
@@ -118,7 +114,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
 
     setNodeName(node.name)
     setInputNodeId(node.inputNodeId)
-    setSettings(extension ? extensionFormValues(extension, node.spec.settings.custom ?? {}) : { ...node.settings })
+    setSettings(extension ? extensionFormValues(extension, node.spec.settings.custom ?? {}) : node.type === "custom" ? {} : { ...node.settings })
     nodesStore.clearSaveError()
 
     if (nodesStore.nodeTypes.length === 0) {

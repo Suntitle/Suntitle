@@ -1,30 +1,28 @@
 {
-  "name": "custom-transcriber",
-  "spec": {
-    "name": "Custom transcriber",
-    "sourceType": "local",
-    "source": "/opt/suntitle/extensions/custom-transcriber",
-    "adapter": {
-      "type": "transcriber",
-      "execution": {
-        "runtime": "executable",
-        "command": "./bin/transcriber"
+  "sourceType": "local",
+  "source": "/opt/suntitle/extensions/custom-transcriber",
+  "adapter": {
+    "execution": {
+      "runtime": "executable",
+      "command": "./bin/transcriber"
+    },
+    "settings": {
+      "language": {
+        "default": "en"
+      }
+    },
+    "arguments": [
+      {
+        "flag": "--server",
+        "source": "runtime.websocketUrl"
       },
-      "settings": {
-        "language": {
-          "default": "en"
-        }
-      },
-      "arguments": [
-        {
-          "flag": "--server",
-          "source": "runtime.websocketUrl"
-        },
-        {
-          "flag": "--language",
-          "source": "settings.language"
-        }
-      ]
-    }
-  }
+      {
+        "flag": "--language",
+        "source": "settings.language"
+      }
+    ],
+    "nodeRole": "transcriber"
+  },
+  "displayName": "Custom transcriber",
+  "name": "custom-transcriber"
 }

@@ -1,15 +1,8 @@
 {
   "items": [
     {
-      "apiVersion": "control.suntitle.io/v1alpha1",
-      "kind": "SuntitleHost",
-      "metadata": {
-        "name": "studio-host-resource",
-        "uid": "20000000-0000-4000-8000-000000000001"
-      },
-      "spec": {
-        "name": "studio-host"
-      },
+      "name": "studio-host-resource",
+      "displayName": "studio-host",
       "status": {
         "ip": "192.0.2.10",
         "agentVersion": "0.1.0",

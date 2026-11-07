@@ -29,8 +29,13 @@ pub enum Error {
     #[error("blob verification failed: {0}")]
     Verification(String),
     /// Decompression or extraction failed.
+    #[cfg(unix)]
     #[error("rendering failed: {0}")]
     Render(#[from] ocirender::Error),
+    /// Windows archive decompression or extraction failed.
+    #[cfg(windows)]
+    #[error("rendering failed: {0}")]
+    Render(#[source] io::Error),
     /// A blocking packaging task failed.
     #[error("packaging task failed: {0}")]
     Packaging(#[from] tokio::task::JoinError),

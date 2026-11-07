@@ -32,25 +32,48 @@ installs a ClusterRole allowing only GET on these three CRDs for readiness.
 `--bootstrap-kubeconfig` remains an optional, separate CRD installation identity.
 
 Host/node list responses contain `items` and an opaque `resourceVersion`.
-Node GET/create/update/restart responses contain Kubernetes resources. Create
+Host and node responses contain `name`, flattened spec fields, and unchanged resource status.
+Human-readable labels are `displayName`, stored in the CRD as `spec.displayName`.
+The host path parameter is its resource name, not its UID. Create
 returns 201 and Location, using the path host for `hostRef`. PUT
-accepts `{spec: ...}` and replaces only the complete desired spec. Restart has no
+accepts flat desired fields and replaces only the complete desired spec. Restart has no
 request body and patches only a fresh restart token, returning 202. Neither write
 uses a resource-version precondition or a preliminary resource read. Metadata and
 status are preserved by these patches.
 
 Extension list responses also contain `items` and `resourceVersion`.
-`GET /api/v1/extensions/{name}` returns the stored resource, including status.
-`POST /api/v1/extensions` accepts `{name?, spec}` and returns 201 with Location.
-The optional `name` is the Kubernetes name; `spec.name` is the display name.
+`GET /api/v1/extensions/{name}` returns `name`, flattened spec fields, and resource status.
+`POST /api/v1/extensions` accepts `{name?, displayName, sourceType, source, adapter}`
+and returns 201 with Location. `name` is the Kubernetes identity; `displayName`
+is the human-readable label stored as `spec.displayName` in the CRD.
 Omitting `name` generates an `extension-<UUID>` name. The required spec fields
-are `name`, `sourceType` (`local`, `git`, `oci`, or `http`), `source`, and `adapter`.
-`adapter.type` selects the pipeline type. `adapter.execution` remains an extensible
-object. `adapter.settings` maps setting names to `{default?, required?}` declarations;
+are `displayName`, `sourceType` (`local`, `git`, `oci`, or `http`), `source`, and `adapter`.
+`adapter.nodeRole` selects `audio_source`, `transcriber`, `translator`, `display`,
+or `custom` (the default when omitted). Roles classify nodes for the UI and input
+compatibility. `runtime.websocketUrl` always supplies the configured data-plane
+base URL, independent of role. Extensions MUST append any required endpoint path
+themselves or supply a complete URL through `settings.<key>`. Argument sources do
+not support URL concatenation or interpolation. `adapter.execution` remains an
+extensible object. `adapter.settings` maps setting names to `{default?, required?}` declarations;
 `required` defaults to false. A declared default supplies a value without requiring
 `required: true`. `adapter.arguments` contains bindings with `source`,
 optional `flag`, and `mode` (`value` by default, or `switch`). Switch bindings
 require a flag. Sources are `settings.<key>` or `runtime.websocketUrl`.
+For example, an extension can choose a complete display URL without declaring a role:
+
+```yaml
+adapter:
+  execution:
+    runtime: python
+    command: ./main.py
+  settings:
+    websocketUrl:
+      default: ws://127.0.0.1:3030/display
+  arguments:
+    - flag: --server
+      source: settings.websocketUrl
+```
+
 Execution resolution uses node overrides before extension defaults and reports
 missing required settings. Null, false, zero, and empty strings count as supplied
 values. Optional settings without values omit their mappings. Neither the Node CR
@@ -87,7 +110,10 @@ certificate CNs. Neither identity can install CRDs or RBAC. API reads hosts and
 writes node desired state, but cannot write status or host finalizers. Proxy can
 watch/manage resources and status and perform lifecycle cleanup. Nodes reference hosts through `spec.hostRef.name`. A dedicated GC controller
 deletes referencing nodes on host deletion and retains the host cleanup finalizer
-until their runtime cleanup finishes.
+until their runtime cleanup finishes. Extension deletion follows the same sequence:
+`spec.extensionRef.name` selects dependent nodes across hosts. The extension cleanup
+finalizer remains until those nodes disappear, including while hosts are offline.
+Unrelated nodes and built-in nodes are retained.
 
 Specs reuse the current typed Rust settings through an externally tagged enum:
 

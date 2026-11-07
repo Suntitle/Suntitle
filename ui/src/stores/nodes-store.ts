@@ -11,7 +11,7 @@ import type {
   HostList,
   HostResource,
   NodeStatus,
-  NodeType,
+  NodeRole,
   NodeTypeDefinition,
   NodeTypeDefinitionList,
   NodeUpdate,
@@ -24,7 +24,7 @@ export class NodesStore {
   nodeTypes: NodeTypeDefinition[] = []
   nodeTypesTotal = 0
   selectedNode: Node | null = null
-  typeFilter: NodeType | null = null
+  typeFilter: NodeRole | null = null
   statusFilter: NodeStatus | null = null
   isLoading = false
   isLoadingNodeTypes = false
@@ -49,15 +49,15 @@ export class NodesStore {
     return this.items.filter((node) => node.host.id === hostId)
   }
 
-  get nodesByType(): ReadonlyMap<NodeType, Node[]> {
-    const groups = new Map<NodeType, Node[]>([
-      ["audio_source", []], ["transcriber", []], ["translator", []], ["display", []],
+  get nodesByType(): ReadonlyMap<NodeRole, Node[]> {
+    const groups = new Map<NodeRole, Node[]>([
+      ["audio_source", []], ["transcriber", []], ["translator", []], ["display", []], ["custom", []],
     ])
     this.items.forEach((node) => groups.get(node.type)?.push(node))
     return groups
   }
 
-  setTypeFilter(type: NodeType | null): void { this.typeFilter = type }
+  setTypeFilter(type: NodeRole | null): void { this.typeFilter = type }
   setStatusFilter(status: NodeStatus | null): void { this.statusFilter = status }
   selectNode(node: Node | null): void { this.selectedNode = node }
   clearError(): void { this.error = null }
@@ -97,7 +97,7 @@ export class NodesStore {
         this.api.get<NodeList>("/nodes"),
         this.api.get<HostList>("/hosts"),
       ])
-      if (response.items.some((resource) => resource.spec.extensionRef)) await this.extensions.loadExtensions().catch(() => undefined)
+      if (response.items.some((resource) => resource.extensionRef)) await this.extensions.loadExtensions().catch(() => undefined)
       runInAction(() => {
         this.hosts = hosts.items
         this.items = response.items.map((resource) => mapNode(resource, this.hosts, this.extensions.items))
@@ -153,13 +153,13 @@ export class NodesStore {
     this.isInstalling = true
     this.installError = null
     try {
-      const host = this.hosts.find((host) => host.metadata.uid === hostId)
+      const host = this.hosts.find((host) => host.name === hostId)
       if (!host) throw new Error("Host is no longer available")
-      const { inputNodeId, type, settings, extensionRef, ...fields } = create
+      const { inputNodeId, type, settings, extensionRef, name, ...fields } = create
       const node = mapNode(await this.api.post<NodeResource>(`/hosts/${encodeURIComponent(hostId)}/nodes`, {
-        spec: { ...fields, hostRef: { name: host.metadata.name },
-          inputRef: inputNodeId ? { name: inputNodeId } : null,
-          ...(extensionRef ? { extensionRef: { name: extensionRef } } : {}), settings: { [extensionRef ? "custom" : type]: settings } },
+        ...fields, displayName: name, hostRef: { name: host.name },
+        inputRef: inputNodeId ? { name: inputNodeId } : null,
+        ...(extensionRef ? { extensionRef: { name: extensionRef } } : {}), settings: { [extensionRef ? "custom" : type]: settings },
       }), this.hosts, this.extensions.items)
       runInAction(() => {
         this.upsertNode(node)
@@ -192,7 +192,7 @@ export class NodesStore {
     this.pendingNodeActionIds.add(node.id)
     this.nodeActionErrors.delete(node.id)
     try {
-      const updatedNode = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(node.id)}`, { spec: { ...node.spec, enabled: false } }), this.hosts, this.extensions.items)
+      const updatedNode = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(node.id)}`, { ...node.spec, enabled: false }), this.hosts, this.extensions.items)
       runInAction(() => { this.upsertNode(updatedNode) })
       return updatedNode
     } catch (error) {
@@ -225,10 +225,10 @@ export class NodesStore {
   private specUpdate(nodeId: string, update: NodeUpdate) {
     const node = this.nodeById.get(nodeId)
     if (!node) throw new Error("Node is no longer available")
-    const { inputNodeId, type, settings, ...fields } = update
+    const { inputNodeId, type, settings, name, ...fields } = update
     const { extensionRef: _extensionRef, ...editable } = fields as typeof fields & { extensionRef?: string }
-    return { spec: { ...node.spec, ...editable,
-      inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [node.spec.extensionRef ? "custom" : type]: settings } } }
+    return { ...node.spec, ...editable, displayName: name,
+      inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [node.spec.extensionRef ? "custom" : type]: settings } }
   }
 
   private upsertNode(node: Node): void {

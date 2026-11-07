@@ -1,32 +1,24 @@
 {
-  "apiVersion": "control.suntitle.io/v1alpha1",
-  "kind": "SuntitleNode",
-  "metadata": {
-    "name": "30000000-0000-4000-8000-000000000003",
-    "uid": "uid-30000000-0000-4000-8000-000000000003",
-    "creationTimestamp": "2026-08-20T10:05:00Z"
+  "name": "30000000-0000-4000-8000-000000000003",
+  "description": "English transcription",
+  "enabled": true,
+  "hostRef": {
+    "name": "studio-host-resource"
   },
-  "spec": {
-    "name": "Updated transcriber",
-    "description": "English transcription",
-    "enabled": true,
-    "hostRef": {
-      "name": "studio-host-resource"
-    },
-    "inputRef": {
-      "name": "30000000-0000-4000-8000-000000000001"
-    },
-    "restartToken": "existing-restart",
-    "settings": {
-      "transcriber": {
-        "model": "medium",
-        "language": "en-US",
-        "task": "transcribe",
-        "beamSize": 5,
-        "vadEnabled": true
-      }
+  "inputRef": {
+    "name": "30000000-0000-4000-8000-000000000001"
+  },
+  "restartToken": "existing-restart",
+  "settings": {
+    "transcriber": {
+      "model": "medium",
+      "language": "en-US",
+      "task": "transcribe",
+      "beamSize": 5,
+      "vadEnabled": true
     }
   },
+  "displayName": "Updated transcriber",
   "status": {
     "phase": "Running"
   }

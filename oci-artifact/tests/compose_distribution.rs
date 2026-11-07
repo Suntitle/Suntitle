@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Live compatibility check against the Distribution service in compose.yaml.
 use std::{
     collections::BTreeMap,

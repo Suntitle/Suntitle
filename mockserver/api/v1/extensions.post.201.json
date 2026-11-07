@@ -1,20 +1,14 @@
 {
-  "apiVersion": "control.suntitle.io/v1alpha1",
-  "kind": "SuntitleExtension",
-  "metadata": {
-    "name": "custom-captioner",
-    "generation": 1
+  "source": "https://github.com/suntitle/extensions/obs-captions.git",
+  "sourceType": "git",
+  "adapter": {
+    "execution": {
+      "command": "./bin/extension",
+      "runtime": "executable"
+    },
+    "nodeRole": "display"
   },
-  "spec": {
-    "name": "Custom captioner",
-    "source": "https://github.com/suntitle/extensions/obs-captions.git",
-    "sourceType": "git",
-    "adapter": {
-      "type": "display",
-      "execution": {
-        "command": "./bin/extension",
-        "runtime": "executable"
-      }
-    }
-  }
+  "status": null,
+  "displayName": "Custom captioner",
+  "name": "custom-captioner"
 }

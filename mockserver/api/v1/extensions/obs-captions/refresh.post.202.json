@@ -1,23 +1,14 @@
 {
-  "apiVersion": "control.suntitle.io/v1alpha1",
-  "kind": "SuntitleExtension",
-  "metadata": {
-    "name": "obs-captions",
-    "generation": 2
-  },
-  "spec": {
-    "name": "obs-captions",
-    "source": "https://github.com/suntitle/extensions/obs-captions.git",
-    "sourceType": "git",
-    "adapter": {
-      "type": "display",
-      "execution": {
-        "command": "./bin/extension",
-        "runtime": "executable"
-      }
+  "source": "https://github.com/suntitle/extensions/obs-captions.git",
+  "sourceType": "git",
+  "adapter": {
+    "execution": {
+      "command": "./bin/extension",
+      "runtime": "executable"
     },
-    "refreshToken": "refresh-2"
+    "nodeRole": "display"
   },
+  "refreshToken": "refresh-2",
   "status": {
     "observedGeneration": 1,
     "conditions": [
@@ -31,5 +22,7 @@
       }
     ],
     "artifactReference": "registry.example.com/obs-captions@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  }
+  },
+  "displayName": "obs-captions",
+  "name": "obs-captions"
 }

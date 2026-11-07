@@ -32,10 +32,10 @@ describe("Node deletion", () => {
       let releaseDelete: () => void
       const deleteResponse = new Cypress.Promise<void>((resolve) => { releaseDelete = resolve })
       cy.fixture("api/v1/nodes.json").then((body) => {
-        body.items.find((node: { metadata: { name: string } }) => node.metadata.name === nodeId).spec.enabled = false
+        body.items.find((node: { name: string }) => node.name === nodeId).enabled = false
         cy.intercept("GET", "**/api/v1/nodes", (request) => {
           const items = deleted
-            ? body.items.filter((node: { metadata: { name: string } }) => node.metadata.name !== nodeId)
+            ? body.items.filter((node: { name: string }) => node.name !== nodeId)
             : body.items
           request.reply({ body: { ...body, items, total: items.length } })
         }).as("getNodes")
@@ -103,7 +103,7 @@ describe("Node deletion", () => {
 
   it("keeps terminating nodes visible until the API reports their removal", () => {
     cy.fixture("api/v1/nodes.json").then((body) => {
-      body.items[0].metadata.deletionTimestamp = "2026-09-13T18:00:00Z"
+      body.items[0].status.phase = "Terminating"
       cy.intercept("GET", "**/api/v1/nodes", { body }).as("getNodes")
     })
     cy.intercept("DELETE", `**/api/v1/nodes/${nodeId}`, { statusCode: 202, body: "" }).as("deleteNode")

@@ -82,14 +82,17 @@ Cancellation during extraction waits for the renderer. Partial output remains.
 Callers must not abort the task or drop its future while extraction is running.
 The result contains the manifest digest and absolute output path.
 
-Directory archives retain ordinary file and directory modes, including executable
+On Unix, directory archives retain ordinary file and directory modes, including executable
 bits, through ocirender 0.3.0. Direct file pushes do not record Unix permissions;
 like ORAS, downloaded raw files use normal file-creation permissions and the
 process umask. Ownership, privileged modes, xattrs, and full metadata fidelity are not
 promised. Within directory archives, literal `.wh.*` filenames are interpreted as
 container whiteouts and do not round-trip. No extraction workarounds are applied.
 
-Linux and macOS are supported. Windows is unsupported by the upstream renderer.
+Linux and macOS use upstream ocirender. Windows uses conditionally compiled
+`tar`/`flate2` extraction for the supported single gzip directory layer;
+ocirender is excluded from Windows builds. Windows permissions follow native
+filesystem behavior; restoring symlinks requires host privileges.
 Default Rust TLS supports static Linux musl builds. XZ is compiled from source
 with static linking enabled. Native TLS is selectable with
 `--no-default-features --features native-tls`.

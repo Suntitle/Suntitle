@@ -6,7 +6,7 @@ use suntitle_core::kubernetes::{
 
 fn adapter() -> ExtensionAdapter {
     serde_json::from_value(json!({
-        "type":"transcriber",
+        "nodeRole":"transcriber",
         "execution":{"runtime":"executable", "command":"./bin/transcriber"},
         "settings":{
             "model":{"default":"fast"},
@@ -27,15 +27,42 @@ fn adapter() -> ExtensionAdapter {
     .unwrap()
 }
 
+/// Declared and resolved adapters MUST preserve nodeRole, including custom.
+#[test]
+fn node_roles_round_trip_without_the_legacy_type_field() {
+    for role in ["audio_source", "transcriber", "translator", "display", "custom"] {
+        let document = json!({"nodeRole":role,"execution":{"command":"./run"}});
+        let adapter: ExtensionAdapter = serde_json::from_value(document.clone()).unwrap();
+        let resolved = serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
+        assert_eq!(resolved["nodeRole"], role);
+        assert!(resolved.get("type").is_none());
+        let mut legacy = document;
+        legacy.as_object_mut().unwrap().remove("nodeRole");
+        legacy["type"] = json!(role);
+        assert!(serde_json::from_value::<ExtensionAdapter>(legacy).is_err());
+    }
+}
+
+/// An omitted role MUST resolve to custom without an explicit declaration.
+#[test]
+fn omitted_node_role_defaults_to_custom() {
+    let adapter: ExtensionAdapter = serde_json::from_value(json!({
+        "execution":{"command":"./run"}
+    }))
+    .unwrap();
+    let resolved = serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
+    assert_eq!(resolved["nodeRole"], "custom");
+}
+
 #[test]
 fn nodes_inherit_extension_defaults_and_mappings_without_changing_desired_state() {
     let extension: SuntitleExtensionSpec = serde_json::from_value(json!({
-        "name":"Transcriber", "sourceType":"local", "source":"/extensions/example", "adapter":adapter()
+        "displayName":"Transcriber", "sourceType":"local", "source":"/extensions/example", "adapter":adapter()
     })).unwrap();
     let before = serde_json::to_value(&extension).unwrap();
     for (language, model) in [("en", "small"), ("cs", "custom model")] {
         let node: SuntitleNodeSpec = serde_json::from_value(json!({
-            "name":"Node", "hostRef":{"name":"host"}, "extensionRef":{"name":"extension"},
+            "displayName":"Node", "hostRef":{"name":"host"}, "extensionRef":{"name":"extension"},
             "settings":{"custom":{"language":language,"model":model,"extra":{"nested":[1,2]}}}
         }))
         .unwrap();
@@ -48,7 +75,7 @@ fn nodes_inherit_extension_defaults_and_mappings_without_changing_desired_state(
             })
         );
         assert_eq!(resolved.execution, extension.adapter.execution);
-        assert_eq!(resolved.node_type, extension.adapter.node_type);
+        assert_eq!(resolved.node_role, extension.adapter.node_role);
         assert_eq!(resolved.arguments, extension.adapter.arguments[..5]);
         assert_eq!(serde_json::to_value(node).unwrap(), overrides);
     }
@@ -86,7 +113,7 @@ fn default_presence_and_override_presence_preserve_every_json_value() {
         json!({"nested":[null]}),
     ] {
         let adapter: ExtensionAdapter = serde_json::from_value(json!({
-            "type":"display", "execution":{"command":"./run"}, "settings":{"value":{"default":value}},
+            "nodeRole":"display", "execution":{"command":"./run"}, "settings":{"value":{"default":value}},
             "arguments":[{"source":"settings.value"}]
         }))
         .unwrap();
@@ -156,7 +183,7 @@ fn switch_requires_a_flag_in_the_crd_rule() {
 #[test]
 fn settings_are_optional_unless_explicitly_required_and_defaults_supply_values() {
     let adapter: ExtensionAdapter = serde_json::from_value(json!({
-        "type":"display", "execution":{"command":"./run"},
+        "nodeRole":"display", "execution":{"command":"./run"},
         "settings":{
             "optional":{}, "defaulted":{"default":"value"},
             "requiredWithDefault":{"required":true,"default":null}

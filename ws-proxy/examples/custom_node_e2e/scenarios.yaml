@@ -19,3 +19,6 @@
   runtime: pythonModule
   entry: probe_module/__main__.py
   seedFrom: python-module
+- name: custom
+  runtime: python
+  entry: probe.py

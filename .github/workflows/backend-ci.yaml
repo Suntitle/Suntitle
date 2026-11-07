@@ -142,8 +142,12 @@ jobs:
         run: docker compose down --volumes --remove-orphans
 
   check-gui:
-    name: Diamant GUI (default build)
-    runs-on: ubuntu-24.04
+    name: Diamant GUI (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, windows-2022]
     timeout-minutes: 30
     env:
       CARGO_BUILD_JOBS: 2
@@ -156,6 +160,10 @@ jobs:
 
       - name: Check default GUI build
         run: cargo check --locked -p diamant --bin diamant
+
+      - name: Test Windows directory restoration
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p oci-artifact --lib
 
   check-python:
     name: Python mock API and node CLI tests

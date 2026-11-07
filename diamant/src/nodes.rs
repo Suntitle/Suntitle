@@ -185,8 +185,8 @@ pub struct NodeProcessManager {
     project_dir: PathBuf,
     /// Diamant executable providing the embedded Python launcher.
     uv_bin: PathBuf,
-    /// Runtime WebSocket endpoints derived from the registration connection.
-    endpoints: NodeEndpoints,
+    /// Validated data-plane base URL shared by built-in and extension commands.
+    data_plane_url: Url,
     /// Time allowed for child processes to terminate before forced cleanup.
     shutdown_grace: Duration,
     /// Current built-in or launched node processes by namespace and name.
@@ -195,7 +195,7 @@ pub struct NodeProcessManager {
     prepared_extensions: HashMap<String, PreparedExtension>,
 }
 impl NodeProcessManager {
-    /// Construct a session owner without starting processes or preparing extensions.
+    /// Validate and normalize the base URL without starting processes or preparing extensions.
     pub fn new(
         project_dir: PathBuf,
         uv_bin: PathBuf,
@@ -208,10 +208,14 @@ impl NodeProcessManager {
                 project_dir.display()
             ));
         }
+        validate_data_plane_url(&data_plane_url)?;
+        let data_plane_url = data_plane_url
+            .join("")
+            .map_err(|error| format!("invalid data-plane base URL: {error}"))?;
         Ok(Self {
             project_dir,
             uv_bin,
-            endpoints: NodeEndpoints::new(&data_plane_url)?,
+            data_plane_url,
             shutdown_grace,
             nodes: HashMap::new(),
             prepared_extensions: HashMap::new(),
@@ -256,7 +260,7 @@ impl NodeProcessManager {
         let command = if let Some(custom) = custom {
             self.prepare_custom_command(&identity, custom).await
         } else {
-            command_spec(&self.uv_bin, &self.project_dir, &self.endpoints, &spec)
+            command_spec(&self.uv_bin, &self.project_dir, &self.data_plane_url, &spec)
         };
         if let Some(node) = self.nodes.get_mut(&key) {
             if node.identity.target.uid == identity.target.uid
@@ -322,7 +326,7 @@ impl NodeProcessManager {
             custom.adapter,
         )
         .await?;
-        let command = custom_command_spec(&self.uv_bin, &self.endpoints, &installation)?;
+        let command = custom_command_spec(&self.uv_bin, &self.data_plane_url, &installation)?;
         self.prepare_extension(installation);
         Ok(command)
     }
@@ -422,7 +426,7 @@ impl NodeProcessManager {
             .map(|node| {
                 let command = node.command.as_ref();
                 NodeSnapshot {
-                    name: node.spec.name.clone(),
+                    name: node.spec.display_name.clone(),
                     node_type: match &node.spec.settings {
                         NodeSettings::AudioSource(_) => "Audio source",
                         NodeSettings::Transcriber(_) => "Transcriber",
@@ -481,67 +485,13 @@ fn validate_data_plane_url(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
-fn endpoint(base: &Url, suffix: &str) -> Result<String, String> {
-    base.join(suffix)
-        .map(|url| url.to_string())
-        .map_err(|error| format!("invalid data-plane endpoint: {error}"))
-}
-
-fn authority(base: &Url) -> Result<String, String> {
-    let host = base
-        .host_str()
-        .ok_or_else(|| "data-plane URL has no host".to_owned())?;
-    let host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    };
-    Ok(match base.port() {
-        Some(port) => format!("{host}:{port}"),
-        None => host,
-    })
-}
-
-// TODO: NodeEndpoints must be moved on API level and imported here.
-/// Data-plane addresses prepared once from validated host configuration.
-#[derive(Debug)]
-pub struct NodeEndpoints {
-    audio: String,
-    transcriber: String,
-    authority: String,
-    /// Type-specific endpoint for custom translators.
-    translator: String,
-    /// Type-specific endpoint for custom displays.
-    display: String,
-}
-
-impl NodeEndpoints {
-    pub fn new(base: &Url) -> Result<Self, String> {
-        validate_data_plane_url(base)?;
-        Ok(Self {
-            audio: endpoint(base, "")?,
-            transcriber: endpoint(base, "transcribe")?,
-            authority: authority(base)?,
-            translator: endpoint(base, "translate")?,
-            display: endpoint(base, "display")?,
-        })
-    }
-}
-
 /// Build ordered arguments without shell evaluation. Structured and null values require explicit conversion.
 fn custom_command_spec(
     uv_bin: &Path,
-    endpoints: &NodeEndpoints,
+    data_plane_url: &Url,
     installation: &PreparedExtension,
 ) -> io::Result<CommandSpec> {
-    use suntitle_core::models::NodeType;
     let adapter = &installation.adapter;
-    let websocket_url = match adapter.node_type {
-        NodeType::AudioSource => &endpoints.audio,
-        NodeType::Transcriber => &endpoints.transcriber,
-        NodeType::Translator => &endpoints.translator,
-        NodeType::Display => &endpoints.display,
-    };
     let (executable, mut args) = match &installation.command {
         ExecutionCommand::Executable(path) => (path.clone(), Vec::new()),
         ExecutionCommand::Python(path) => (
@@ -565,7 +515,7 @@ fn custom_command_spec(
         ),
     };
     for binding in &adapter.arguments {
-        let runtime = serde_json::Value::String(websocket_url.clone());
+        let runtime = serde_json::Value::String(data_plane_url.as_str().to_owned());
         let value = match &binding.source {
             ArgumentSource::Runtime(RuntimeValue::WebsocketUrl) => &runtime,
             ArgumentSource::Setting(key) => adapter
@@ -611,19 +561,25 @@ fn custom_command_spec(
     })
 }
 
-/// Builds a command for an implemented node runtime.
+/// Build a built-in command, deriving its client-specific address from the base URL.
 pub fn command_spec(
     uv_bin: &Path,
     project_dir: &Path,
-    endpoints: &NodeEndpoints,
+    data_plane_url: &Url,
     update: &SuntitleNodeSpec,
 ) -> io::Result<CommandSpec> {
     let mut args: Vec<OsString> = vec!["uv".into(), "run".into(), "python".into()];
     args.extend(match &update.settings {
-        NodeSettings::AudioSource(settings) => settings.command_args(&endpoints.audio),
-        NodeSettings::Transcriber(settings) => settings.command_args(&endpoints.transcriber),
-        NodeSettings::Translator(settings) => settings.command_args(&endpoints.authority),
-        NodeSettings::Display(settings) => settings.command_args(&endpoints.authority),
+        NodeSettings::AudioSource(settings) => settings.command_args(data_plane_url.as_str()),
+        NodeSettings::Transcriber(settings) => settings.command_args(
+            data_plane_url.join("transcribe").map_err(io::Error::other)?.as_str(),
+        ),
+        NodeSettings::Translator(settings) => settings.command_args(
+            &data_plane_url[url::Position::BeforeHost..url::Position::AfterPort],
+        ),
+        NodeSettings::Display(settings) => settings.command_args(
+            &data_plane_url[url::Position::BeforeHost..url::Position::AfterPort],
+        ),
         NodeSettings::Custom(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -641,6 +597,7 @@ pub fn command_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     fn test_spec(mut json: serde_json::Value) -> SuntitleNodeSpec {
@@ -670,7 +627,7 @@ mod tests {
         command_spec(
             Path::new("fake uv"),
             Path::new("/project with spaces"),
-            &NodeEndpoints::new(&Url::parse("wss://example.test:9443/prefix/").unwrap()).unwrap(),
+            &Url::parse("wss://example.test:9443/prefix/").unwrap(),
             &update,
         )
         .unwrap()
@@ -686,7 +643,7 @@ mod tests {
         )
         .unwrap();
         let custom: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({
-            "name":"Custom", "hostRef":{"name":"host"}, "extensionRef":{"name":"plugin"},
+            "displayName":"Custom", "hostRef":{"name":"host"}, "extensionRef":{"name":"plugin"},
             "settings":{"custom":{}}
         }))
         .unwrap();
@@ -705,6 +662,7 @@ mod tests {
     }
 
     /// Native launch, argument updates, restart, and disable reuse the prepared payload.
+    #[cfg(unix)]
     #[tokio::test]
     async fn custom_native_execution_reuses_installation_and_supervises_restarts() {
         let root = tempfile::tempdir().unwrap();
@@ -719,8 +677,8 @@ mod tests {
         )
         .unwrap();
         let mut identity = test_identity();
-        let mut spec: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({"name":"Custom","hostRef":{"name":"host"},"extensionRef":{"name":"plugin"},"settings":{"custom":{}}})).unwrap();
-        let adapter = serde_json::from_value(serde_json::json!({"type":"transcriber","execution":{"command":"./run"},"settings":{"value":"a b;$(ignored)"},"arguments":[{"flag":"--value","source":"settings.value"}]})).unwrap();
+        let mut spec: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({"displayName":"Custom","hostRef":{"name":"host"},"extensionRef":{"name":"plugin"},"settings":{"custom":{}}})).unwrap();
+        let adapter = serde_json::from_value(serde_json::json!({"nodeRole":"transcriber","execution":{"command":"./run"},"settings":{"value":"a b;$(ignored)"},"arguments":[{"flag":"--value","source":"settings.value"}]})).unwrap();
         let mut custom = CustomExecution {
             reference: "registry/extensions@sha256:test".into(),
             adapter,
@@ -787,21 +745,15 @@ mod tests {
         manager.remove(&identity).await.unwrap();
     }
 
-    /// Python variants always select embedded UV; arguments and endpoints preserve their exact values.
+    /// Python variants use embedded UV and every role receives the unchanged base URL.
     #[tokio::test]
-    async fn custom_command_modes_validate_values_and_select_type_endpoints() {
+    async fn custom_command_modes_validate_values_and_preserve_base_url() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("plugin.py"), "pass").unwrap();
-        let endpoints =
-            NodeEndpoints::new(&Url::parse("wss://example.test:9443/prefix/").unwrap()).unwrap();
-        for (role, suffix) in [
-            ("audio_source", ""),
-            ("transcriber", "transcribe"),
-            ("translator", "translate"),
-            ("display", "display"),
-        ] {
+        let data_plane_url = Url::parse("wss://example.test:9443/prefix/").unwrap();
+        for role in ["audio_source", "transcriber", "translator", "display", "custom"] {
             for (runtime, entry) in [("python", "./plugin.py"), ("pythonModule", "plugin.main")] {
-                let adapter = serde_json::from_value(serde_json::json!({"type":role,"execution":{"runtime":runtime,"command":entry},"settings":{"enabled":true,"zero":0,"empty":""},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"},{"flag":"--on","source":"settings.enabled","mode":"switch"},{"source":"settings.zero"},{"source":"settings.empty"}]})).unwrap();
+                let adapter = serde_json::from_value(serde_json::json!({"nodeRole":role,"execution":{"runtime":runtime,"command":entry},"settings":{"enabled":true,"zero":0,"empty":""},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"},{"flag":"--on","source":"settings.enabled","mode":"switch"},{"source":"settings.zero"},{"source":"settings.empty"}]})).unwrap();
                 let mut installed = PreparedExtension::prepare(
                     test_identity(),
                     "artifact".into(),
@@ -811,7 +763,7 @@ mod tests {
                 .await
                 .unwrap();
                 let command =
-                    custom_command_spec(Path::new("/embedded-diamant"), &endpoints, &installed)
+                    custom_command_spec(Path::new("/embedded-diamant"), &data_plane_url, &installed)
                         .unwrap();
                 assert_eq!(command.executable, Path::new("/embedded-diamant"));
                 assert_eq!(
@@ -833,7 +785,7 @@ mod tests {
                     tail,
                     &[
                         OsString::from("--server"),
-                        format!("wss://example.test:9443/prefix/{suffix}").into(),
+                        "wss://example.test:9443/prefix/".into(),
                         "--on".into(),
                         "0".into(),
                         "".into()
@@ -846,7 +798,7 @@ mod tests {
                 ] {
                     installed.adapter.settings.insert("zero".into(), invalid);
                     assert!(
-                        custom_command_spec(Path::new("/embedded-diamant"), &endpoints, &installed)
+                        custom_command_spec(Path::new("/embedded-diamant"), &data_plane_url, &installed)
                             .is_err()
                     );
                 }
@@ -859,7 +811,7 @@ mod tests {
                     .settings
                     .insert("enabled".into(), serde_json::json!(false));
                 assert!(
-                    !custom_command_spec(Path::new("/embedded-diamant"), &endpoints, &installed)
+                    !custom_command_spec(Path::new("/embedded-diamant"), &data_plane_url, &installed)
                         .unwrap()
                         .args
                         .contains(&"--on".into())
@@ -887,7 +839,7 @@ mod tests {
     #[test]
     fn audio_arguments_are_separate_and_not_shell_interpreted() {
         let result = spec(serde_json::json!({
-            "type":"audio_source", "name":"mic", "enabled":true, "description":null,
+            "type":"audio_source", "displayName":"mic", "enabled":true, "description":null,
             "settings":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":"USB; touch /tmp/nope"},
             "inputNodeId":null
         }));
@@ -912,7 +864,7 @@ mod tests {
     #[test]
     fn transcriber_arguments_include_every_runtime_setting() {
         let result = spec(serde_json::json!({
-            "type":"transcriber", "name":"asr", "enabled":true, "description":null,
+            "type":"transcriber", "displayName":"asr", "enabled":true, "description":null,
             "settings":{"model":"large-v3","language":"en","task":"translate","beamSize":8,"vadEnabled":true},
             "inputNodeId":null
         }));
@@ -936,7 +888,7 @@ mod tests {
     #[test]
     fn translator_and_display_arguments_are_complete() {
         let translator = spec(serde_json::json!({
-            "type":"translator", "name":"translate", "enabled":true, "description":null,
+            "type":"translator", "displayName":"translate", "enabled":true, "description":null,
             "settings":{"sourceLanguage":"uk","targetLanguage":"cs","provider":"huggingface","model":"custom model","preserveFormatting":false},
             "inputNodeId":null
         }));
@@ -957,7 +909,7 @@ mod tests {
         );
 
         let display = spec(serde_json::json!({
-            "type":"display", "name":"screen", "enabled":true, "description":null,
+            "type":"display", "displayName":"screen", "enabled":true, "description":null,
             "settings":{"maxLines":3,"fontScale":1.5,"showOriginal":true,"theme":"transparent"},
             "inputNodeId":null
         }));
@@ -977,6 +929,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn duplicate_apply_and_remove_preserve_identity_and_reap_child() {
         let directory = std::env::temp_dir().join(format!("diamant-nodes-{}", Uuid::new_v4()));
@@ -999,7 +952,7 @@ mod tests {
         )
         .unwrap();
         let update = test_spec(serde_json::json!({
-            "type":"display", "name":"screen", "enabled":true, "description":null,
+            "type":"display", "displayName":"screen", "enabled":true, "description":null,
             "settings":{"maxLines":3,"fontScale":1.0,"showOriginal":false,"theme":"dark"}, "inputNodeId":null
         }));
         let identity = test_identity();

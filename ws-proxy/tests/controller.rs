@@ -113,11 +113,11 @@ async fn controller_apply_recovery_acceptance() {
     hosts
         .create(
             &PostParams::default(),
-            &SuntitleHost::new(&name, SuntitleHostSpec { name: name.clone() }),
+            &SuntitleHost::new(&name, SuntitleHostSpec { display_name: name.clone() }),
         )
         .await
         .unwrap();
-    let spec = serde_json::from_value(json!({"hostRef":{"name":name},"name":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}})).unwrap();
+    let spec = serde_json::from_value(json!({"hostRef":{"name":name},"displayName":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}})).unwrap();
     nodes
         .create(&PostParams::default(), &SuntitleNode::new(&name, spec))
         .await
@@ -278,7 +278,7 @@ async fn controller_apply_recovery_acceptance() {
         disabled.enabled = false;
         let request = actix_web::test::TestRequest::put()
             .uri(&format!("/nodes/{name}"))
-            .set_json(json!({"spec": disabled}))
+            .set_json(&disabled)
             .to_request();
         let response = actix_web::test::call_service(&app, request).await;
         assert!(response.status().is_success());
@@ -492,7 +492,7 @@ async fn controller_deletion_acceptance() {
     let (mut controller, mut task) = Controller::start(client.clone(), "suntitle");
     let result = AssertUnwindSafe(async {
         let mut connection = connect(&controller, &name).await;
-        let spec: SuntitleNodeSpec = serde_json::from_value(json!({"hostRef":{"name":name},"name":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}})).unwrap();
+        let spec: SuntitleNodeSpec = serde_json::from_value(json!({"hostRef":{"name":name},"displayName":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}})).unwrap();
         nodes.create(&PostParams::default(), &SuntitleNode::new(&node_names[0], spec.clone())).await.unwrap();
         let applied = apply(&mut connection).await;
         ack(&nodes, &controller, &connection, applied.clone(), true).await;

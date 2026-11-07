@@ -2,8 +2,9 @@
 //! Recipes MUST prepare binaries before startup. Guards stop applications before namespace cleanup.
 mod support;
 
+use control_api::api::hosts::Host;
 use std::{error::Error, io, process::Command, time::Duration};
-use suntitle_core::kubernetes::resources::{Presence, SuntitleHost};
+use suntitle_core::kubernetes::resources::Presence;
 use support::{ApiClient, ChildProcess, binary_directory, binary_path, wait_for_services};
 use uuid::Uuid;
 
@@ -44,7 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
 
     let client = ApiClient::new()?;
-    let host: SuntitleHost = serde_json::from_value(
+    let host: Host = serde_json::from_value(
         client
             .wait_for_host(
                 &host_name,
@@ -54,15 +55,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             )
             .await?,
     )?;
-    let uid = host.metadata.uid.as_deref().expect("host UID");
-    Uuid::parse_str(uid)?;
-    assert_eq!(host.spec.name, host_name);
+    assert_eq!(host.name, host_name);
+    assert_eq!(host.spec.display_name, host_name);
     let status = host.status.expect("host status");
     assert_eq!(status.ip.as_deref(), Some("192.0.2.10"));
     assert!(matches!(status.presence, Some(Presence::Online)));
     assert!(status.reported_metadata.contains_key("os"));
     assert!(status.reported_metadata.contains_key("arch"));
 
-    println!("PASS: Diamant registered host {uid} and GET /api/v1/hosts returned it online");
+    println!("PASS: Diamant registered host {host_name} and GET /api/v1/hosts returned it online");
     Ok(())
 }
