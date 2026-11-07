@@ -1,4 +1,5 @@
-export type NodeType = "audio_source" | "transcriber" | "translator" | "display"
+/** Pipeline role, including general-purpose extension execution. */
+export type NodeRole = "audio_source" | "transcriber" | "translator" | "display" | "custom"
 export type NodeSettingInput = "text" | "number" | "select" | "checkbox"
 export type NodeSettingValueType = "string" | "integer" | "number" | "boolean"
 export type NodeSettingValue = string | number | boolean | null
@@ -30,7 +31,7 @@ export interface ExtensionSpec {
   /** Execution contract packaged with the extension. */
   adapter: {
     /** Pipeline role of this adapter. */
-    type: NodeType
+    nodeRole: NodeRole
     /** Executable or module configuration. */
     execution: {
       /** Executable path or module name. MUST be nonempty. */
@@ -133,10 +134,10 @@ export interface NodeSettingDefinition {
 }
 
 export interface NodeTypeDefinition {
-  type: NodeType
+  type: NodeRole
   name: string
   description: string
-  inputTypes: NodeType[]
+  inputTypes: NodeRole[]
   settings: NodeSettingDefinition[]
 }
 
@@ -179,7 +180,7 @@ export interface HostList {
 export interface NodeConnection {
   id: string
   peerNodeId: string
-  peerNodeType: NodeType
+  peerNodeType: NodeRole
   peerName?: string
   direction: ConnectionDirection
   dataType: DataType
@@ -256,13 +257,21 @@ export interface DisplayNode extends NodeBase {
   settings: DisplaySettings
 }
 
-export type Node = AudioSourceNode | TranscriberNode | TranslatorNode | DisplayNode
+/** General-purpose extension instance with user-defined settings. */
+export interface CustomNode extends NodeBase {
+  /** No predefined pipeline endpoint. */
+  type: "custom"
+  /** Values supplied to the referenced extension. */
+  settings: Record<string, unknown>
+}
+
+export type Node = AudioSourceNode | TranscriberNode | TranslatorNode | DisplayNode | CustomNode
 
 export interface NodeCreate {
   /** Resource identity of a custom extension; omission selects a built-in node. */
   extensionRef?: string
   inputNodeId: string | null
-  type: NodeType
+  type: NodeRole
   name: string
   description?: string | null
   enabled: boolean
@@ -287,7 +296,7 @@ export type NodeUpdate =
 /** Edit custom instance values while retaining extension identity. */
 export interface CustomNodeUpdate extends NodeUpdateBase {
   /** Pipeline role resolved from the extension. */
-  type: NodeType
+  type: NodeRole
   /** Resource name of the referenced extension. */
   extensionRef: string
   /** Arbitrary JSON values declared by the extension manifest. */
@@ -342,7 +351,7 @@ export interface NodeSpec {
   inputRef?: { name: string } | null
   restartToken?: string | null
   /** Exactly one built-in variant or the custom JSON setting map. */
-  settings: Partial<Record<NodeType, Node["settings"]>> & { custom?: Record<string, unknown> }
+  settings: Partial<Record<NodeRole, Node["settings"]>> & { custom?: Record<string, unknown> }
 }
 
 /** Flat node resource returned by the control API. */
@@ -356,7 +365,7 @@ export interface NodeResource extends NodeSpec {
     /** Observed custom execution contract; absent before preparation. */
     resolvedAdapter?: {
       /** Pipeline role preserved independently of custom setting values. */
-      type: NodeType
+      nodeRole: NodeRole
     }
   }
 }

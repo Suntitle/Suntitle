@@ -278,7 +278,7 @@ async fn controller_apply_recovery_acceptance() {
         disabled.enabled = false;
         let request = actix_web::test::TestRequest::put()
             .uri(&format!("/nodes/{name}"))
-            .set_json(json!({"spec": disabled}))
+            .set_json(&disabled)
             .to_request();
         let response = actix_web::test::call_service(&app, request).await;
         assert!(response.status().is_success());

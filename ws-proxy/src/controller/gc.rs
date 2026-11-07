@@ -305,7 +305,7 @@ mod tests {
             "plugin",
             serde_json::from_value(json!({
                 "displayName":"Plugin", "sourceType":"local", "source":"/extension",
-                "adapter":{"type":"display","execution":{"runtime":"executable","command":"./run"}}
+                "adapter":{"nodeRole":"display","execution":{"runtime":"executable","command":"./run"}}
             }))
             .unwrap(),
         );

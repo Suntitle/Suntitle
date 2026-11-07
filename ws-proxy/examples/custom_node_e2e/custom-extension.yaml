@@ -1,0 +1,28 @@
+name: custom-probe
+displayName: custom probe
+sourceType: local
+source: "${SOURCE_ROOT}/python-script"
+adapter:
+  execution:
+    runtime: python
+    command: ./probe.py
+  settings:
+    label:
+      default: default label
+    message:
+      default: overridden by node
+    report:
+      required: true
+    finish:
+      required: true
+  arguments:
+    - flag: --server
+      source: runtime.websocketUrl
+    - flag: --label
+      source: settings.label
+    - flag: --message
+      source: settings.message
+    - flag: --report
+      source: settings.report
+    - flag: --finish
+      source: settings.finish

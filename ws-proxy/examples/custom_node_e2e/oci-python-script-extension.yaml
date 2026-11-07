@@ -3,7 +3,7 @@ displayName: OCI python-script probe
 sourceType: oci
 source: "${REGISTRY}/custom-node-sources/${HOST_NAME}/python-script:fixture"
 adapter:
-  type: transcriber
+  nodeRole: transcriber
   execution:
     runtime: python
     command: ./probe.py

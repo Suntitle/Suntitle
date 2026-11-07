@@ -4,11 +4,11 @@
       "source": "https://github.com/suntitle/extensions/obs-captions.git",
       "sourceType": "git",
       "adapter": {
-        "type": "display",
         "execution": {
           "command": "./bin/extension",
           "runtime": "executable"
-        }
+        },
+        "nodeRole": "display"
       },
       "status": {
         "observedGeneration": 1,
@@ -31,11 +31,11 @@
       "source": "/opt/suntitle/extensions/archive-export",
       "sourceType": "local",
       "adapter": {
-        "type": "display",
         "execution": {
           "command": "./bin/extension",
           "runtime": "executable"
-        }
+        },
+        "nodeRole": "display"
       },
       "status": {
         "observedGeneration": 1,

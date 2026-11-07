@@ -174,7 +174,7 @@ mod tests {
     fn extension() -> SuntitleExtension {
         serde_json::from_value(json!({"metadata":{"name":"extension","generation":3},"spec":{
             "displayName":"Extension","sourceType":"local","source":"/extension","adapter":{
-                "type":"transcriber","execution":{"runtime":"executable","command":"./run"},
+                "nodeRole":"transcriber","execution":{"runtime":"executable","command":"./run"},
                 "settings":{"language":{"required":true},"threads":{"default":4}}
             }
         },"status":{"observedGeneration":3,"artifactReference":"registry/extensions@sha256:abc",

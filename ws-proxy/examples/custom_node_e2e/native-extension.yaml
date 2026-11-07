@@ -3,7 +3,7 @@ displayName: native probe
 sourceType: local
 source: "${SOURCE_ROOT}/native"
 adapter:
-  type: transcriber
+  nodeRole: transcriber
   execution:
     runtime: executable
     command: ./bin/probe

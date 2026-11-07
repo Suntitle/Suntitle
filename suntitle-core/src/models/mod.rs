@@ -51,15 +51,23 @@ pub struct User {
     pub username: String,
 }
 
+/// Pipeline role of a node or extension, independent of its execution implementation.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum NodeType {
+pub enum NodeRole {
+    /// Produces audio for the pipeline.
     AudioSource,
+    /// Transcribes audio into text.
     Transcriber,
+    /// Translates text between languages.
     Translator,
+    /// Presents pipeline output.
     Display,
+    /// Default classification for extension-defined work outside the predefined pipeline roles.
+    #[default]
+    Custom,
 }
 
 /// A value accepted by a node setting field.
@@ -146,13 +154,13 @@ pub struct NodeSettingDefinition {
 pub struct NodeTypeDefinition {
     /// Node type described by this definition.
     #[serde(rename = "type")]
-    pub node_type: NodeType,
+    pub node_type: NodeRole,
     /// Display name of the node type.
     pub name: String,
     /// Purpose of this node type.
     pub description: String,
     /// Node types that may be selected as this node's upstream input.
-    pub input_types: Vec<NodeType>,
+    pub input_types: Vec<NodeRole>,
     /// Editable settings supported by this node type.
     pub settings: Vec<NodeSettingDefinition>,
 }

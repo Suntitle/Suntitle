@@ -48,7 +48,7 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
             crate::extension_source::ExtensionRegistration,
             extensions::ExtensionCreateRequest,
             crate::store::ResourceList<extensions::Extension>,
-            NodeType, NodeSettingValue, NodeSettingOption, NodeSettingDefinition,
+            NodeRole, NodeSettingValue, NodeSettingOption, NodeSettingDefinition,
             NodeTypeDefinition, NodeTypeDefinitionList,
             AudioSourceSettings, TranscriberSettings, TranslatorSettings, DisplaySettings,
             LanguageTag, errors::ErrorEnvelope,

@@ -541,21 +541,22 @@ spec:
                     required:
                     - command
                     type: object
-                  settings:
-                    description: User-defined setting declarations or resolved instance values.
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  type:
-                    description: Pipeline role defining communication and input compatibility.
+                  nodeRole:
+                    default: custom
+                    description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
                     enum:
                     - audio_source
                     - transcriber
                     - translator
                     - display
+                    - custom
                     type: string
+                  settings:
+                    description: User-defined setting declarations or resolved instance values.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                 required:
                 - execution
-                - type
                 type: object
             type: object
         required:
@@ -641,6 +642,16 @@ spec:
                     required:
                     - command
                     type: object
+                  nodeRole:
+                    default: custom
+                    description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
+                    enum:
+                    - audio_source
+                    - transcriber
+                    - translator
+                    - display
+                    - custom
+                    type: string
                   settings:
                     additionalProperties:
                       description: One plugin setting declaration. Values may have any user-defined JSON shape.
@@ -656,17 +667,8 @@ spec:
                       type: object
                     description: User-defined setting declarations or resolved instance values.
                     type: object
-                  type:
-                    description: Pipeline role defining communication and input compatibility.
-                    enum:
-                    - audio_source
-                    - transcriber
-                    - translator
-                    - display
-                    type: string
                 required:
                 - execution
-                - type
                 type: object
               displayName:
                 description: Display name of the extension.

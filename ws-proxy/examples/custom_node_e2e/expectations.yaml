@@ -1,7 +1,7 @@
-# Values shared by all three runtime checks.
+# Values shared by all extension runtime checks.
 arguments:
   - --server
-  - ws://127.0.0.1:3030/transcribe
+  - ws://127.0.0.1:3030/
   - --label
   - default label
   - --message

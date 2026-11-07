@@ -114,7 +114,7 @@ mod tests {
     }
     /// Build an adapter retaining its configured settings and argument bindings.
     fn adapter(execution: serde_json::Value) -> ResolvedAdapter {
-        serde_json::from_value(json!({"type":"transcriber","execution":execution,"settings":{"language":"cs"},"arguments":[]})).unwrap()
+        serde_json::from_value(json!({"nodeRole":"transcriber","execution":execution,"settings":{"language":"cs"},"arguments":[]})).unwrap()
     }
 
     /// A raw HTTP payload uses its containing directory; script paths use the artifact root.

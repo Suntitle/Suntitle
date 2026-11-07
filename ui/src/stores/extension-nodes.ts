@@ -3,7 +3,7 @@ import type { Extension, NodeSettingValue, NodeTypeDefinition } from "./models"
 /** Infer fields from declared defaults while retaining arbitrary JSON declarations. */
 export function extensionDefinition(extension: Extension, builtIn?: NodeTypeDefinition): NodeTypeDefinition {
   return {
-    type: extension.adapter.type,
+    type: extension.adapter.nodeRole,
     name: extension.displayName,
     description: `Extension: ${extension.name}`,
     inputTypes: builtIn?.inputTypes ?? [],

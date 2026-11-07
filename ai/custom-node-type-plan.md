@@ -252,7 +252,7 @@ spec:
   source: /opt/suntitle/extensions/custom-transcriber
   refreshToken: <optional-refresh-request-token>
   adapter:
-    type: transcriber
+    nodeRole: transcriber
     execution:
       runtime: executable
       command: ./bin/transcriber
@@ -370,7 +370,7 @@ determines how Diamant launches it.
 
 | Concern | Required configuration | Responsibility |
 | --- | --- | --- |
-| Pipeline type | `audio_source`, `transcriber`, `translator`, or `display` | Communication contract and type-specific runtime endpoint |
+| Node role | `audio_source`, `transcriber`, `translator`, `display`, or `custom` (default) | UI classification and input compatibility |
 | Execution | Runtime and entry point | Host process launch |
 | Plugin settings | Arbitrary key/value object, which MAY be empty | Component-specific configuration |
 | Argument adapter | Ordered bindings from settings and runtime values | CLI argument construction |
@@ -492,12 +492,12 @@ arguments:
     source: settings.device
 ```
 
-With a resolved endpoint of `wss://proxy/transcribe`, an instance language of
+With a configured base URL of `wss://proxy/`, an instance language of
 `en`, and no device value, the argument array is:
 
 ```json
 [
-  "--server", "wss://proxy/transcribe",
+  "--server", "wss://proxy/",
   "--model-name", "fast",
   "--workers", "4",
   "--gpu",
@@ -561,9 +561,10 @@ construction. Switch bindings require booleans. Optional absent bindings are
 removed during resolution.
 
 Diamant supplies a reserved runtime context independently of plugin settings.
-Initially, it MUST provide the full type-specific `runtime.websocketUrl`,
-including the `ws` or `wss` scheme and endpoint path. Plugin settings MUST NOT
-override runtime values.
+It MUST provide the configured data-plane base `runtime.websocketUrl`, independent
+of role, preserving the scheme, port, and path prefix. Extensions MUST append any
+required endpoint path themselves or use a complete URL from a setting. Plugin
+settings MUST NOT override runtime values.
 
 Every runtime value required by the type contract MUST have a declared delivery
 binding. CLI arguments are the primary mechanism; environment bindings MAY also
@@ -623,7 +624,7 @@ before implementation, following the project workflow.
 ### Completed execution and reconfiguration
 
 - [x] Select custom apply after successful installation and deliver the Node spec, artifact reference, and resolved adapter.
-- [x] Supply full type-specific `runtime.websocketUrl` values for all four pipeline types, preserving scheme, port, and path prefix.
+- [x] Supply the configured base `runtime.websocketUrl` for every role, preserving scheme, port, and path prefix.
 - [x] Build ordered `OsString` arguments with positional values, separate flags, boolean switches, defaults, and optional omission. Preserve false, zero, empty strings, and shell characters; reject null and structured values without explicit conversion.
 - [x] Launch prepared native executables directly from their configured working directory through the shared `NodeProcessManager::apply` supervisor. Disabled nodes MUST NOT spawn.
 - [x] Launch Python scripts/modules through embedded UV, using the prepared working directory and adapter arguments. Automatic dependency preparation is separate.

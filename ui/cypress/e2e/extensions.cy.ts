@@ -6,7 +6,7 @@ const accessToken = "mock-token"
 function resource(spec?: Partial<ExtensionSpec>): Extension {
   return {
     name: "custom-captioner",
-    displayName: "Custom captioner", sourceType: "local", source: "/opt/extensions/captioner", adapter: { type: "transcriber", execution: { command: "./captioner", runtime: "executable" } }, ...spec,
+    displayName: "Custom captioner", sourceType: "local", source: "/opt/extensions/captioner", adapter: { nodeRole: "transcriber", execution: { command: "./captioner", runtime: "executable" } }, ...spec,
   }
 }
 

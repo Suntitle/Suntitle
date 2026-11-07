@@ -1,6 +1,6 @@
 # Local extension fixtures
 
-`just custom-node-e2e` verifies six extensions through the real control
+`just custom-node-e2e` verifies seven extensions through the real control
 API, publication controller, Distribution through Traefik, and Diamant:
 
 | Source directory | Runtime | Entry point |
@@ -14,7 +14,10 @@ OCI cases, `oci_artifact::Publisher::republish` pushes the already published loc
 payload into a separate `custom-node-sources` repository. The `oci-*-extension.yaml`
 requests reference those source tags. HUB mirrors them into its managed repository;
 the test checks that repository changes while the manifest digest is preserved.
-No external registry, ORAS, or container-image CLI is required.
+No external registry, ORAS, or container-image CLI is required. The seventh case
+omits `adapter.nodeRole` using the Python-script payload and verifies that it defaults
+to `custom`. Every case verifies that `runtime.websocketUrl` supplies the configured
+data-plane base URL regardless of role.
 
 Generate certificates with `just generate-certs` first. The test requires Docker
 Compose with `!reset`/`!override` support, Rust, Unix, `/usr/bin/python3`, and free

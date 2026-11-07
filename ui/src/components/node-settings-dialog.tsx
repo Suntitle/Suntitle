@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { AudioWaveform, Languages, Mic, Monitor } from "lucide-react"
+import { AudioWaveform, Blocks, Languages, Mic, Monitor } from "lucide-react"
 import { observer } from "mobx-react-lite"
 
 import { SettingField } from "@/components/node-setting-field"
@@ -26,24 +26,26 @@ import type {
   Node,
   NodeSettingValue,
   NodeStatus,
-  NodeType,
+  NodeRole,
   NodeUpdate,
   TranscriberSettings,
   TranslatorSettings,
 } from "@/stores/models"
 
-const nodeTypeLabels: Record<NodeType, string> = {
+const nodeTypeLabels: Record<NodeRole, string> = {
   audio_source: "Audio source",
   transcriber: "Transcriber",
   translator: "Translator",
   display: "Display",
+  custom: "Custom",
 }
 
-const nodeTypeIcons: Record<NodeType, typeof Mic> = {
+const nodeTypeIcons: Record<NodeRole, typeof Mic> = {
   audio_source: Mic,
   transcriber: AudioWaveform,
   translator: Languages,
   display: Monitor,
+  custom: Blocks,
 }
 
 const statusStyles: Record<NodeStatus, string> = {
@@ -87,6 +89,7 @@ function createNodeUpdate(node: Node, name: string, inputNodeId: string | null, 
     case "transcriber": return { ...base, type: node.type, settings: settings as unknown as TranscriberSettings }
     case "translator": return { ...base, type: node.type, settings: settings as unknown as TranslatorSettings }
     case "display": return { ...base, type: node.type, settings: settings as unknown as DisplaySettings }
+    case "custom": throw new Error("Custom nodes require an extension")
   }
 }
 
@@ -118,7 +121,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
 
     setNodeName(node.name)
     setInputNodeId(node.inputNodeId)
-    setSettings(extension ? extensionFormValues(extension, node.spec.settings.custom ?? {}) : { ...node.settings })
+    setSettings(extension ? extensionFormValues(extension, node.spec.settings.custom ?? {}) : node.type === "custom" ? {} : { ...node.settings })
     nodesStore.clearSaveError()
 
     if (nodesStore.nodeTypes.length === 0) {

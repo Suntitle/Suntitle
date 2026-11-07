@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react"
-import { AudioWaveform, Languages, Mic, Monitor } from "lucide-react"
+import { AudioWaveform, Blocks, Languages, Mic, Monitor } from "lucide-react"
 import { observer } from "mobx-react-lite"
 
 import { Badge } from "@/components/ui/badge"
@@ -8,7 +8,7 @@ import { NodeActionsMenu } from "@/components/node-actions-menu"
 import { NodeSettingsDialog } from "@/components/node-settings-dialog"
 import { cn } from "@/lib/utils"
 import { useStores } from "@/stores"
-import type { DataType, Node, NodeStatus, NodeType } from "@/stores/models"
+import type { DataType, Node, NodeStatus, NodeRole } from "@/stores/models"
 
 const NODE_WIDTH = 210
 const NODE_HEIGHT = 196
@@ -35,18 +35,20 @@ interface PositionedPipeline extends Pipeline {
   positions: ReadonlyMap<string, { x: number; y: number }>
 }
 
-const nodeTypeLabels: Record<NodeType, string> = {
+const nodeTypeLabels: Record<NodeRole, string> = {
   audio_source: "Audio source",
   transcriber: "Transcriber",
   translator: "Translator",
   display: "Display",
+  custom: "Custom",
 }
 
-const nodeTypeIcons: Record<NodeType, typeof Mic> = {
+const nodeTypeIcons: Record<NodeRole, typeof Mic> = {
   audio_source: Mic,
   transcriber: AudioWaveform,
   translator: Languages,
   display: Monitor,
+  custom: Blocks,
 }
 
 const statusStyles: Record<NodeStatus | "disabled", string> = {

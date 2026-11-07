@@ -1,11 +1,11 @@
 import type { Extension, NodeResource } from "../../src/stores/models"
 
 /** Provide an extension whose display name differs from its resource identity. */
-function extension(settings: Extension["adapter"]["settings"] = {}): Extension {
+function extension(settings: Extension["adapter"]["settings"] = {}, nodeRole: Extension["adapter"]["nodeRole"] = "translator"): Extension {
   return {
     name: "hello",
     displayName: "Hello every 10 seconds", sourceType: "local", source: "/opt/suntitle/extensions/hello",
-    adapter: { type: "translator", execution: { runtime: "python", command: "./hello.py" }, settings },
+    adapter: { nodeRole, execution: { runtime: "python", command: "./hello.py" }, settings },
   }
 }
 
@@ -77,6 +77,22 @@ describe("Extension node types", () => {
     cy.wait("@install").its("request.body.settings").should("deep.equal", {
       custom: { message: "Hi", enabled: false, nullable: null, nested: { values: [1, true] }, token: "secret" },
     })
+  })
+
+  it("installs and edits a general-purpose custom-role extension", () => {
+    openHost(extension({}, "custom"))
+    cy.get("#node-setting-sourceLanguage, #node-setting-targetLanguage").should("not.exist")
+    cy.contains("button", "Install node").click()
+    cy.wait("@install").its("request.body").should("include", { displayName: "hello" })
+    cy.get("@install").its("request.body.extensionRef").should("deep.equal", { name: "hello" })
+    cy.get("@install").its("request.body.settings").should("deep.equal", { custom: {} })
+    cy.contains("button", "Cancel").click()
+    cy.get('a[href="/nodes"]').first().click()
+    cy.get('[data-testid="topology-node"]').should("have.length", 1).and("contain.text", "Hello every 10 seconds")
+    cy.get('button[aria-label^="Open settings for hello,"]').click()
+    cy.get('[data-slot="dialog-title"]').should("have.text", "Update hello")
+    cy.contains("button", "Save changes").click()
+    cy.wait("@save").its("request.body.settings").should("deep.equal", { custom: {} })
   })
 
   it("keeps built-in types available when extension loading fails", () => {

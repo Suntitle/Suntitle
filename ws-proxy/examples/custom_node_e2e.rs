@@ -266,9 +266,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } else {
             None
         };
-        client
+        let registered = client
             .request("POST", "/api/v1/extensions", Some(&extension), 201)
             .await?;
+        assert_eq!(
+            registered["adapter"]["nodeRole"],
+            extension["adapter"]["nodeRole"].as_str().unwrap_or("custom")
+        );
         let published = client
             .wait_for(
                 &format!("/api/v1/extensions/{}", extension["name"].as_str().unwrap()),

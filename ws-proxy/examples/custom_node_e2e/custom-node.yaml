@@ -1,0 +1,11 @@
+displayName: custom probe
+hostRef:
+  name: "${HOST_NAME}"
+extensionRef:
+  name: custom-probe
+enabled: true
+settings:
+  custom:
+    message: "a value with spaces; $(literal)"
+    report: "${RUN_ROOT}/custom.json"
+    finish: "${RUN_ROOT}/finish"

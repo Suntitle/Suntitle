@@ -1021,6 +1021,15 @@ components:
             - 'null'
             description: Optional resource name. The server generates one when omitted.
       description: Flat node creation contract with optional resource identity.
+    NodeRole:
+      type: string
+      description: Pipeline role of a node or extension, independent of its execution implementation.
+      enum:
+      - audio_source
+      - transcriber
+      - translator
+      - display
+      - custom
     NodeSettingDefinition:
       type: object
       required:
@@ -1221,7 +1230,6 @@ components:
           - 'null'
           description: Standard adapter fields shared by an extension and its resolved node instance.
           required:
-          - type
           - execution
           properties:
             arguments:
@@ -1279,26 +1287,25 @@ components:
                   description: Optional process directory, relative to the installed root or explicitly absolute.
                   minLength: 1
               additionalProperties: false
+            nodeRole:
+              oneOf:
+              - type: string
+                description: Produces audio for the pipeline.
+              - type: string
+                description: Transcribes audio into text.
+              - type: string
+                description: Translates text between languages.
+              - type: string
+                description: Presents pipeline output.
+              - type: string
+                description: Default classification for extension-defined work outside the predefined pipeline roles.
+              description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
+              default: custom
             settings:
               type: object
               description: User-defined setting declarations or resolved instance values.
               x-kubernetes-preserve-unknown-fields: true
-            type:
-              type: string
-              description: Pipeline role defining communication and input compatibility.
-              enum:
-              - audio_source
-              - transcriber
-              - translator
-              - display
           additionalProperties: false
-    NodeType:
-      type: string
-      enum:
-      - audio_source
-      - transcriber
-      - translator
-      - display
     NodeTypeDefinition:
       type: object
       required:
@@ -1314,7 +1321,7 @@ components:
         inputTypes:
           type: array
           items:
-            $ref: '#/components/schemas/NodeType'
+            $ref: '#/components/schemas/NodeRole'
           description: Node types that may be selected as this node's upstream input.
         name:
           type: string
@@ -1325,7 +1332,7 @@ components:
             $ref: '#/components/schemas/NodeSettingDefinition'
           description: Editable settings supported by this node type.
         type:
-          $ref: '#/components/schemas/NodeType'
+          $ref: '#/components/schemas/NodeRole'
           description: Node type described by this definition.
       additionalProperties: false
     NodeTypeDefinitionList:
@@ -1400,7 +1407,6 @@ components:
           type: object
           description: Execution and binding contract packaged with the source.
           required:
-          - type
           - execution
           properties:
             arguments:
@@ -1458,6 +1464,20 @@ components:
                   description: Optional process directory, relative to the installed root or explicitly absolute.
                   minLength: 1
               additionalProperties: false
+            nodeRole:
+              oneOf:
+              - type: string
+                description: Produces audio for the pipeline.
+              - type: string
+                description: Transcribes audio into text.
+              - type: string
+                description: Translates text between languages.
+              - type: string
+                description: Presents pipeline output.
+              - type: string
+                description: Default classification for extension-defined work outside the predefined pipeline roles.
+              description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
+              default: custom
             settings:
               type: object
               description: User-defined setting declarations or resolved instance values.
@@ -1479,14 +1499,6 @@ components:
                     description: Require an instance value when no default is declared.
                     default: false
                 additionalProperties: false
-            type:
-              type: string
-              description: Pipeline role defining communication and input compatibility.
-              enum:
-              - audio_source
-              - transcriber
-              - translator
-              - display
           additionalProperties: false
         displayName:
           type: string

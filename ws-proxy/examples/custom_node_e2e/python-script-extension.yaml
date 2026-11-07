@@ -3,7 +3,7 @@ displayName: python-script probe
 sourceType: local
 source: "${SOURCE_ROOT}/python-script"
 adapter:
-  type: transcriber
+  nodeRole: transcriber
   execution:
     runtime: python
     command: ./probe.py

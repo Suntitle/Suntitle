@@ -262,9 +262,15 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     assert_eq!(spec["properties"]["source"]["minLength"], 1);
     assert_eq!(spec["properties"]["adapter"]["type"], "object");
     let adapter_schema = &spec["properties"]["adapter"]["properties"];
+    assert!(adapter_schema.get("type").is_none());
     assert_eq!(
-        adapter_schema["type"]["enum"],
-        json!(["audio_source", "transcriber", "translator", "display"])
+        adapter_schema["nodeRole"]["enum"],
+        json!(["audio_source", "transcriber", "translator", "display", "custom"])
+    );
+    assert_eq!(adapter_schema["nodeRole"]["default"], "custom");
+    assert!(
+        !spec["properties"]["adapter"]["required"]
+            .as_array().unwrap().contains(&json!("nodeRole"))
     );
     let execution = &adapter_schema["execution"];
     assert_eq!(execution["type"], "object");
@@ -317,7 +323,7 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     );
     assert_eq!(binding["properties"]["mode"]["default"], "value");
     assert_eq!(binding["required"], json!(["source"]));
-    let adapter = json!({"type":"transcriber", "execution":{"runtime":"executable", "command":"./run"},
+    let adapter = json!({"nodeRole":"transcriber", "execution":{"runtime":"executable", "command":"./run"},
         "settings":{"nested":{"default":{"values":[null, false, 0, ""]}}},
         "arguments":[{"flag":"--server", "source":"runtime.websocketUrl"}]});
     for source_type in ["local", "git", "oci", "http"] {

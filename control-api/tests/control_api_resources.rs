@@ -706,7 +706,7 @@ async fn source_registration_resolves_manifest_before_kubernetes_write() {
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
     let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "test");
     let directory = tempfile::tempdir().unwrap();
-    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"displayName":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"type":"translator","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
+    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"displayName":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"nodeRole":"translator","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
     std::fs::write(directory.path().join("manifest.yaml"), serde_yaml::to_string(&manifest).unwrap()).unwrap();
     let source = directory.path().to_str().unwrap();
     let (status, created, location) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":source}))).await;
@@ -715,7 +715,7 @@ async fn source_registration_resolves_manifest_before_kubernetes_write() {
     assert_eq!(created["name"], "hello");
     assert_eq!(created["source"], source);
     assert_eq!(created["sourceType"], "local");
-    assert_eq!(created["adapter"], json!({"type":"translator","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}));
+    assert_eq!(created["adapter"], json!({"nodeRole":"translator","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}));
     expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":directory.path().join("missing")})), 422).await;
     expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"zip","source":source})), 400).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);

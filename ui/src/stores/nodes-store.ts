@@ -11,7 +11,7 @@ import type {
   HostList,
   HostResource,
   NodeStatus,
-  NodeType,
+  NodeRole,
   NodeTypeDefinition,
   NodeTypeDefinitionList,
   NodeUpdate,
@@ -24,7 +24,7 @@ export class NodesStore {
   nodeTypes: NodeTypeDefinition[] = []
   nodeTypesTotal = 0
   selectedNode: Node | null = null
-  typeFilter: NodeType | null = null
+  typeFilter: NodeRole | null = null
   statusFilter: NodeStatus | null = null
   isLoading = false
   isLoadingNodeTypes = false
@@ -49,15 +49,15 @@ export class NodesStore {
     return this.items.filter((node) => node.host.id === hostId)
   }
 
-  get nodesByType(): ReadonlyMap<NodeType, Node[]> {
-    const groups = new Map<NodeType, Node[]>([
-      ["audio_source", []], ["transcriber", []], ["translator", []], ["display", []],
+  get nodesByType(): ReadonlyMap<NodeRole, Node[]> {
+    const groups = new Map<NodeRole, Node[]>([
+      ["audio_source", []], ["transcriber", []], ["translator", []], ["display", []], ["custom", []],
     ])
     this.items.forEach((node) => groups.get(node.type)?.push(node))
     return groups
   }
 
-  setTypeFilter(type: NodeType | null): void { this.typeFilter = type }
+  setTypeFilter(type: NodeRole | null): void { this.typeFilter = type }
   setStatusFilter(status: NodeStatus | null): void { this.statusFilter = status }
   selectNode(node: Node | null): void { this.selectedNode = node }
   clearError(): void { this.error = null }

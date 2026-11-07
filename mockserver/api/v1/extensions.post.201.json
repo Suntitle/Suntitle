@@ -2,11 +2,11 @@
   "source": "https://github.com/suntitle/extensions/obs-captions.git",
   "sourceType": "git",
   "adapter": {
-    "type": "display",
     "execution": {
       "command": "./bin/extension",
       "runtime": "executable"
-    }
+    },
+    "nodeRole": "display"
   },
   "status": null,
   "displayName": "Custom captioner",

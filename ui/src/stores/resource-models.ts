@@ -1,4 +1,4 @@
-import type { Extension, Host, HostResource, Node, NodeResource, NodeType } from "./models"
+import type { Extension, Host, HostResource, Node, NodeResource, NodeRole } from "./models"
 
 export function mapHost(resource: HostResource): Host {
   return {
@@ -18,8 +18,8 @@ export function mapNode(resource: NodeResource, hosts: HostResource[], extension
   const host = hosts.find((host) => host.name === resource.hostRef.name)
   const extension = extensions.find((item) => item.name === resource.extensionRef?.name)
   const type = resource.extensionRef
-    ? extension?.adapter.type ?? resource.status?.resolvedAdapter?.type ?? "transcriber"
-    : Object.keys(resource.settings)[0] as NodeType
+    ? extension?.adapter.nodeRole ?? resource.status?.resolvedAdapter?.nodeRole ?? "transcriber"
+    : Object.keys(resource.settings)[0] as NodeRole
   return {
     id: resourceName,
     extensionName: extension?.displayName ?? resource.extensionRef?.name,

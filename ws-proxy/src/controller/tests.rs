@@ -346,7 +346,7 @@ async fn custom_lifecycle_prepares_then_applies_and_reboots_only_changed_artifac
         let generation = node.metadata.generation;
         let status = node.status.get_or_insert_default();
         status.artifact_reference = Some("registry.test/extensions:v1".into());
-        status.resolved_adapter = Some(serde_json::from_value(json!({"type":"transcriber","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap());
+        status.resolved_adapter = Some(serde_json::from_value(json!({"nodeRole":"transcriber","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap());
         status
             .conditions
             .push(k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition {

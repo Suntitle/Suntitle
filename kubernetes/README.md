@@ -48,12 +48,32 @@ and returns 201 with Location. `name` is the Kubernetes identity; `displayName`
 is the human-readable label stored as `spec.displayName` in the CRD.
 Omitting `name` generates an `extension-<UUID>` name. The required spec fields
 are `displayName`, `sourceType` (`local`, `git`, `oci`, or `http`), `source`, and `adapter`.
-`adapter.type` selects the pipeline type. `adapter.execution` remains an extensible
-object. `adapter.settings` maps setting names to `{default?, required?}` declarations;
+`adapter.nodeRole` selects `audio_source`, `transcriber`, `translator`, `display`,
+or `custom` (the default when omitted). Roles classify nodes for the UI and input
+compatibility. `runtime.websocketUrl` always supplies the configured data-plane
+base URL, independent of role. Extensions MUST append any required endpoint path
+themselves or supply a complete URL through `settings.<key>`. Argument sources do
+not support URL concatenation or interpolation. `adapter.execution` remains an
+extensible object. `adapter.settings` maps setting names to `{default?, required?}` declarations;
 `required` defaults to false. A declared default supplies a value without requiring
 `required: true`. `adapter.arguments` contains bindings with `source`,
 optional `flag`, and `mode` (`value` by default, or `switch`). Switch bindings
 require a flag. Sources are `settings.<key>` or `runtime.websocketUrl`.
+For example, an extension can choose a complete display URL without declaring a role:
+
+```yaml
+adapter:
+  execution:
+    runtime: python
+    command: ./main.py
+  settings:
+    websocketUrl:
+      default: ws://127.0.0.1:3030/display
+  arguments:
+    - flag: --server
+      source: settings.websocketUrl
+```
+
 Execution resolution uses node overrides before extension defaults and reports
 missing required settings. Null, false, zero, and empty strings count as supplied
 values. Optional settings without values omit their mappings. Neither the Node CR
