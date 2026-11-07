@@ -30,12 +30,12 @@ fn adapter() -> ExtensionAdapter {
 #[test]
 fn nodes_inherit_extension_defaults_and_mappings_without_changing_desired_state() {
     let extension: SuntitleExtensionSpec = serde_json::from_value(json!({
-        "name":"Transcriber", "sourceType":"local", "source":"/extensions/example", "adapter":adapter()
+        "displayName":"Transcriber", "sourceType":"local", "source":"/extensions/example", "adapter":adapter()
     })).unwrap();
     let before = serde_json::to_value(&extension).unwrap();
     for (language, model) in [("en", "small"), ("cs", "custom model")] {
         let node: SuntitleNodeSpec = serde_json::from_value(json!({
-            "name":"Node", "hostRef":{"name":"host"}, "extensionRef":{"name":"extension"},
+            "displayName":"Node", "hostRef":{"name":"host"}, "extensionRef":{"name":"extension"},
             "settings":{"custom":{"language":language,"model":model,"extra":{"nested":[1,2]}}}
         }))
         .unwrap();

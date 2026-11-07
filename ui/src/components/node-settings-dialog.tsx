@@ -98,7 +98,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
   const [inputNodeId, setInputNodeId] = useState<string | null>(null)
   const [settings, setSettings] = useState<Record<string, NodeSettingValue>>({})
 
-  const extension = extensionsStore.items.find((item) => item.metadata.name === node?.spec.extensionRef?.name)
+  const extension = extensionsStore.items.find((item) => item.name === node?.spec.extensionRef?.name)
   const builtInDefinition = node ? nodesStore.nodeTypes.find((item) => item.type === node.type) : undefined
   const definition = node?.spec.extensionRef
     ? extension ? extensionDefinition(extension, builtInDefinition) : null

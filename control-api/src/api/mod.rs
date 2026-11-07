@@ -43,19 +43,19 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
     components(
         schemas(
             LoginRequest, LoginResponse, User,
-            suntitle_core::kubernetes::resources::SuntitleExtension,
+            extensions::Extension,
             crate::store::ExtensionCreate,
             crate::extension_source::ExtensionRegistration,
             extensions::ExtensionCreateRequest,
-            crate::store::ResourceList<suntitle_core::kubernetes::resources::SuntitleExtension>,
+            crate::store::ResourceList<extensions::Extension>,
             NodeType, NodeSettingValue, NodeSettingOption, NodeSettingDefinition,
             NodeTypeDefinition, NodeTypeDefinitionList,
             AudioSourceSettings, TranscriberSettings, TranslatorSettings, DisplaySettings,
             LanguageTag, errors::ErrorEnvelope,
-            suntitle_core::kubernetes::resources::SuntitleHost,
-            suntitle_core::kubernetes::resources::SuntitleNode,
-            crate::store::ResourceList<suntitle_core::kubernetes::resources::SuntitleHost>,
-            crate::store::ResourceList<suntitle_core::kubernetes::resources::SuntitleNode>,
+            hosts::Host,
+            nodes::Node,
+            crate::store::ResourceList<hosts::Host>,
+            crate::store::ResourceList<nodes::Node>,
             crate::store::NodeCreate,
             crate::store::NodeUpdate
         ),
@@ -182,15 +182,15 @@ mod tests {
         let committed: serde_yaml::Value =
             serde_yaml::from_str(include_str!("../../../specs/openapi.yaml")).unwrap();
         assert_eq!(serde_json::to_value(committed).unwrap(), document);
-        assert!(
-            document["components"]["schemas"]["SuntitleNode"]["properties"]["metadata"].is_object()
-        );
-        assert!(document["paths"]["/nodes/{name}/restart"]["post"]["responses"]["202"].is_object());
-        assert!(
-            document["components"]["schemas"]["SuntitleExtension"]["properties"]["metadata"]
-                .is_object()
-        );
-        for resource in ["SuntitleHost", "SuntitleNode", "SuntitleExtension"] {
+        for resource in ["Host", "Node", "Extension"] {
+            let schema = &document["components"]["schemas"][resource];
+            let encoded = serde_json::to_string(schema).unwrap();
+            for field in ["apiVersion", "metadata", "kind", "spec", "generation"] {
+                assert!(!encoded.contains(&format!("\"{field}\"")));
+            }
+        }
+        assert!(document["paths"]["/hosts/{name}/nodes"]["post"].is_object());
+        for resource in ["Host", "Node", "Extension"] {
             let list = format!("ResourceList_{resource}");
             assert_eq!(
                 document["components"]["schemas"][list]["properties"]["items"]["items"],

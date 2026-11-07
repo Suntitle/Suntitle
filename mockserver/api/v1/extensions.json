@@ -1,22 +1,13 @@
 {
   "items": [
     {
-      "apiVersion": "control.suntitle.io/v1alpha1",
-      "kind": "SuntitleExtension",
-      "metadata": {
-        "name": "obs-captions",
-        "generation": 1
-      },
-      "spec": {
-        "name": "obs-captions",
-        "source": "https://github.com/suntitle/extensions/obs-captions.git",
-        "sourceType": "git",
-        "adapter": {
-          "type": "display",
-          "execution": {
-            "command": "./bin/extension",
-            "runtime": "executable"
-          }
+      "source": "https://github.com/suntitle/extensions/obs-captions.git",
+      "sourceType": "git",
+      "adapter": {
+        "type": "display",
+        "execution": {
+          "command": "./bin/extension",
+          "runtime": "executable"
         }
       },
       "status": {
@@ -32,25 +23,18 @@
           }
         ],
         "artifactReference": "registry.example.com/obs-captions@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      }
+      },
+      "displayName": "obs-captions",
+      "name": "obs-captions"
     },
     {
-      "apiVersion": "control.suntitle.io/v1alpha1",
-      "kind": "SuntitleExtension",
-      "metadata": {
-        "name": "archive-export",
-        "generation": 1
-      },
-      "spec": {
-        "name": "archive-export",
-        "source": "/opt/suntitle/extensions/archive-export",
-        "sourceType": "local",
-        "adapter": {
-          "type": "display",
-          "execution": {
-            "command": "./bin/extension",
-            "runtime": "executable"
-          }
+      "source": "/opt/suntitle/extensions/archive-export",
+      "sourceType": "local",
+      "adapter": {
+        "type": "display",
+        "execution": {
+          "command": "./bin/extension",
+          "runtime": "executable"
         }
       },
       "status": {
@@ -66,7 +50,9 @@
           }
         ],
         "artifactReference": "registry.example.com/archive-export@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      }
+      },
+      "displayName": "archive-export",
+      "name": "archive-export"
     }
   ],
   "resourceVersion": "10"

@@ -181,15 +181,15 @@ fn decode_manifest(bytes: &[u8], source_type: ExtensionSourceType, source: &str)
     if let Some(kind) = document.get("kind") {
         if kind != "SuntitleExtension" { return Err(invalid("Manifest kind MUST be SuntitleExtension.")); }
     }
-    let name = document.pointer("/metadata/name").or_else(|| document.get("spec").and_then(|_| document.get("name"))).and_then(Value::as_str).map(str::to_owned);
+    let name = document.pointer("/metadata/name").or_else(|| document.get("name")).and_then(Value::as_str).map(str::to_owned);
     let mut spec = document.get("spec").unwrap_or(&document).clone();
     let fields = spec.as_object_mut().ok_or_else(|| invalid("Manifest MUST contain an extension spec object."))?;
     fields.insert("sourceType".into(), serde_json::to_value(source_type).unwrap());
     fields.insert("source".into(), Value::String(source.to_owned()));
     fields.remove("refreshToken");
-    let spec: SuntitleExtensionSpec = serde_json::from_value(spec).map_err(|_| invalid("Manifest requires a name and an adapter with valid type and execution. Check any settings and arguments."))?;
-    if spec.name.trim().is_empty() || spec.name.chars().count() > 128 || spec.max_attempts == 0 {
-        return Err(invalid("Manifest name MUST have 1–128 characters and maxAttempts MUST be positive."));
+    let spec: SuntitleExtensionSpec = serde_json::from_value(spec).map_err(|_| invalid("Manifest requires a displayName and an adapter with valid type and execution. Check any settings and arguments."))?;
+    if spec.display_name.trim().is_empty() || spec.display_name.chars().count() > 128 || spec.max_attempts == 0 {
+        return Err(invalid("Manifest displayName MUST have 1–128 characters and maxAttempts MUST be positive."));
     }
     Ok(ExtensionCreate { name, spec })
 }
@@ -201,7 +201,7 @@ mod tests {
 
     /// A portable manifest omits deployment-specific source fields.
     fn manifest() -> Value {
-        json!({"name":"Hello", "adapter":{"type":"translator", "execution":{"runtime":"python","command":"./hello.py"}, "settings":{"optional":{"default":null},"required":{"required":true}}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}})
+        json!({"displayName":"Hello", "adapter":{"type":"translator", "execution":{"runtime":"python","command":"./hello.py"}, "settings":{"optional":{"default":null},"required":{"required":true}}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}})
     }
 
     /// Each supported envelope retains adapter declarations while the request owns source fields.
@@ -209,12 +209,16 @@ mod tests {
     fn resolves_manifest_envelopes_without_overriding_the_selected_source() {
         for document in [
             manifest(),
+            json!({"name":"hello","displayName":"Hello","adapter":manifest()["adapter"]}),
             json!({"name":"hello","spec":manifest()}),
             json!({"kind":"SuntitleExtension","metadata":{"name":"hello"},"spec":manifest(),"status":{"artifactReference":"old"}}),
         ] {
             let bytes = serde_yaml::to_string(&document).unwrap();
             let registered = decode_manifest(bytes.as_bytes(), ExtensionSourceType::Local, "/mounted/hello").unwrap();
+            let expected_name = document.pointer("/metadata/name").or_else(|| document.get("name")).and_then(Value::as_str);
+            assert_eq!(registered.name.as_deref(), expected_name);
             let spec = serde_json::to_value(registered.spec).unwrap();
+            assert_eq!(spec["displayName"], "Hello");
             assert_eq!(spec["source"], "/mounted/hello");
             assert_eq!(spec["sourceType"], "local");
             assert_eq!(spec["adapter"]["settings"]["optional"]["default"], Value::Null);
@@ -227,7 +231,7 @@ mod tests {
     /// Invalid configuration MUST fail before resource persistence.
     #[test]
     fn rejects_invalid_manifests_and_untrusted_git_protocols() {
-        for document in [json!({}), json!({"kind":"SuntitleHost","spec":manifest()}), json!({"name":"Hello","adapter":{"type":"translator","execution":{"command":""}}}), json!({"name":"Hello","maxAttempts":0,"adapter":manifest()["adapter"]})] {
+        for document in [json!({}), json!({"kind":"SuntitleHost","spec":manifest()}), json!({"displayName":"Hello","adapter":{"type":"translator","execution":{"command":""}}}), json!({"displayName":"Hello","maxAttempts":0,"adapter":manifest()["adapter"]})] {
             assert!(decode_manifest(&serde_json::to_vec(&document).unwrap(), ExtensionSourceType::Git, "https://example.com/repo.git").is_err());
         }
         for source in ["file:///etc", "ssh://example.com/repo", "https://user:secret@example.com/repo", "--upload-pack=example"] {
@@ -244,7 +248,7 @@ mod tests {
         assert!(read_directory(directory.path()).await.is_err());
         tokio::fs::write(directory.path().join("manifest.json"), serde_json::to_vec(&manifest()).unwrap()).await.unwrap();
         let resolved = ExtensionRegistration { source_type: ExtensionSourceType::Local, source: source.clone() }.resolve().await.unwrap();
-        assert_eq!(resolved.spec.name, "Hello");
+        assert_eq!(resolved.spec.display_name, "Hello");
         assert_eq!(resolved.spec.source, source);
         tokio::fs::write(directory.path().join("manifest.yaml"), "not: [valid").await.unwrap();
         assert!(ExtensionRegistration { source_type: ExtensionSourceType::Local, source }.resolve().await.is_err());
@@ -262,7 +266,7 @@ mod tests {
         let source = format!("http://{address}/payload/hello.py");
         let resolved = ExtensionRegistration { source_type: ExtensionSourceType::Http, source: source.clone() }.resolve().await.unwrap();
         assert_eq!(resolved.spec.source, source);
-        assert_eq!(resolved.spec.name, "Hello");
+        assert_eq!(resolved.spec.display_name, "Hello");
         assert!(read_http(&format!("http://{address}/missing.py")).await.is_err());
         server.abort();
     }
@@ -356,7 +360,7 @@ mod tests {
         git_fixture(&work, &["commit", "-m", "Add manifest"]);
         let (source, server) = git_http_server(root.path()).await;
         let resolved = ExtensionRegistration { source_type: ExtensionSourceType::Git, source: source.clone() }.resolve().await.unwrap();
-        assert_eq!(resolved.spec.name, "Hello");
+        assert_eq!(resolved.spec.display_name, "Hello");
         assert_eq!(resolved.spec.source, source);
         assert_eq!(resolved.spec.source_type, ExtensionSourceType::Git);
         server.abort();

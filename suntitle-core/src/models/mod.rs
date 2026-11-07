@@ -186,7 +186,7 @@ mod tests {
         let mut tags = std::collections::BTreeSet::new();
         for path in [
             "nodes.json",
-            "hosts/20000000-0000-4000-8000-000000000001/nodes.json",
+            "hosts/studio-host-resource/nodes.json",
             "nodes/30000000-0000-4000-8000-000000000001.json",
             "nodes/30000000-0000-4000-8000-000000000003.json",
         ] {
@@ -198,11 +198,11 @@ mod tests {
                 .cloned()
                 .unwrap_or_else(|| vec![fixture]);
             for wire in nodes {
-                let node: crate::kubernetes::resources::SuntitleNode =
+                let spec: crate::kubernetes::resources::SuntitleNodeSpec =
                     serde_json::from_value(wire.clone()).unwrap();
-                let settings = serde_json::to_value(&node.spec.settings).unwrap();
+                let settings = serde_json::to_value(&spec.settings).unwrap();
                 let expected: crate::kubernetes::resources::NodeSettings =
-                    serde_json::from_value(wire["spec"]["settings"].clone()).unwrap();
+                    serde_json::from_value(wire["settings"].clone()).unwrap();
                 assert_eq!(settings, serde_json::to_value(expected).unwrap());
                 tags.extend(settings.as_object().unwrap().keys().cloned());
             }

@@ -72,7 +72,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
 
   const choices = useMemo(() => [
     ...nodesStore.nodeTypes.map((definition) => ({ key: definition.type, definition, extension: undefined as typeof extensionsStore.items[number] | undefined })),
-    ...extensionsStore.items.map((extension) => ({ key: `extension:${extension.metadata.name}`, definition: extensionDefinition(extension, nodesStore.nodeTypes.find((item) => item.type === extension.spec.adapter.type)), extension })),
+    ...extensionsStore.items.map((extension) => ({ key: `extension:${extension.name}`, definition: extensionDefinition(extension, nodesStore.nodeTypes.find((item) => item.type === extension.adapter.type)), extension })),
   ], [nodesStore.nodeTypes, extensionsStore.items])
   const choiceLabels = useMemo(() => Object.fromEntries(choices.map((choice) => [choice.key, choice.definition.name])), [choices])
   const selectedChoice = choices.find((choice) => choice.key === selectedType)
@@ -144,7 +144,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
         name: nodeName,
         enabled: true,
         settings: selectedExtension ? extensionSettings(selectedExtension, settings) : settings,
-        ...(selectedExtension ? { extensionRef: selectedExtension.metadata.name } : {}),
+        ...(selectedExtension ? { extensionRef: selectedExtension.name } : {}),
       }
       const node = await nodesStore.installNode(host.id, create)
       setSuccessMessage(`${node.name} installation was requested on ${host.name}.`)
@@ -223,7 +223,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
                         const choice = choices.find((item) => item.key === value)
                         if (choice) {
                           selectDefinition(choice.definition, choice.key)
-                          if (choice.extension) setNodeName(choice.extension.metadata.name)
+                          if (choice.extension) setNodeName(choice.extension.name)
                         }
                       }}
                     >

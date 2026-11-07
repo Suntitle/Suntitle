@@ -1,12 +1,11 @@
 import type { Extension, NodeResource } from "../../src/stores/models"
 
 /** Provide an extension whose display name differs from its resource identity. */
-function extension(settings: Extension["spec"]["adapter"]["settings"] = {}): Extension {
+function extension(settings: Extension["adapter"]["settings"] = {}): Extension {
   return {
-    apiVersion: "control.suntitle.io/v1alpha1", kind: "SuntitleExtension",
-    metadata: { name: "hello", generation: 1 },
-    spec: { name: "Hello every 10 seconds", sourceType: "local", source: "/opt/suntitle/extensions/hello",
-      adapter: { type: "translator", execution: { runtime: "python", command: "./hello.py" }, settings } },
+    name: "hello",
+    displayName: "Hello every 10 seconds", sourceType: "local", source: "/opt/suntitle/extensions/hello",
+    adapter: { type: "translator", execution: { runtime: "python", command: "./hello.py" }, settings },
   }
 }
 
@@ -19,12 +18,12 @@ function openHost(item: Extension) {
   cy.intercept("GET", "**/api/v1/extensions", { body: { items: [item], resourceVersion: "1" } }).as("extensions")
   cy.intercept("GET", "**/api/v1/nodes", (request) => request.reply({ items: nodes, resourceVersion: "1" })).as("nodes")
   cy.intercept("POST", "**/api/v1/hosts/*/nodes", (request) => {
-    const resource = { metadata: { name: "hello-node", uid: "hello-node-uid" }, spec: request.body.spec }
+    const resource = { ...request.body, name: "hello-node" }
     nodes.push(resource)
     request.reply({ statusCode: 201, body: resource })
   }).as("install")
   cy.intercept("PUT", "**/api/v1/nodes/hello-node", (request) => {
-    nodes[0] = { ...nodes[0], spec: request.body.spec }
+    nodes[0] = { ...nodes[0], ...request.body }
     request.reply(nodes[0])
   }).as("save")
   cy.visit("/hosts", { onBeforeLoad(window) { window.localStorage.setItem("suntitle.accessToken", "mock-token") } })
@@ -46,10 +45,10 @@ describe("Extension node types", () => {
     cy.get("#node-setting-sourceLanguage, #node-setting-targetLanguage").should("not.exist")
     cy.contains("button", "Install node").click()
     cy.wait("@install").then(({ request }) => {
-      expect(request.body).to.deep.equal({ spec: {
-        name: "hello", enabled: true, hostRef: { name: "studio-host-resource" }, inputRef: null,
+      expect(request.body).to.deep.equal({
+        displayName: "hello", enabled: true, hostRef: { name: "studio-host-resource" }, inputRef: null,
         extensionRef: { name: "hello" }, settings: { custom: {} },
-      } })
+      })
     })
     cy.get('[role="status"]').should("contain.text", "installation was requested")
     cy.contains("button", "Cancel").click()
@@ -58,9 +57,9 @@ describe("Extension node types", () => {
     cy.get('button[aria-label^="Open settings for hello,"]').click()
     cy.get('[data-slot="dialog-title"]').should("have.text", "Update hello")
     cy.contains("button", "Save changes").click()
-    cy.wait("@save").its("request.body.spec").should("include", { enabled: true })
-    cy.get("@save").its("request.body.spec.settings").should("deep.equal", { custom: {} })
-    cy.get("@save").its("request.body.spec.extensionRef").should("deep.equal", { name: "hello" })
+    cy.wait("@save").its("request.body").should("include", { enabled: true })
+    cy.get("@save").its("request.body.settings").should("deep.equal", { custom: {} })
+    cy.get("@save").its("request.body.extensionRef").should("deep.equal", { name: "hello" })
   })
 
   it("uses manifest defaults and preserves arbitrary JSON custom settings", () => {
@@ -75,7 +74,7 @@ describe("Extension node types", () => {
     cy.get('[role="alert"]').should("contain.text", "nested must be valid JSON")
     cy.get("#node-setting-nested").clear().type('{"values":[1,true]}', { parseSpecialCharSequences: false })
     cy.contains("button", "Install node").click()
-    cy.wait("@install").its("request.body.spec.settings").should("deep.equal", {
+    cy.wait("@install").its("request.body.settings").should("deep.equal", {
       custom: { message: "Hi", enabled: false, nullable: null, nested: { values: [1, true] }, token: "secret" },
     })
   })

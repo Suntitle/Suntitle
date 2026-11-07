@@ -165,7 +165,7 @@ mod tests {
 
     fn node() -> SuntitleNode {
         serde_json::from_value(json!({"metadata":{"name":"node","generation":2},"spec":{
-            "name":"Node","hostRef":{"name":"host"},"extensionRef":{"name":"extension"},
+            "displayName":"Node","hostRef":{"name":"host"},"extensionRef":{"name":"extension"},
             "settings":{"custom":{"language":"cs"}}
         }}))
         .unwrap()
@@ -173,7 +173,7 @@ mod tests {
 
     fn extension() -> SuntitleExtension {
         serde_json::from_value(json!({"metadata":{"name":"extension","generation":3},"spec":{
-            "name":"Extension","sourceType":"local","source":"/extension","adapter":{
+            "displayName":"Extension","sourceType":"local","source":"/extension","adapter":{
                 "type":"transcriber","execution":{"runtime":"executable","command":"./run"},
                 "settings":{"language":{"required":true},"threads":{"default":4}}
             }

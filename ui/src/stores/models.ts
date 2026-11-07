@@ -18,7 +18,7 @@ export type ExtensionRuntime = "executable" | "python" | "pythonModule"
 /** Desired extension configuration; registration does not imply installation. */
 export interface ExtensionSpec {
   /** Human-readable name, between one and 128 characters. */
-  name: string
+  displayName: string
   /** Determines how the worker interprets source. */
   sourceType: ExtensionSourceType
   /** Worker-accessible source path or reference. */
@@ -59,21 +59,10 @@ export interface ExtensionSpec {
   }
 }
 
-/** Registered resource; status may be absent or describe an older generation. */
-export interface Extension {
-  /** Resource API version. */
-  apiVersion: string
-  /** Resource kind. */
-  kind: "SuntitleExtension"
-  /** Resource identity; metadata.name addresses API requests. */
-  metadata: {
-    /** Server resource name. */
-    name: string
-    /** Current desired revision. */
-    generation?: number
-  }
-  /** Desired preparation configuration. */
-  spec: ExtensionSpec
+/** Registered extension with resource status passed through by the API. */
+export interface Extension extends ExtensionSpec {
+  /** Stable identity used in API URLs and node extension references. */
+  name: string
   /** Asynchronous publication result; never proves host installation. */
   status?: {
     /** Desired revision represented by this status. */
@@ -119,11 +108,9 @@ export interface ExtensionRegistration {
 }
 
 /** Registration request. The server generates a resource name when omitted. */
-export interface ExtensionCreate {
-  /** Optional Kubernetes resource name. */
+export interface ExtensionCreate extends ExtensionSpec {
+  /** Optional URL identity; the server generates one when omitted. */
   name?: string | null
-  /** Desired source and execution contract. */
-  spec: ExtensionSpec
 }
 
 export interface NodeSettingOption {
@@ -329,15 +316,12 @@ export interface ValidationProblem extends Problem {
   errors: ValidationError[]
 }
 
-export interface ResourceMetadata {
-  name: string
-  uid: string
-  creationTimestamp?: string
-}
-
+/** Flat host resource returned by the control API. */
 export interface HostResource {
-  metadata: ResourceMetadata
-  spec: { name: string }
+  /** Resource name used in API URLs and references. */
+  name: string
+  /** Human-readable host label. */
+  displayName: string
   status?: {
     ip?: string
     agentVersion?: string
@@ -350,7 +334,8 @@ export interface HostResource {
 export interface NodeSpec {
   /** Referenced extension for custom settings; absent for built-in nodes. */
   extensionRef?: { name: string } | null
-  name: string
+  /** Human-readable node label. */
+  displayName: string
   description?: string | null
   hostRef: { name: string }
   enabled: boolean
@@ -360,9 +345,10 @@ export interface NodeSpec {
   settings: Partial<Record<NodeType, Node["settings"]>> & { custom?: Record<string, unknown> }
 }
 
-export interface NodeResource {
-  metadata: ResourceMetadata
-  spec: NodeSpec
+/** Flat node resource returned by the control API. */
+export interface NodeResource extends NodeSpec {
+  /** Resource name used in API URLs and references. */
+  name: string
   /** Observed runtime state and the resolved custom adapter role. */
   status?: {
     /** Current lifecycle phase reported by the host controller. */

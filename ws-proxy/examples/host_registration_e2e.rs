@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let uid = host.metadata.uid.as_deref().expect("host UID");
     Uuid::parse_str(uid)?;
-    assert_eq!(host.spec.name, host_name);
+    assert_eq!(host.spec.display_name, host_name);
     let status = host.status.expect("host status");
     assert_eq!(status.ip.as_deref(), Some("192.0.2.10"));
     assert!(matches!(status.presence, Some(Presence::Online)));

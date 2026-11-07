@@ -142,7 +142,7 @@ mod tests {
         let mut host = SuntitleHost::new(
             "host",
             SuntitleHostSpec {
-                name: "Host".into(),
+                display_name: "Host".into(),
             },
         );
         host.metadata.uid = Some("host-uid".into());

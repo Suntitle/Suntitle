@@ -17,7 +17,7 @@ fn state() -> State {
 
 /// Build a display node fixture.
 pub(super) fn node() -> SuntitleNode {
-    serde_json::from_value(json!({"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleNode","metadata":{"namespace":"test","name":"screen","uid":"node-uid","generation":1,"resourceVersion":"opaque"},"spec":{"hostRef":{"name":"host"},"name":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}}})).unwrap()
+    serde_json::from_value(json!({"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleNode","metadata":{"namespace":"test","name":"screen","uid":"node-uid","generation":1,"resourceVersion":"opaque"},"spec":{"hostRef":{"name":"host"},"displayName":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}}})).unwrap()
 }
 
 /// Verify offline status is persisted only when changed.
@@ -29,7 +29,7 @@ async fn expiry_persists_offline_status_once_for_resource_watches() {
     let mut host = SuntitleHost::new(
         "host",
         SuntitleHostSpec {
-            name: "Host".into(),
+            display_name: "Host".into(),
         },
     );
     host.metadata.namespace = Some("test".into());
@@ -95,7 +95,7 @@ fn heartbeat_expiry_and_session_identity_use_resource_status() {
     let mut host = SuntitleHost::new(
         "host",
         SuntitleHostSpec {
-            name: "Host".into(),
+            display_name: "Host".into(),
         },
     );
     host.metadata.uid = Some("uid".into());
@@ -277,7 +277,7 @@ async fn custom_lifecycle_prepares_then_applies_and_reboots_only_changed_artifac
     let host = Arc::new(std::sync::Mutex::new(SuntitleHost::new(
         "host",
         SuntitleHostSpec {
-            name: "Host".into(),
+            display_name: "Host".into(),
         },
     )));
     {

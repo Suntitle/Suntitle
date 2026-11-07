@@ -68,7 +68,7 @@ For requests using these fixtures, substitute:
   and the optional `finish` file. Use a fresh directory without a `finish` file.
 
 Convert the resulting YAML bodies to JSON and POST the extension to
-`/api/v1/extensions`, then the node to `/api/v1/hosts/{host-uid}/nodes`.
+`/api/v1/extensions`, then the node to `/api/v1/hosts/{host-name}/nodes`.
 Wait for publication before creating the node. Use `--artifact-plain-http` with
 Diamant for the local Compose registry. For Python fixtures, configure a suitable
 local interpreter via `UV_PYTHON` if needed.

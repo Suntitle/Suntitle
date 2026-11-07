@@ -292,7 +292,7 @@ terminal.
    just diamant-local
    ```
 
-3. List hosts and copy `metadata.uid` and `metadata.name` of `local-host`:
+3. List hosts and copy `name` of `local-host`:
 
    ```bash
    just hosts
@@ -301,21 +301,21 @@ terminal.
 4. Install and start an audio-source node on that host:
 
    ```bash
-   just install-audio-source <host-uid> <host-name>
+   just install-audio-source <host-name>
    ```
 
    Diamant launches the audio listener immediately. Set `deviceName` to a device
    name when the system default is not the intended input.
 
-5. List the nodes, then use the created node's `metadata.name` to inspect it:
+5. List the nodes, then use the created node's `name` to inspect it:
 
    ```bash
    just nodes
    just node <node-name>
    ```
 
-Use `PUT /api/v1/nodes/{name}` with `{"spec": ...}` containing the complete
-editable spec to change its name, enabled state, settings, or input. Controllers
+Use `PUT /api/v1/nodes/{name}` with the complete flat editable configuration
+to change its `displayName`, enabled state, settings, or input. Controllers
 reconcile desired state and dispatch runtime operations to Diamant. Disconnecting
 Diamant marks the host offline and retains desired nodes in Kubernetes.
 

@@ -33,23 +33,34 @@ fn resource_items_schema<T: ToSchema>() -> utoipa::openapi::schema::Array {
         .build()
 }
 
+/// Flat registration contract. Persistence wraps configuration in a Kubernetes spec.
 #[derive(Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExtensionCreate {
+    /// Optional URL identity. The server generates an identifier when omitted.
     pub name: Option<String>,
+    /// Desired source and adapter fields serialized at the request's top level.
+    #[serde(flatten)]
     pub spec: SuntitleExtensionSpec,
 }
 
+/// Flat node creation contract with optional resource identity.
 #[derive(Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeCreate {
+    /// Optional resource name. The server generates one when omitted.
     pub name: Option<String>,
+    /// Desired node fields serialized at the request's top level.
+    #[serde(flatten)]
     pub spec: SuntitleNodeSpec,
 }
 
+/// Flat replacement of desired node configuration; status remains server-owned.
 #[derive(Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeUpdate {
+    /// Complete desired node fields serialized at the request's top level.
+    #[serde(flatten)]
     pub spec: SuntitleNodeSpec,
 }
 
@@ -104,6 +115,7 @@ impl ResourceStore {
         Ok(self.extensions.get(name).await?)
     }
 
+    /// Persist flat registration fields as a Kubernetes resource with a stable URL identity.
     pub async fn create_extension(
         &self,
         request: ExtensionCreate,
@@ -152,19 +164,13 @@ impl ResourceStore {
         self.nodes.get(name).await.map_err(ApiError::from)
     }
 
+    /// Resolve the named host and persist desired state with Kubernetes ownership.
     pub async fn create(
         &self,
-        host_uid: &str,
+        host_name: &str,
         request: NodeCreate,
     ) -> Result<SuntitleNode, ApiError> {
-        let host = self
-            .hosts
-            .list(&ListParams::default())
-            .await?
-            .items
-            .into_iter()
-            .find(|host| host.metadata.uid.as_deref() == Some(host_uid))
-            .ok_or_else(|| ApiError::not_found(format!("Host UID {host_uid} was not found.")))?;
+        let host = self.hosts.get(host_name).await?;
         let name = request
             .name
             .unwrap_or_else(|| format!("node-{}", Uuid::new_v4()));
@@ -174,6 +180,7 @@ impl ResourceStore {
         Ok(self.nodes.create(&PostParams::default(), &node).await?)
     }
 
+    /// Replace desired configuration while preserving resource status and metadata.
     pub async fn update(&self, name: &str, request: NodeUpdate) -> Result<SuntitleNode, ApiError> {
         let patch = json_patch::Patch(vec![json_patch::PatchOperation::Replace(
             json_patch::ReplaceOperation {

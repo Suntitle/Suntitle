@@ -40,7 +40,7 @@ pub struct ResourceIdentity {
 pub struct SuntitleHostSpec {
     /// Display name shown for this host.
     #[schemars(length(min = 1, max = 128))]
-    pub name: String,
+    pub display_name: String,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -67,7 +67,7 @@ pub struct ResourceRef {
 pub struct SuntitleExtensionSpec {
     /// Display name of the extension.
     #[schemars(length(min = 1, max = 128))]
-    pub name: String,
+    pub display_name: String,
     /// Kind of source prepared by the publication worker.
     pub source_type: ExtensionSourceType,
     /// Source path or URL interpreted according to source type.
@@ -156,7 +156,7 @@ pub struct ExtensionStatus {
 pub struct SuntitleNodeSpec {
     /// Display name shown to users.
     #[schemars(length(min = 1, max = 128))]
-    pub name: String,
+    pub display_name: String,
     /// Optional description of the node’s purpose.
     #[schemars(length(max = 1000))]
     pub description: Option<String>,
@@ -479,8 +479,12 @@ macro_rules! openapi_schema {
 
 openapi_schema!(
     SuntitleHost,
+    SuntitleHostSpec,
     SuntitleNode,
     SuntitleNodeSpec,
     SuntitleExtension,
-    SuntitleExtensionSpec
+    SuntitleExtensionSpec,
+    ExtensionStatus,
+    HostStatus,
+    NodeStatus
 );

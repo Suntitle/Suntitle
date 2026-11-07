@@ -11,7 +11,6 @@
         "resourceVersion": "10"
       },
       "spec": {
-        "name": "Custom transcriber",
         "sourceType": "local",
         "source": "/opt/suntitle/extensions/custom-transcriber",
         "adapter": {
@@ -35,7 +34,8 @@
               "source": "settings.language"
             }
           ]
-        }
+        },
+        "displayName": "Custom transcriber"
       }
     }
   ],

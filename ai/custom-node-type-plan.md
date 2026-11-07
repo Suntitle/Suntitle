@@ -247,7 +247,7 @@ metadata:
   name: custom-transcriber
   namespace: suntitle
 spec:
-  name: Custom transcriber
+  displayName: Custom transcriber
   sourceType: local # local | git | oci | http
   source: /opt/suntitle/extensions/custom-transcriber
   refreshToken: <optional-refresh-request-token>
@@ -306,7 +306,7 @@ metadata:
   name: transcription
   namespace: suntitle
 spec:
-  name: Transcription
+  displayName: Transcription
   hostRef:
     name: worker-1
   enabled: true

@@ -18,13 +18,13 @@ spec:
         properties:
           spec:
             properties:
-              name:
+              displayName:
                 description: Display name shown for this host.
                 maxLength: 128
                 minLength: 1
                 type: string
             required:
-            - name
+            - displayName
             type: object
           status:
             nullable: true
@@ -128,6 +128,11 @@ spec:
                 maxLength: 1000
                 nullable: true
                 type: string
+              displayName:
+                description: Display name shown to users.
+                maxLength: 128
+                minLength: 1
+                type: string
               enabled:
                 default: true
                 description: Whether the node should run.
@@ -173,11 +178,6 @@ spec:
                 required:
                 - name
                 type: object
-              name:
-                description: Display name shown to users.
-                maxLength: 128
-                minLength: 1
-                type: string
               restartToken:
                 description: Opaque token whose change requests a node restart.
                 maxLength: 128
@@ -378,8 +378,8 @@ spec:
                 - message: node type is immutable
                   rule: has(self.audio_source) == has(oldSelf.audio_source) && has(self.transcriber) == has(oldSelf.transcriber) && has(self.translator) == has(oldSelf.translator) && has(self.display) == has(oldSelf.display) && has(self.custom) == has(oldSelf.custom)
             required:
+            - displayName
             - hostRef
-            - name
             - settings
             type: object
             x-kubernetes-validations:
@@ -668,17 +668,17 @@ spec:
                 - execution
                 - type
                 type: object
+              displayName:
+                description: Display name of the extension.
+                maxLength: 128
+                minLength: 1
+                type: string
               maxAttempts:
                 default: 3
                 description: Maximum total publication attempts, including the initial execution. Defaults to three.
                 format: uint32
                 minimum: 1.0
                 type: integer
-              name:
-                description: Display name of the extension.
-                maxLength: 128
-                minLength: 1
-                type: string
               refreshToken:
                 description: Opaque token whose change requests extension preparation.
                 maxLength: 128
@@ -699,7 +699,7 @@ spec:
                 type: string
             required:
             - adapter
-            - name
+            - displayName
             - source
             - sourceType
             type: object

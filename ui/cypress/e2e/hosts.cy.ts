@@ -40,7 +40,7 @@ describe("Hosts page", () => {
 
   it("renders a host before its agent reports status", () => {
     cy.intercept("GET", "**/api/v1/hosts", {
-      body: { items: [{ metadata: { name: "host-resource", uid: "host-uid" }, spec: { name: "New host" } }] },
+      body: { items: [{ name: "host-resource", displayName: "New host" }] },
     }).as("getHosts")
     visitAuthenticatedHosts()
     cy.wait("@getHosts")
@@ -127,7 +127,7 @@ describe("Hosts page", () => {
     }).as("getNodeTypes")
     cy.intercept("POST", "**/api/v1/hosts/*/nodes", {
       statusCode: 201,
-      fixture: "api/v1/hosts/20000000-0000-4000-8000-000000000001/nodes.json",
+      fixture: "api/v1/hosts/studio-host-resource/nodes.json",
     }).as("installNode")
 
     visitAuthenticatedHosts()
@@ -182,10 +182,10 @@ describe("Hosts page", () => {
     cy.contains("button", "Install node").click()
     cy.wait("@installNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
-      expect(request.url).to.include("/hosts/20000000-0000-4000-8000-000000000001/nodes")
-      expect(request.body).to.deep.equal({ spec: {
+      expect(request.url).to.include("/hosts/studio-host-resource/nodes")
+      expect(request.body).to.deep.equal({
         inputRef: { name: "30000000-0000-4000-8000-000000000006" },
-        name: "live-transcriber",
+        displayName: "live-transcriber",
         enabled: true,
         settings: { transcriber: {
           model: "large-v3",
@@ -195,7 +195,7 @@ describe("Hosts page", () => {
           vadEnabled: true,
         } },
         hostRef: { name: "studio-host-resource" },
-      } })
+      })
     })
 
     cy.get('[role="status"]').should("have.text", "live-transcriber installation was requested on studio-host.")

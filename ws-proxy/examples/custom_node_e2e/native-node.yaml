@@ -1,12 +1,11 @@
-spec:
-  name: native probe
-  hostRef:
-    name: "${HOST_NAME}"
-  extensionRef:
-    name: native-probe
-  enabled: true
-  settings:
-    custom:
-      message: "a value with spaces; $(literal)"
-      report: "${RUN_ROOT}/native.json"
-      finish: "${RUN_ROOT}/finish"
+displayName: native probe
+hostRef:
+  name: "${HOST_NAME}"
+extensionRef:
+  name: native-probe
+enabled: true
+settings:
+  custom:
+    message: "a value with spaces; $(literal)"
+    report: "${RUN_ROOT}/native.json"
+    finish: "${RUN_ROOT}/finish"

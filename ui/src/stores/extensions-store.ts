@@ -1,7 +1,7 @@
 /**
  * Registration persists desired state. Refresh requests preparation asynchronously.
- * Publication may be pending, preparing, published, or terminally failed; older
- * observed generations MUST remain pending until the worker reports the revision.
+ * Publication may be pending, preparing, published, or terminally failed. Resource
+ * status is reported asynchronously by the worker.
  */
 import { makeAutoObservable, runInAction } from "mobx"
 
@@ -79,7 +79,7 @@ export class ExtensionsStore {
     }
   }
 
-  /** Request asynchronous preparation using metadata.name. */
+  /** Request asynchronous preparation using its URL identity. */
   async refreshExtension(name: string): Promise<Extension> {
     this.pendingRefreshNames.add(name)
     this.refreshErrors.delete(name)
@@ -97,9 +97,9 @@ export class ExtensionsStore {
 
   /** Replace the resource with matching server identity or append a new one. */
   private upsertExtension(extension: Extension): void {
-    const exists = this.items.some((item) => item.metadata.name === extension.metadata.name)
+    const exists = this.items.some((item) => item.name === extension.name)
     this.items = exists
-      ? this.items.map((item) => item.metadata.name === extension.metadata.name ? extension : item)
+      ? this.items.map((item) => item.name === extension.name ? extension : item)
       : [...this.items, extension]
   }
 }

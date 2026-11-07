@@ -422,7 +422,7 @@ impl NodeProcessManager {
             .map(|node| {
                 let command = node.command.as_ref();
                 NodeSnapshot {
-                    name: node.spec.name.clone(),
+                    name: node.spec.display_name.clone(),
                     node_type: match &node.spec.settings {
                         NodeSettings::AudioSource(_) => "Audio source",
                         NodeSettings::Transcriber(_) => "Transcriber",
@@ -686,7 +686,7 @@ mod tests {
         )
         .unwrap();
         let custom: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({
-            "name":"Custom", "hostRef":{"name":"host"}, "extensionRef":{"name":"plugin"},
+            "displayName":"Custom", "hostRef":{"name":"host"}, "extensionRef":{"name":"plugin"},
             "settings":{"custom":{}}
         }))
         .unwrap();
@@ -719,7 +719,7 @@ mod tests {
         )
         .unwrap();
         let mut identity = test_identity();
-        let mut spec: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({"name":"Custom","hostRef":{"name":"host"},"extensionRef":{"name":"plugin"},"settings":{"custom":{}}})).unwrap();
+        let mut spec: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({"displayName":"Custom","hostRef":{"name":"host"},"extensionRef":{"name":"plugin"},"settings":{"custom":{}}})).unwrap();
         let adapter = serde_json::from_value(serde_json::json!({"type":"transcriber","execution":{"command":"./run"},"settings":{"value":"a b;$(ignored)"},"arguments":[{"flag":"--value","source":"settings.value"}]})).unwrap();
         let mut custom = CustomExecution {
             reference: "registry/extensions@sha256:test".into(),
@@ -887,7 +887,7 @@ mod tests {
     #[test]
     fn audio_arguments_are_separate_and_not_shell_interpreted() {
         let result = spec(serde_json::json!({
-            "type":"audio_source", "name":"mic", "enabled":true, "description":null,
+            "type":"audio_source", "displayName":"mic", "enabled":true, "description":null,
             "settings":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le","deviceName":"USB; touch /tmp/nope"},
             "inputNodeId":null
         }));
@@ -912,7 +912,7 @@ mod tests {
     #[test]
     fn transcriber_arguments_include_every_runtime_setting() {
         let result = spec(serde_json::json!({
-            "type":"transcriber", "name":"asr", "enabled":true, "description":null,
+            "type":"transcriber", "displayName":"asr", "enabled":true, "description":null,
             "settings":{"model":"large-v3","language":"en","task":"translate","beamSize":8,"vadEnabled":true},
             "inputNodeId":null
         }));
@@ -936,7 +936,7 @@ mod tests {
     #[test]
     fn translator_and_display_arguments_are_complete() {
         let translator = spec(serde_json::json!({
-            "type":"translator", "name":"translate", "enabled":true, "description":null,
+            "type":"translator", "displayName":"translate", "enabled":true, "description":null,
             "settings":{"sourceLanguage":"uk","targetLanguage":"cs","provider":"huggingface","model":"custom model","preserveFormatting":false},
             "inputNodeId":null
         }));
@@ -957,7 +957,7 @@ mod tests {
         );
 
         let display = spec(serde_json::json!({
-            "type":"display", "name":"screen", "enabled":true, "description":null,
+            "type":"display", "displayName":"screen", "enabled":true, "description":null,
             "settings":{"maxLines":3,"fontScale":1.5,"showOriginal":true,"theme":"transparent"},
             "inputNodeId":null
         }));
@@ -999,7 +999,7 @@ mod tests {
         )
         .unwrap();
         let update = test_spec(serde_json::json!({
-            "type":"display", "name":"screen", "enabled":true, "description":null,
+            "type":"display", "displayName":"screen", "enabled":true, "description":null,
             "settings":{"maxLines":3,"fontScale":1.0,"showOriginal":false,"theme":"dark"}, "inputNodeId":null
         }));
         let identity = test_identity();

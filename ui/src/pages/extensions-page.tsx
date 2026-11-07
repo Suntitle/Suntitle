@@ -18,11 +18,11 @@ const sourceTypeLabels: Record<ExtensionSourceType, string> = {
   http: "HTTP",
 }
 
-/** Label only current publication observations; registration never implies installation. */
+/** Label resource publication conditions; registration never implies installation. */
 function publicationStatus(extension: Extension): string {
   const status = extension.status
-  if (!status || status.observedGeneration == null || status.observedGeneration !== extension.metadata.generation) return "Pending"
-  const conditions = status.conditions?.filter((item) => item.observedGeneration == null || item.observedGeneration === extension.metadata.generation) ?? []
+  if (!status) return "Pending"
+  const conditions = status.conditions ?? []
   const ready = conditions.find((item) => item.type === "Ready")
   if (ready?.status === "True") return "Published"
   if (ready?.status === "False" && ready.reason === "PreparationFailed") return "Failed"
@@ -100,27 +100,27 @@ export const ExtensionsPage = observer(function ExtensionsPage() {
                     <TableRow className="hover:bg-transparent"><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">No extensions are registered yet.</TableCell></TableRow>
                   )}
                   {extensionsStore.items.map((extension) => (
-                    <TableRow key={extension.metadata.name} className="hover:bg-violet-50/35">
+                    <TableRow key={extension.name} className="hover:bg-violet-50/35">
                       <TableCell className="pl-5 sm:pl-6">
                         <span className="flex items-center gap-3">
                           <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-100 text-violet-700"><Blocks className="size-4" aria-hidden="true" /></span>
                           <span className="min-w-0">
-                            <span className="block font-medium">{extension.spec.name}</span>
-                            <span className="block max-w-sm truncate text-xs text-muted-foreground">{extension.spec.adapter.type}</span>
+                            <span className="block font-medium">{extension.displayName}</span>
+                            <span className="block max-w-sm truncate text-xs text-muted-foreground">{extension.adapter.type}</span>
                           </span>
                         </span>
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{publicationStatus(extension)}</Badge>
-                        {extension.status?.conditions?.filter((condition) => condition.type === "Ready" && publicationStatus(extension) !== "Pending" && (condition.observedGeneration == null || condition.observedGeneration === extension.metadata.generation)).map((condition) => <span key={condition.type} className="mt-1 block max-w-64 whitespace-normal text-xs text-muted-foreground">{condition.message || condition.reason}</span>)}
+                        {extension.status?.conditions?.filter((condition) => condition.type === "Ready").map((condition) => <span key={condition.type} className="mt-1 block max-w-64 whitespace-normal text-xs text-muted-foreground">{condition.message || condition.reason}</span>)}
                         {extension.status?.artifactReference && <span className="mt-1 block max-w-48 truncate font-mono text-xs text-muted-foreground" title={extension.status.artifactReference}>{publicationStatus(extension) === "Pending" ? "Previous artifact: " : ""}{extension.status.artifactReference}</span>}
                       </TableCell>
-                      <TableCell><Badge variant="outline">{sourceTypeLabels[extension.spec.sourceType]}</Badge></TableCell>
-                      <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground" title={extension.spec.source}>{extension.spec.source}</TableCell>
+                      <TableCell><Badge variant="outline">{sourceTypeLabels[extension.sourceType]}</Badge></TableCell>
+                      <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground" title={extension.source}>{extension.source}</TableCell>
                       <TableCell className="pr-5 text-right sm:pr-6">
                         <div className="flex flex-col items-end gap-1">
                           <ExtensionActionsMenu extension={extension} />
-                          {extensionsStore.refreshError(extension.metadata.name) && <span role="alert" className="max-w-48 text-right text-xs text-destructive">{extensionsStore.refreshError(extension.metadata.name)}</span>}
+                          {extensionsStore.refreshError(extension.name) && <span role="alert" className="max-w-48 text-right text-xs text-destructive">{extensionsStore.refreshError(extension.name)}</span>}
                         </div>
                       </TableCell>
                     </TableRow>

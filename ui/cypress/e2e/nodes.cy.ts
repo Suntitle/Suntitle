@@ -117,8 +117,8 @@ describe("Nodes page", () => {
 
     cy.wait("@updateNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
-      expect(request.body).to.deep.equal({ spec: {
-        name: "Updated transcriber",
+      expect(request.body).to.deep.equal({
+        displayName: "Updated transcriber",
         description: "English transcription",
         enabled: true,
         inputRef: { name: "30000000-0000-4000-8000-000000000001" },
@@ -131,7 +131,7 @@ describe("Nodes page", () => {
         } },
         hostRef: { name: "studio-host-resource" },
         restartToken: "existing-restart",
-      } })
+      })
     })
 
     cy.get('[data-slot="dialog-content"]').should("not.exist")
@@ -197,8 +197,8 @@ describe("Nodes page", () => {
 
     cy.wait("@disableNode").then(({ request }) => {
       expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
-      expect(request.body).to.deep.equal({ spec: {
-        name: "Studio microphone",
+      expect(request.body).to.deep.equal({
+        displayName: "Studio microphone",
         description: "Primary audio input",
         enabled: false,
         inputRef: null,
@@ -210,7 +210,7 @@ describe("Nodes page", () => {
         } },
         hostRef: { name: "studio-host-resource" },
         restartToken: "existing-restart",
-      } })
+      })
     })
 
     cy.contains('[data-testid="topology-node"]', "Studio microphone").within(() => {
