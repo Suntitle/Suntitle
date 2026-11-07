@@ -96,6 +96,32 @@ class InfrastructureTest(unittest.TestCase):
                     if exit_code == 0:
                         self.assertIn('up --no-build', commands[1])
 
+    def test_bootstrap_preserves_admin_credentials(self):
+        """Fresh deployments MUST receive private admin credentials retained on reruns."""
+        bootstrap = (ROOT / 'infrastructure/bootstrap.sh').read_text()
+        script = bootstrap[bootstrap.index('if [[ ! -s /srv/suntitle/postgres-password'):]
+        script = script[:script.index('\nbash infrastructure/generate-pki.sh')]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = 'set -euo pipefail\numask 077\n' + script.replace('/srv/suntitle', str(root))
+            environment = os.environ | {'REGISTRY_HOST': 'registry.example.com',
+                                        'API_IMAGE': 'example/api:v1',
+                                        'PROXY_IMAGE': 'example/proxy:v1',
+                                        'UI_IMAGE': 'example/ui:v1'}
+            previous = None
+            for _ in range(2):
+                subprocess.run(['bash', '-c', script], cwd=root, env=environment, check=True)
+                dotenv = dict(line.split('=', 1) for line in (root / '.env.local').read_text().splitlines())
+                password = (root / 'admin-password').read_text().strip()
+                self.assertEqual(dotenv['ADMIN_USERNAME'], 'admin')
+                self.assertRegex(password, r'^[0-9a-f]{64}$')
+                self.assertEqual(dotenv['ADMIN_PASSWORD'], password)
+                self.assertEqual((root / 'admin-password').stat().st_mode & 0o777, 0o600)
+                self.assertEqual((root / '.env.local').stat().st_mode & 0o777, 0o600)
+                if previous is not None:
+                    self.assertEqual(dotenv, previous)
+                previous = dotenv
+
     def test_image_overrides_and_latest_defaults(self):
         """Default to GHCR latest without network access and preserve image overrides."""
         defaults = {'api': 'ghcr.io/suntitle/suntitle/control-api:latest',

@@ -77,6 +77,12 @@ S3. Rust/UI source, binary installers, local `.env` files, certificates, and
 extension payloads are excluded. The instance creates its own credentials.
 Startup continues after Pulumi finishes; inspect cloud-init for readiness.
 
+On first startup, provisioning creates the `admin` account with a random password.
+The password is retained on the persistent data volume across instance replacements.
+Retrieve it through `just infra-ssh` with `sudo cat /srv/suntitle/admin-password`.
+The API uses these credentials only when initializing an empty administrator table;
+later startups retain the account stored in PostgreSQL.
+
 ## Connect and inspect
 
 On macOS, install the SSM client once:

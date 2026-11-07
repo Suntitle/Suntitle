@@ -213,8 +213,7 @@ test-python python="python3":
     {{quote(python)}} -m unittest discover -s tests -v
 
 # Select an existing Pulumi stack.
-infra-select stack="dev":
-    pulumi -C infrastructure stack select "{{ stack }}"
+infra-select stack="dev": (aws-login "pulumi" "-C" "infrastructure" "stack" "select" stack)
 
 # Build and push the API, proxy, and UI images under a image repository and tag.
 [positional-arguments]
@@ -240,12 +239,10 @@ images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default(
         --file ui/Dockerfile --tag "$image_repo/ui:$image_tag" --push ui
 
 # Initialize a new Pulumi stack.
-infra-init stack="dev":
-    pulumi -C infrastructure stack init "{{ stack }}"
+infra-init stack="dev": (aws-login "pulumi" "-C" "infrastructure" "stack" "init" stack)
 
 # Preview the Pulumi deployment.
-infra-preview:
-    pulumi -C infrastructure preview
+infra-preview: (aws-login "pulumi" "-C" "infrastructure" "preview")
 
 # Load default AWS credentials and optionally run a command with them.
 [positional-arguments]
@@ -260,15 +257,15 @@ aws-login *command:
 infra-up: (aws-login "pulumi" "-C" "infrastructure" "up")
 
 # Set the Pulumi stack's AWS region.
-infra-region region:
-    pulumi -C infrastructure config set aws:region "{{ region }}"
+infra-region region: (aws-login "pulumi" "-C" "infrastructure" "config" "set" "aws:region" region)
 
 # Print the deployed proxy's public IP.
-infra-ip:
-    pulumi -C infrastructure stack output publicIp
+infra-ip: (aws-login "pulumi" "-C" "infrastructure" "stack" "output" "publicIp")
 
 # Open an SSM shell on the selected stack's instance in its configured AWS region.
-infra-ssh:
+infra-ssh: (aws-login "just" "_infra-ssh")
+
+_infra-ssh:
     #!/usr/bin/env bash
     set -euo pipefail
     aws_region="$(pulumi -C infrastructure config get aws:region)"
@@ -276,8 +273,7 @@ infra-ssh:
     exec aws ssm start-session --region "$aws_region" --target "$instance_id"
 
 # Destroy the Pulumi stack's AWS resources.
-infra-destroy:
-    pulumi -C infrastructure destroy
+infra-destroy: (aws-login "pulumi" "-C" "infrastructure" "destroy")
 
 # Destroy the stack, including its persistent data volume.
 alias infra-down := infra-destroy
