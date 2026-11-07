@@ -66,6 +66,14 @@ preserving its data volume. To erase the local database and all Kubernetes
 resources, stop `just local-stack`, then run `just db-drop-volume`. The next
 `just local-stack` creates a fresh database and bootstraps Kubernetes again.
 
+Project bind mounts for PKI, registry configuration, and extension sources use
+shared SELinux labeling (`z`). Kubernetes, bootstrap, the API, and the proxy share
+the PKI directory. Recreate affected containers after changing mount options so
+Docker applies the labels. Private keys retain mode `600`.
+Traefik alone disables SELinux label confinement to access the host Docker socket
+for service discovery. The socket keeps its host label and permissions;
+`no-new-privileges` remains enabled.
+
 After generating certificates and kubeconfigs, the container stack can also run on its own:
 
 ```bash
@@ -82,7 +90,25 @@ that port is no longer published by the stack.
 
 For your own local extensions, put each payload in `extensions/<name>/` and register
 it with `sourceType: local` and `source: /opt/suntitle/extensions/<name>`.
-Compose mounts that directory read-only into HUB. Set `LOCAL_EXTENSIONS_DIR` in
+The registration dialog asks only for source type and path or URL. Suntitle reads
+`manifest.yaml`, `manifest.yml`, or `manifest.json` from that source. The manifest
+contains the display `name`, `adapter` (role, execution, arguments, and settings),
+and optionally `maxAttempts`; a standalone spec, `{name, spec}` request, or full
+`SuntitleExtension` resource is accepted. Its source fields are replaced by the
+location entered in the dialog. Manifest runtime and command fields MUST match
+the extension payload. Local and Git sources use a root manifest, OCI sources use
+the restored artifact root, and HTTP payload URLs use a sibling manifest beside
+the payload file. Git requires an accessible HTTP(S) repository. OCI discovery is
+anonymous and uses `SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP=true` for local HTTP
+registries; HTTPS remains the default outside Compose.
+
+For the bundled Hello example, select **Local** and enter
+`/opt/suntitle/extensions/hello`. Registration reads its manifest automatically;
+publication and installation remain asynchronous.
+Registered extensions appear alongside built-in choices in the host dialog’s
+**Node type** selector. Their settings and defaults come from the manifest.
+
+Compose mounts that directory read-only into the API and HUB. Set `LOCAL_EXTENSIONS_DIR` in
 `.env.local` to use another host directory. Its contents are ignored by Git.
 The bundled E2E fixtures are available separately at
 `/opt/suntitle/example-extensions/{native,python-script,python-module}`.

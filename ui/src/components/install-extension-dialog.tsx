@@ -1,142 +1,87 @@
-import { useState, type ChangeEvent, type FormEvent } from "react"
-import { FileInput } from "lucide-react"
+import { useState, type FormEvent } from "react"
 import { observer } from "mobx-react-lite"
 
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useStores } from "@/stores"
 import type { ExtensionSourceType } from "@/stores/models"
 
+/** Controlled source-registration dialog lifecycle. */
 interface InstallExtensionDialogProps {
+  /** Whether the dialog is visible. */
   open: boolean
+  /** Receives requested visibility changes. */
   onOpenChange: (open: boolean) => void
 }
 
-const sourceTypeLabels: Record<ExtensionSourceType, string> = {
-  local: "Local",
-  git: "Git",
-  zip: "ZIP",
-}
+const sourceTypeLabels: Record<ExtensionSourceType, string> = { local: "Local", git: "Git", oci: "OCI", http: "HTTP" }
 
+/** Collect source location only; the server reads all configuration from its manifest. */
 export const InstallExtensionDialog = observer(function InstallExtensionDialog({ open, onOpenChange }: InstallExtensionDialogProps) {
   const { extensionsStore } = useStores()
   const [sourceType, setSourceType] = useState<ExtensionSourceType>("local")
   const [source, setSource] = useState("")
 
+  /** Clear the draft after cancellation or successful registration. */
   function resetForm() {
     setSourceType("local")
     setSource("")
     extensionsStore.clearInstallError()
   }
 
+  /** Retain the draft while the server reads the manifest and registers it. */
   function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen && !extensionsStore.isInstalling) resetForm()
+    if (extensionsStore.isInstalling) return
+    if (!nextOpen) resetForm()
     onOpenChange(nextOpen)
   }
 
-  function handleLocalSource(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    setSource(file?.webkitRelativePath || file?.name || "")
-    extensionsStore.clearInstallError()
-  }
-
+  /** Register the selected source without asking users to duplicate manifest fields. */
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!source) return
-
+    if (!source.trim() || extensionsStore.isInstalling) return
     try {
-      await extensionsStore.installExtension({ sourceType, source })
-      handleOpenChange(false)
+      await extensionsStore.installExtension({ sourceType, source: source.trim() })
+      resetForm()
+      onOpenChange(false)
     } catch {
-      // ExtensionsStore exposes the normalized API error to this observer.
+      // The store retains API errors alongside the submitted location.
     }
   }
-
-  const isLocal = sourceType === "local"
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader className="border-b px-6 py-5 pr-14">
-            <DialogTitle>Install extension</DialogTitle>
-            <DialogDescription>Add an extension from a local file, Git repository, or ZIP URL.</DialogDescription>
+            <DialogTitle>Register extension</DialogTitle>
+            <DialogDescription>Add an extension from its path or URL.</DialogDescription>
           </DialogHeader>
-
-          <div className="grid gap-5 px-6 py-6">
+          <fieldset disabled={extensionsStore.isInstalling} className="grid min-w-0 gap-5 px-6 py-6">
+            <div>
+              <h2 className="text-sm font-semibold">Extension source</h2>
+              <p className="mt-2 text-xs text-muted-foreground">Suntitle reads the name, runtime, and settings from its manifest.</p>
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="extension-source-type">Source type</Label>
-              <Select
-                value={sourceType}
-                onValueChange={(value) => {
-                  setSourceType(value as ExtensionSourceType)
-                  setSource("")
-                  extensionsStore.clearInstallError()
-                }}
-              >
-                <SelectTrigger id="extension-source-type" aria-label="Source type" className="h-10">
-                  <SelectValue>{sourceTypeLabels[sourceType]}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="local">Local</SelectItem>
-                  <SelectItem value="git">Git</SelectItem>
-                  <SelectItem value="zip">ZIP</SelectItem>
-                </SelectContent>
+              <Select disabled={extensionsStore.isInstalling} value={sourceType} onValueChange={(value) => { setSourceType(value as ExtensionSourceType); setSource(""); extensionsStore.clearInstallError() }}>
+                <SelectTrigger id="extension-source-type" aria-label="Source type"><SelectValue>{sourceTypeLabels[sourceType]}</SelectValue></SelectTrigger>
+                <SelectContent>{Object.entries(sourceTypeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-
             <div className="grid gap-2">
-              <Label htmlFor="extension-source">{isLocal ? "Extension file" : "Source"}</Label>
-              {isLocal ? (
-                <div className="relative">
-                  <FileInput className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                  <Input
-                    key={sourceType}
-                    id="extension-source"
-                    type="file"
-                    className="h-10 pl-9 file:mr-3"
-                    required
-                    onChange={handleLocalSource}
-                  />
-                </div>
-              ) : (
-                <Input
-                  key={sourceType}
-                  id="extension-source"
-                  className="h-10"
-                  type="url"
-                  value={source}
-                  placeholder={sourceType === "git" ? "https://github.com/example/extension.git" : "https://example.com/extension.zip"}
-                  required
-                  onChange={(event) => {
-                    setSource(event.target.value)
-                    extensionsStore.clearInstallError()
-                  }}
-                />
-              )}
-              <p className="text-xs text-muted-foreground">
-                {isLocal ? "The selected file will be validated." : "Suntitle will fetch and validate the extension from this URL."}
-              </p>
+              <Label htmlFor="extension-source">Extension path or URL</Label>
+              <Input id="extension-source" value={source} required pattern=".*\S.*" placeholder={sourceType === "local" ? "/opt/suntitle/extensions/hello" : sourceType === "oci" ? "registry.example.com/extension:latest" : sourceType === "git" ? "https://github.com/example/extension.git" : "https://example.com/hello.py"} onChange={(event) => { setSource(event.target.value); extensionsStore.clearInstallError() }} />
             </div>
-
             {extensionsStore.installError && <p role="alert" className="text-sm text-destructive">{extensionsStore.installError}</p>}
-          </div>
-
-          <DialogFooter className="border-t bg-muted/30 px-6 py-4">
+          </fieldset>
+          <DialogFooter className="items-center justify-between border-t bg-muted/30 px-6 py-4">
+            <span className="mr-auto text-xs text-muted-foreground">Local · Git · OCI · HTTP</span>
             <Button type="button" variant="outline" disabled={extensionsStore.isInstalling} onClick={() => handleOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={!source || extensionsStore.isInstalling}>
-              {extensionsStore.isInstalling ? "Installing…" : "Install extension"}
-            </Button>
+            <Button type="submit" disabled={!source.trim() || extensionsStore.isInstalling}>{extensionsStore.isInstalling ? "Registering…" : "Register extension"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

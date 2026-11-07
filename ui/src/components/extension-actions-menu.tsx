@@ -11,13 +11,15 @@ import {
 import { useStores } from "@/stores"
 import type { Extension } from "@/stores/models"
 
+/** Refresh a registered resource independently of its display name. */
 export const ExtensionActionsMenu = observer(function ExtensionActionsMenu({ extension }: { extension: Extension }) {
   const { extensionsStore } = useStores()
-  const isPending = extensionsStore.isRefreshPending(extension.name)
+  const isPending = extensionsStore.isRefreshPending(extension.metadata.name)
 
+  /** Persist a refresh request; the page subsequently reconciles publication. */
   async function refreshExtension() {
     try {
-      await extensionsStore.refreshExtension(extension.name)
+      await extensionsStore.refreshExtension(extension.metadata.name)
     } catch {
       // ExtensionsStore exposes the normalized API error to this observer.
     }
@@ -31,7 +33,7 @@ export const ExtensionActionsMenu = observer(function ExtensionActionsMenu({ ext
             type="button"
             variant="outline"
             size="icon-sm"
-            aria-label={`Actions for ${extension.name}`}
+            aria-label={`Actions for ${extension.metadata.name}`}
             disabled={isPending}
           />
         }

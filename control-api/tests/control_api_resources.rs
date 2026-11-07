@@ -528,7 +528,7 @@ async fn extension_api_preserves_kubernetes_errors_and_rejects_malformed_request
         }
         for malformed in [
             json!({}),
-            json!({"source":"legacy","sourceType":"git"}),
+            json!({"source":"legacy"}),
             json!({"spec":{"name":"Missing adapter","sourceType":"git","source":"example"}}),
         ] {
             expect(
@@ -599,4 +599,37 @@ async fn readiness_requires_extension_crd_and_readable_collection() {
         }
         server.abort();
     }
+}
+
+/// Source registration MUST read manifest configuration and persist only the resolved resource.
+#[actix_web::test]
+async fn source_registration_resolves_manifest_before_kubernetes_write() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use warp::Filter;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let route = warp::post().and(warp::body::json()).map(move |body: Value| {
+        count.fetch_add(1, Ordering::SeqCst);
+        warp::reply::with_status(warp::reply::json(&body), warp::http::StatusCode::CREATED)
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+    let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "test");
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"name":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"type":"translator","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
+    std::fs::write(directory.path().join("manifest.yaml"), serde_yaml::to_string(&manifest).unwrap()).unwrap();
+    let source = directory.path().to_str().unwrap();
+    let (status, created, location) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":source}))).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(location.as_deref(), Some("/api/v1/extensions/hello"));
+    assert_eq!(created["metadata"]["name"], "hello");
+    assert_eq!(created["spec"]["source"], source);
+    assert_eq!(created["spec"]["sourceType"], "local");
+    assert_eq!(created["spec"]["adapter"], json!({"type":"translator","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}));
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":directory.path().join("missing")})), 422).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"zip","source":source})), 400).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    server.abort();
 }

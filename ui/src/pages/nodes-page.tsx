@@ -189,6 +189,7 @@ function getPipelineLabel(index: number) {
   return index < 26 ? `Pipeline ${String.fromCharCode(65 + index)}` : `Pipeline ${index + 1}`
 }
 
+/** Display extension identity while retaining its pipeline role for icons and connections. */
 export function NodeCard({ node, position, onSelect }: { node: Node; position: { x: number; y: number }; onSelect: (node: Node) => void }) {
   const Icon = nodeTypeIcons[node.type]
   const state = node.enabled ? node.status : "disabled"
@@ -202,7 +203,7 @@ export function NodeCard({ node, position, onSelect }: { node: Node; position: {
       <Card className="relative h-full w-full gap-0 border-violet-100/80 bg-white py-0 shadow-sm transition-[border-color,box-shadow] group-hover:border-violet-200 group-hover:shadow-md">
         <button
           type="button"
-          aria-label={`Open settings for ${node.name}, ${nodeTypeLabels[node.type]}, ${state}`}
+          aria-label={`Open settings for ${node.name}, ${node.extensionName ?? nodeTypeLabels[node.type]}, ${state}`}
           aria-haspopup="dialog"
           className="absolute inset-0 rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-violet-400/50"
           onClick={() => onSelect(node)}
@@ -213,7 +214,7 @@ export function NodeCard({ node, position, onSelect }: { node: Node; position: {
               <Icon className="size-[18px]" aria-hidden="true" />
             </span>
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-violet-700">
-              {nodeTypeLabels[node.type]}
+              {node.extensionName ?? nodeTypeLabels[node.type]}
             </span>
           </div>
           <h3 className="mt-3 truncate text-base font-semibold tracking-[-0.015em]">{node.name}</h3>

@@ -9,19 +9,121 @@ export type DataType = "audio" | "transcription" | "translation"
 export type ConnectionDirection = "incoming" | "outgoing"
 export type ConnectionProtocol = "websocket" | "http" | "https"
 export type JsonMetadata = Record<string, unknown>
-export type ExtensionSourceType = "local" | "git" | "zip"
+/** Source kinds accepted by extension preparation. */
+export type ExtensionSourceType = "local" | "git" | "oci" | "http"
 
-export interface Extension {
+/** Execution runtimes accepted by the adapter contract. */
+export type ExtensionRuntime = "executable" | "python" | "pythonModule"
+
+/** Desired extension configuration; registration does not imply installation. */
+export interface ExtensionSpec {
+  /** Human-readable name, between one and 128 characters. */
   name: string
-  version: string
-  description: string
-  source: string
+  /** Determines how the worker interprets source. */
   sourceType: ExtensionSourceType
+  /** Worker-accessible source path or reference. */
+  source: string
+  /** Maximum total publication attempts, including the initial attempt. */
+  maxAttempts?: number
+  /** Opaque preparation request token. */
+  refreshToken?: string | null
+  /** Execution contract packaged with the extension. */
+  adapter: {
+    /** Pipeline role of this adapter. */
+    type: NodeType
+    /** Executable or module configuration. */
+    execution: {
+      /** Executable path or module name. MUST be nonempty. */
+      command: string
+      /** Defaults to executable on the server. */
+      runtime?: ExtensionRuntime
+      /** Optional process working directory. */
+      workingDirectory?: string | null
+    }
+    /** Ordered command argument bindings. */
+    arguments?: Array<{
+      /** Runtime websocket URL or exact settings key. */
+      source: string
+      /** Omit for positional arguments; switches MUST have a flag. */
+      flag?: string | null
+      /** Defaults to scalar value binding. */
+      mode?: "value" | "switch"
+    }>
+    /** Setting declarations; omitted defaults differ from explicit null. */
+    settings?: Record<string, {
+      /** Require a value when no default is declared. */
+      required?: boolean
+      /** Arbitrary JSON default, including explicit null. */
+      default?: unknown
+    }>
+  }
 }
 
-export interface ExtensionCreate {
-  source: string
+/** Registered resource; status may be absent or describe an older generation. */
+export interface Extension {
+  /** Resource API version. */
+  apiVersion: string
+  /** Resource kind. */
+  kind: "SuntitleExtension"
+  /** Resource identity; metadata.name addresses API requests. */
+  metadata: {
+    /** Server resource name. */
+    name: string
+    /** Current desired revision. */
+    generation?: number
+  }
+  /** Desired preparation configuration. */
+  spec: ExtensionSpec
+  /** Asynchronous publication result; never proves host installation. */
+  status?: {
+    /** Desired revision represented by this status. */
+    observedGeneration?: number | null
+    /** Published digest reference. */
+    artifactReference?: string | null
+    /** Completed publication attempt count. */
+    attempts?: number | null
+    /** Worker task identifier. */
+    taskId?: string | null
+    /** Preparation, publication, or terminal failure conditions. */
+    conditions?: Array<{
+      /** Condition category. */
+      type: string
+      /** Kubernetes condition truth value. */
+      status: string
+      /** Machine-readable explanation. */
+      reason: string
+      /** Human-readable explanation. */
+      message: string
+      /** Last state transition timestamp. */
+      lastTransitionTime: string
+      /** Desired revision represented by the condition. */
+      observedGeneration?: number
+    }>
+  } | null
+}
+
+/** Extension collection with its server revision. */
+export interface ExtensionList {
+  /** Registered resources. */
+  items: Extension[]
+  /** Kubernetes collection revision. */
+  resourceVersion: string
+}
+
+/** Source-only registration; configuration is read from the extension manifest. */
+export interface ExtensionRegistration {
+  /** Transport for manifest discovery and publication. */
   sourceType: ExtensionSourceType
+  /** Absolute server directory, repository URL, registry reference, or HTTP payload URL. */
+  source: string
+}
+
+/** Registration request. The server generates a resource name when omitted. */
+export interface ExtensionCreate {
+  /** Optional Kubernetes resource name. */
+  name?: string | null
+  /** Desired source and execution contract. */
+  spec: ExtensionSpec
 }
 
 export interface NodeSettingOption {
@@ -133,6 +235,8 @@ export interface DisplaySettings {
 }
 
 interface NodeBase {
+  /** Display name of the referenced extension, independent of its pipeline role. */
+  extensionName?: string
   id: string
   name: string
   description?: string | null
@@ -168,12 +272,15 @@ export interface DisplayNode extends NodeBase {
 export type Node = AudioSourceNode | TranscriberNode | TranslatorNode | DisplayNode
 
 export interface NodeCreate {
+  /** Resource identity of a custom extension; omission selects a built-in node. */
+  extensionRef?: string
   inputNodeId: string | null
   type: NodeType
   name: string
   description?: string | null
   enabled: boolean
-  settings: Record<string, NodeSettingValue>
+  /** Built-in settings or user-defined JSON instance values. */
+  settings: Record<string, unknown>
 }
 
 interface NodeUpdateBase {
@@ -188,6 +295,17 @@ export type NodeUpdate =
   | (NodeUpdateBase & { type: "transcriber"; settings: TranscriberSettings })
   | (NodeUpdateBase & { type: "translator"; settings: TranslatorSettings })
   | (NodeUpdateBase & { type: "display"; settings: DisplaySettings })
+  | CustomNodeUpdate
+
+/** Edit custom instance values while retaining extension identity. */
+export interface CustomNodeUpdate extends NodeUpdateBase {
+  /** Pipeline role resolved from the extension. */
+  type: NodeType
+  /** Resource name of the referenced extension. */
+  extensionRef: string
+  /** Arbitrary JSON values declared by the extension manifest. */
+  settings: Record<string, unknown>
+}
 
 export interface NodeList {
   items: NodeResource[]
@@ -230,17 +348,29 @@ export interface HostResource {
 }
 
 export interface NodeSpec {
+  /** Referenced extension for custom settings; absent for built-in nodes. */
+  extensionRef?: { name: string } | null
   name: string
   description?: string | null
   hostRef: { name: string }
   enabled: boolean
   inputRef?: { name: string } | null
   restartToken?: string | null
-  settings: Partial<Record<NodeType, Node["settings"]>>
+  /** Exactly one built-in variant or the custom JSON setting map. */
+  settings: Partial<Record<NodeType, Node["settings"]>> & { custom?: Record<string, unknown> }
 }
 
 export interface NodeResource {
   metadata: ResourceMetadata
   spec: NodeSpec
-  status?: { phase?: "Pending" | "Running" | "Disabled" | "Failed" | "Disconnected" | "Terminating" }
+  /** Observed runtime state and the resolved custom adapter role. */
+  status?: {
+    /** Current lifecycle phase reported by the host controller. */
+    phase?: "Pending" | "Running" | "Disabled" | "Failed" | "Disconnected" | "Terminating"
+    /** Observed custom execution contract; absent before preparation. */
+    resolvedAdapter?: {
+      /** Pipeline role preserved independently of custom setting values. */
+      type: NodeType
+    }
+  }
 }

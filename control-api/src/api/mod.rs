@@ -45,6 +45,8 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
             LoginRequest, LoginResponse, User,
             suntitle_core::kubernetes::resources::SuntitleExtension,
             crate::store::ExtensionCreate,
+            crate::extension_source::ExtensionRegistration,
+            extensions::ExtensionCreateRequest,
             crate::store::ResourceList<suntitle_core::kubernetes::resources::SuntitleExtension>,
             NodeType, NodeSettingValue, NodeSettingOption, NodeSettingDefinition,
             NodeTypeDefinition, NodeTypeDefinitionList,

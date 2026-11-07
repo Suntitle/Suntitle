@@ -1,3 +1,4 @@
+import type { ExtensionsStore } from "./extensions-store"
 import { mapNode } from "./resource-models"
 import { makeAutoObservable, runInAction } from "mobx"
 import type { ApiClient } from "./api-client"
@@ -36,8 +37,9 @@ export class NodesStore {
   saveError: string | null = null
   nodeActionErrors = new Map<string, string>()
 
-  constructor(private readonly api: ApiClient) {
-    makeAutoObservable<this, "api">(this, { api: false }, { autoBind: true })
+  /** Use the shared extension registry to resolve custom node roles. */
+  constructor(/** Authenticated resource transport. */ private readonly api: ApiClient, /** Shared extension definitions for custom node roles. */ private readonly extensions: ExtensionsStore) {
+    makeAutoObservable<this, "api" | "extensions">(this, { api: false, extensions: false }, { autoBind: true })
   }
 
   get enabledNodes(): Node[] { return this.items.filter((node) => node.enabled) }
@@ -60,7 +62,11 @@ export class NodesStore {
   selectNode(node: Node | null): void { this.selectedNode = node }
   clearError(): void { this.error = null }
   clearInstallError(): void { this.installError = null }
+  /** Expose form validation failures through the same action as API failures. */
+  setInstallError(error: unknown): void { this.installError = getErrorMessage(error) }
   clearSaveError(): void { this.saveError = null }
+  /** Keep custom-setting validation errors inside an observable action. */
+  setSaveError(error: unknown): void { this.saveError = getErrorMessage(error) }
   isNodeActionPending(nodeId: string): boolean { return this.pendingNodeActionIds.has(nodeId) }
   nodeActionError(nodeId: string): string | null { return this.nodeActionErrors.get(nodeId) ?? null }
   clearNodeActionError(nodeId: string): void { this.nodeActionErrors.delete(nodeId) }
@@ -82,6 +88,7 @@ export class NodesStore {
     }
   }
 
+  /** Load resources and resolve extension-backed roles before mapping node models. */
   async loadNodes(): Promise<void> {
     this.isLoading = true
     this.error = null
@@ -90,9 +97,10 @@ export class NodesStore {
         this.api.get<NodeList>("/nodes"),
         this.api.get<HostList>("/hosts"),
       ])
+      if (response.items.some((resource) => resource.spec.extensionRef)) await this.extensions.loadExtensions().catch(() => undefined)
       runInAction(() => {
         this.hosts = hosts.items
-        this.items = response.items.map((resource) => mapNode(resource, this.hosts))
+        this.items = response.items.map((resource) => mapNode(resource, this.hosts, this.extensions.items))
           .filter((node) => (!this.typeFilter || node.type === this.typeFilter) && (!this.statusFilter || node.status === this.statusFilter))
         this.total = this.items.length
       })
@@ -108,7 +116,7 @@ export class NodesStore {
     this.isLoading = true
     this.error = null
     try {
-      const node = mapNode(await this.api.get<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}`), this.hosts)
+      const node = mapNode(await this.api.get<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}`), this.hosts, this.extensions.items)
       runInAction(() => {
         this.selectedNode = node
         this.upsertNode(node)
@@ -126,7 +134,7 @@ export class NodesStore {
     this.isSaving = true
     this.saveError = null
     try {
-      const node = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}`, this.specUpdate(nodeId, update)), this.hosts)
+      const node = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}`, this.specUpdate(nodeId, update)), this.hosts, this.extensions.items)
       runInAction(() => {
         this.selectedNode = node
         this.upsertNode(node)
@@ -140,17 +148,19 @@ export class NodesStore {
     }
   }
 
+  /** Persist a built-in variant or custom settings with its extension reference. */
   async installNode(hostId: string, create: NodeCreate): Promise<Node> {
     this.isInstalling = true
     this.installError = null
     try {
       const host = this.hosts.find((host) => host.metadata.uid === hostId)
       if (!host) throw new Error("Host is no longer available")
-      const { inputNodeId, type, settings, ...fields } = create
+      const { inputNodeId, type, settings, extensionRef, ...fields } = create
       const node = mapNode(await this.api.post<NodeResource>(`/hosts/${encodeURIComponent(hostId)}/nodes`, {
         spec: { ...fields, hostRef: { name: host.metadata.name },
-          inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [type]: settings } },
-      }), this.hosts)
+          inputRef: inputNodeId ? { name: inputNodeId } : null,
+          ...(extensionRef ? { extensionRef: { name: extensionRef } } : {}), settings: { [extensionRef ? "custom" : type]: settings } },
+      }), this.hosts, this.extensions.items)
       runInAction(() => {
         this.upsertNode(node)
       })
@@ -167,7 +177,7 @@ export class NodesStore {
     this.pendingNodeActionIds.add(nodeId)
     this.nodeActionErrors.delete(nodeId)
     try {
-      const node = mapNode(await this.api.post<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}/restart`), this.hosts)
+      const node = mapNode(await this.api.post<NodeResource>(`/nodes/${encodeURIComponent(nodeId)}/restart`), this.hosts, this.extensions.items)
       runInAction(() => { this.upsertNode(node) })
       return node
     } catch (error) {
@@ -182,7 +192,7 @@ export class NodesStore {
     this.pendingNodeActionIds.add(node.id)
     this.nodeActionErrors.delete(node.id)
     try {
-      const updatedNode = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(node.id)}`, { spec: { ...node.spec, enabled: false } }), this.hosts)
+      const updatedNode = mapNode(await this.api.put<NodeResource>(`/nodes/${encodeURIComponent(node.id)}`, { spec: { ...node.spec, enabled: false } }), this.hosts, this.extensions.items)
       runInAction(() => { this.upsertNode(updatedNode) })
       return updatedNode
     } catch (error) {
@@ -211,12 +221,14 @@ export class NodesStore {
     }
   }
 
+  /** Preserve extension identity and serialize edits to the matching settings variant. */
   private specUpdate(nodeId: string, update: NodeUpdate) {
     const node = this.nodeById.get(nodeId)
     if (!node) throw new Error("Node is no longer available")
     const { inputNodeId, type, settings, ...fields } = update
-    return { spec: { ...node.spec, ...fields,
-      inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [type]: settings } } }
+    const { extensionRef: _extensionRef, ...editable } = fields as typeof fields & { extensionRef?: string }
+    return { spec: { ...node.spec, ...editable,
+      inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [node.spec.extensionRef ? "custom" : type]: settings } } }
   }
 
   private upsertNode(node: Node): void {

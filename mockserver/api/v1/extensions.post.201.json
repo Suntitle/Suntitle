@@ -1,7 +1,20 @@
 {
-  "name": "speaker-notes",
-  "version": "1.0.0",
-  "description": "Sends translated subtitles to the speaker notes display.",
-  "source": "https://extensions.suntitle.dev/speaker-notes-1.0.0.zip",
-  "sourceType": "zip"
+  "apiVersion": "control.suntitle.io/v1alpha1",
+  "kind": "SuntitleExtension",
+  "metadata": {
+    "name": "custom-captioner",
+    "generation": 1
+  },
+  "spec": {
+    "name": "Custom captioner",
+    "source": "https://github.com/suntitle/extensions/obs-captions.git",
+    "sourceType": "git",
+    "adapter": {
+      "type": "display",
+      "execution": {
+        "command": "./bin/extension",
+        "runtime": "executable"
+      }
+    }
+  }
 }

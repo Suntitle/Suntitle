@@ -1,6 +1,7 @@
 const accessToken = "mock-token"
 
 function visitAuthenticatedHosts() {
+  cy.intercept("GET", "**/api/v1/extensions", { fixture: "api/v1/extensions.json" })
   cy.intercept("GET", "**/api/v1/auth/me", {
     fixture: "api/v1/auth/me.json",
   }).as("getCurrentUser")
