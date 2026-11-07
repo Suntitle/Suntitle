@@ -11,9 +11,9 @@ function resource(spec?: Partial<ExtensionSpec>): Extension {
 }
 
 /** Visit with authentication and a spec-conforming resource list. */
-function visitAuthenticatedExtensions() {
+function visitAuthenticatedExtensions(items?: Extension[]) {
   cy.intercept("GET", "**/api/v1/auth/me", { fixture: "api/v1/auth/me.json" }).as("getCurrentUser")
-  cy.intercept("GET", "**/api/v1/extensions", { fixture: "api/v1/extensions.json" }).as("getExtensions")
+  cy.intercept("GET", "**/api/v1/extensions", items ? { body: { items, resourceVersion: "1" } } : { fixture: "api/v1/extensions.json" }).as("getExtensions")
   cy.visit("/extensions", { onBeforeLoad(window) { window.localStorage.setItem("suntitle.accessToken", accessToken) } })
   cy.wait(["@getCurrentUser", "@getExtensions"])
 }
@@ -30,6 +30,24 @@ function stubRegistration(extension: Extension) {
 }
 
 describe("Extensions page", () => {
+  it("uses the existing node icon for each extension role", () => {
+    const roles = [
+      ["audio_source", "mic"],
+      ["transcriber", "audio-waveform"],
+      ["translator", "languages"],
+      ["display", "monitor"],
+      ["custom", "blocks"],
+    ] as const
+    visitAuthenticatedExtensions(roles.map(([nodeRole]) => ({
+      ...resource({ displayName: `${nodeRole} extension`, adapter: { nodeRole, execution: { command: "./run" } } }),
+      name: nodeRole,
+    })))
+    for (const [role, icon] of roles) {
+      cy.contains("tr", `${role} extension`).find(`svg.lucide-${icon}`).should("be.visible")
+    }
+    cy.screenshot("extension-role-icons")
+  })
+
   it("reads flat extensions and preserves resource status after an accepted refresh", () => {
     cy.fixture("api/v1/extensions.json").then((list) => {
       const refreshed = { ...list.items[0] }

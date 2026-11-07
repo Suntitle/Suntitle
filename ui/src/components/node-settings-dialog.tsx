@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { AudioWaveform, Blocks, Languages, Mic, Monitor } from "lucide-react"
+import { Mic } from "lucide-react"
 import { observer } from "mobx-react-lite"
 
 import { SettingField } from "@/components/node-setting-field"
@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { nodeTypeIcons } from "@/lib/node-icons"
 import { cn } from "@/lib/utils"
 import { extensionDefinition, extensionFormValues, extensionSettings } from "@/stores/extension-nodes"
 import { useStores } from "@/stores"
@@ -38,14 +39,6 @@ const nodeTypeLabels: Record<NodeRole, string> = {
   translator: "Translator",
   display: "Display",
   custom: "Custom",
-}
-
-const nodeTypeIcons: Record<NodeRole, typeof Mic> = {
-  audio_source: Mic,
-  transcriber: AudioWaveform,
-  translator: Languages,
-  display: Monitor,
-  custom: Blocks,
 }
 
 const statusStyles: Record<NodeStatus, string> = {

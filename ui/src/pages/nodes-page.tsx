@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react"
-import { AudioWaveform, Blocks, Languages, Mic, Monitor } from "lucide-react"
 import { observer } from "mobx-react-lite"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { NodeActionsMenu } from "@/components/node-actions-menu"
 import { NodeSettingsDialog } from "@/components/node-settings-dialog"
+import { nodeTypeIcons } from "@/lib/node-icons"
 import { cn } from "@/lib/utils"
 import { useStores } from "@/stores"
 import type { DataType, Node, NodeStatus, NodeRole } from "@/stores/models"
@@ -41,14 +41,6 @@ const nodeTypeLabels: Record<NodeRole, string> = {
   translator: "Translator",
   display: "Display",
   custom: "Custom",
-}
-
-const nodeTypeIcons: Record<NodeRole, typeof Mic> = {
-  audio_source: Mic,
-  transcriber: AudioWaveform,
-  translator: Languages,
-  display: Monitor,
-  custom: Blocks,
 }
 
 const statusStyles: Record<NodeStatus | "disabled", string> = {
