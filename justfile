@@ -246,7 +246,7 @@ infra-ssh:
 infra-destroy:
     pulumi -C infrastructure destroy
 
-# Destroy the Pulumi stack through the infra-up/infra-down command pair.
+# Destroy the stack, including its persistent data volume.
 alias infra-down := infra-destroy
 
 # Install the UI dependencies when they are not already present.

@@ -10,13 +10,10 @@ readiness signal.
 
 import gzip
 import hashlib
-import json
 from pathlib import Path
 import re
 import shlex
 import tarfile
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 
 # Only deployment inputs are eligible. Local environments and credentials MUST stay local.
@@ -70,61 +67,22 @@ def render_user_data(bucket: str, key: str, region: str, volume_id: str,
     return script.replace('# @DEPLOYMENT_ENV@', assignments)
 
 
-def validate_release(version: str, repository: str) -> None:
-    """Require a pinned release tag and an owner/repository GitHub path."""
-    if not re.fullmatch(r'v[0-9][A-Za-z0-9._-]*', version):
-        raise ValueError('releaseVersion MUST be a pinned tag beginning with v and a digit.')
-    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
-        raise ValueError('releaseRepository MUST use owner/repository format.')
-
-
-def resolve_release(version: str | None, repository: str) -> str:
-    """Resolve latest during Pulumi evaluation so a newer tag changes instance user data.
-
-    Explicit tags bypass discovery. Lookup failures MUST stop deployment before
-    resource creation. Installation always receives a concrete validated tag.
-    """
-    if version and version != 'latest':
-        validate_release(version, repository)
-        return version
-    validate_release('v0', repository)
-    request = Request(
-        f'https://api.github.com/repos/{repository}/releases/latest',
-        headers={'Accept': 'application/vnd.github+json',
-                 'User-Agent': 'suntitle-pulumi'},
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            release = json.load(response)
-    except (URLError, TimeoutError, ValueError) as error:
-        raise ValueError(f'Cannot resolve the latest release of {repository}: {error}') from error
-    version = release.get('tag_name')
-    if not isinstance(version, str):
-        raise ValueError(f'The latest release of {repository} has no tag_name.')
-    validate_release(version, repository)
-    return version
-
-
 def validate_image(image: str) -> None:
     """Require a Docker reference that is safe in Compose dotenv values."""
     if not isinstance(image, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@-]*', image) or '://' in image:
         raise ValueError('Image sources MUST be Docker image references without whitespace or URL schemes.')
 
 
-def resolve_images(version: str | None, repository: str,
-                   api_image: str | None = None, proxy_image: str | None = None,
-                   ui_image: str | None = None) -> tuple[str | None, dict[str, str]]:
-    """Select release images with per-component overrides before AWS resources exist.
+def resolve_images(api_image: str | None = None, proxy_image: str | None = None,
+                   ui_image: str | None = None) -> dict[str, str]:
+    """Select GHCR latest images with validated per-component overrides.
 
-    Full overrides MUST skip GitHub discovery. Partial overrides share one resolved
-    release tag for remaining components. The returned tag is None for full overrides.
+    Selection MUST complete before AWS resources exist and requires no network lookup.
     """
     overrides = {'api': api_image, 'proxy': proxy_image, 'ui': ui_image}
-    for image in overrides.values():
-        if image is not None:
-            validate_image(image)
-    release = resolve_release(version, repository) if None in overrides.values() else None
     components = {'api': 'control-api', 'proxy': 'ws-proxy', 'ui': 'ui'}
-    images = {name: image if image is not None else f'ghcr.io/{repository.lower()}/{components[name]}:{release}'
+    images = {name: image if image is not None else f'ghcr.io/suntitle/suntitle/{components[name]}:latest'
               for name, image in overrides.items()}
-    return release, images
+    for image in images.values():
+        validate_image(image)
+    return images

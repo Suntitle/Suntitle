@@ -9,9 +9,7 @@ import pulumi_aws as aws
 from deployment import build_source_archive, render_user_data, resolve_images
 
 config = pulumi.Config()
-release_repository = config.get('releaseRepository') or 'Suntitle/Suntitle'
-release_version, images = resolve_images(
-    config.get('releaseVersion'), release_repository,
+images = resolve_images(
     api_image=config.get('apiImage'), proxy_image=config.get('proxyImage'),
     ui_image=config.get('uiImage'),
 )
@@ -80,7 +78,6 @@ data_volume = aws.ebs.Volume(
     'suntitle-data', availability_zone=availability_zone,
     size=config.get_int('dataVolumeSize') or 100, type='gp3', encrypted=True,
     tags={'Name': 'suntitle-data'},
-    opts=pulumi.ResourceOptions(protect=True),
 )
 user_data = pulumi.Output.all(
     source_bucket.id, source_object.key, data_volume.id, registry_host,
@@ -124,7 +121,4 @@ pulumi.export('registryUrl', registry_host.apply(lambda host: f'http://{host}'))
 pulumi.export('instanceId', instance.id)
 pulumi.export('dataVolumeId', data_volume.id)
 pulumi.export('sourceDigest', source_digest)
-pulumi.export('releaseVersion', release_version)
-pulumi.export('releaseRepository', release_repository)
-
 pulumi.export('images', images)
