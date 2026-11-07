@@ -283,6 +283,7 @@ async fn restore_file(blob: &Path, tree: &Path, name: &str, executable: bool) ->
     Ok(())
 }
 
+#[cfg(unix)]
 async fn restore_directory(blob: &Path, tree: &Path, media_type: &str) -> Result<(), Error> {
     let packer = ocirender::StreamingPacker::new(
         vec![ocirender::LayerMeta {
@@ -297,6 +298,36 @@ async fn restore_directory(blob: &Path, tree: &Path, media_type: &str) -> Result
     rendered?;
     ready?;
     Ok(())
+}
+
+/// Restore the verified gzip layer on Windows without the Unix-only renderer.
+#[cfg(windows)]
+async fn restore_directory(blob: &Path, tree: &Path, _media_type: &str) -> Result<(), Error> {
+    let (blob, tree) = (blob.to_path_buf(), tree.to_path_buf());
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&tree)?;
+        let mut archive =
+            tar::Archive::new(flate2::read::GzDecoder::new(std::fs::File::open(blob)?));
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            if entry
+                .path()?
+                .file_name()
+                .is_some_and(|name| name.as_encoded_bytes().starts_with(b".wh."))
+            {
+                continue;
+            }
+            if !entry.unpack_in(&tree)? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "archive entry escapes the destination",
+                ));
+            }
+        }
+        Ok(())
+    })
+    .await?
+    .map_err(Error::Render)
 }
 
 /// Read an optional descriptor annotation.
@@ -319,6 +350,7 @@ fn transfer_error(error: std::io::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs::File, io::Write};
 
     #[tokio::test]
     async fn restore_file_overwrites_existing_file() {
@@ -379,5 +411,97 @@ mod tests {
         }
         assert_eq!(std::fs::read(&target).unwrap(), b"original");
         assert!(!missing.exists());
+    }
+
+    /// Preserve archive paths, replace files, retain unrelated files, and omit whiteouts.
+    #[tokio::test]
+    async fn restores_directory_artifact_without_whiteout_markers() {
+        let root = tempfile::tempdir().unwrap();
+        let blob = root.path().join("layer.gz");
+        let destination = root.path().join("output");
+        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            File::create(&blob).unwrap(),
+            flate2::Compression::default(),
+        ));
+        for (path, data) in [
+            ("payload/nested/é space", &b"new"[..]),
+            ("payload/empty", &b""[..]),
+            ("payload/.wh.deleted", &b""[..]),
+            ("payload/.wh..wh..opq", &b""[..]),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o644);
+            header.set_size(data.len() as u64);
+            header.set_mtime(1);
+            header.set_cksum();
+            archive.append_data(&mut header, path, data).unwrap();
+        }
+        archive.into_inner().unwrap().finish().unwrap();
+        std::fs::create_dir_all(destination.join("payload/nested")).unwrap();
+        std::fs::write(destination.join("payload/nested/é space"), "old").unwrap();
+        std::fs::write(destination.join("unrelated"), "keep").unwrap();
+        restore_directory(&blob, &destination, IMAGE_LAYER_GZIP_MEDIA_TYPE)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(destination.join("payload/nested/é space")).unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("payload/empty")).unwrap(),
+            b""
+        );
+        assert_eq!(
+            std::fs::read(destination.join("unrelated")).unwrap(),
+            b"keep"
+        );
+        assert!(!destination.join("payload/.wh.deleted").exists());
+        assert!(!destination.join("payload/.wh..wh..opq").exists());
+    }
+
+    /// Corrupt gzip input MUST fail instead of reporting a restored artifact.
+    #[tokio::test]
+    async fn rejects_corrupt_archive() {
+        let root = tempfile::tempdir().unwrap();
+        let blob = root.path().join("layer.gz");
+        File::create(&blob)
+            .unwrap()
+            .write_all(b"invalid gzip")
+            .unwrap();
+        assert!(
+            restore_directory(
+                &blob,
+                &root.path().join("output"),
+                IMAGE_LAYER_GZIP_MEDIA_TYPE
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    /// Archive paths MUST NOT write outside the destination.
+    #[tokio::test]
+    async fn parent_directory_entries_cannot_escape() {
+        let root = tempfile::tempdir().unwrap();
+        let blob = root.path().join("layer.gz");
+        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            File::create(&blob).unwrap(),
+            flate2::Compression::default(),
+        ));
+        let mut header = tar::Header::new_gnu();
+        header.set_size(6);
+        header.set_mode(0o644);
+        header.as_mut_bytes()[..100].fill(0);
+        header.as_mut_bytes()[..10].copy_from_slice(b"../outside");
+        header.set_cksum();
+        archive.append(&header, &b"escape"[..]).unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+        let _ = restore_directory(
+            &blob,
+            &root.path().join("output"),
+            IMAGE_LAYER_GZIP_MEDIA_TYPE,
+        )
+        .await;
+        assert!(!root.path().join("outside").exists());
     }
 }

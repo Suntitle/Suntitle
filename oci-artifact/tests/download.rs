@@ -193,6 +193,7 @@ fn downloader() -> Downloader {
     })
     .unwrap()
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn directory_retry_and_permissions() {
     use std::os::unix::fs::PermissionsExt;
@@ -292,6 +293,7 @@ async fn failures_do_not_retry_or_write_unverified_content() {
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn existing_and_cancelled() {
     let blob = archive();
@@ -333,6 +335,7 @@ fn missing_ca_file_is_a_configuration_error() {
     ));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn symlink_cannot_redirect_extraction_outside_destination() {
     let root = tempfile::tempdir().unwrap();
@@ -366,6 +369,7 @@ async fn symlink_cannot_redirect_extraction_outside_destination() {
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "requires ORAS 1.3.2"]
 async fn oras_directory_round_trip() {
@@ -481,6 +485,7 @@ async fn oras_directory_round_trip() {
     assert_eq!(tree(&ours, &ours), tree(&oras, &oras));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn interrupted_transfer_retries_with_a_fresh_file() {
     let blob = archive();
@@ -604,6 +609,7 @@ async fn raw_file_names_cannot_escape_destination() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "requires ORAS 1.3.2"]
 async fn oras_single_file_round_trip() {

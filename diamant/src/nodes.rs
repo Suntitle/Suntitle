@@ -641,6 +641,7 @@ pub fn command_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     fn test_spec(mut json: serde_json::Value) -> SuntitleNodeSpec {
@@ -705,6 +706,7 @@ mod tests {
     }
 
     /// Native launch, argument updates, restart, and disable reuse the prepared payload.
+    #[cfg(unix)]
     #[tokio::test]
     async fn custom_native_execution_reuses_installation_and_supervises_restarts() {
         let root = tempfile::tempdir().unwrap();
@@ -977,6 +979,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn duplicate_apply_and_remove_preserve_identity_and_reap_child() {
         let directory = std::env::temp_dir().join(format!("diamant-nodes-{}", Uuid::new_v4()));
