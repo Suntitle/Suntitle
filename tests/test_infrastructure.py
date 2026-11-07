@@ -115,6 +115,23 @@ class InfrastructureTest(unittest.TestCase):
                 with self.subTest(component=component), self.assertRaises(ValueError):
                     DEPLOYMENT.resolve_images(**{f'{component}_image': 'image\nINJECTED=true'})
 
+    def test_image_repo_defaults_and_component_precedence(self):
+        """Repository images default to dev while explicit component references win."""
+        repo = 'ghcr.io/example/suntitle'
+        expected = {'api': f'{repo}/control-api:dev',
+                    'proxy': f'{repo}/ws-proxy:dev', 'ui': f'{repo}/ui:dev'}
+        self.assertEqual(DEPLOYMENT.resolve_images(image_repo=repo + '/'), expected)
+        self.assertEqual(DEPLOYMENT.resolve_images(image_repo=repo, image_tag='dev-002'),
+                         {key: value.replace(':dev', ':dev-002') for key, value in expected.items()})
+        self.assertEqual(DEPLOYMENT.resolve_images(image_repo=repo, api_image='custom/api:v2'),
+                         expected | {'api': 'custom/api:v2'})
+        for invalid in ['', '/', 'https://registry/image', 'image\nINJECTED=true']:
+            with self.subTest(repo=invalid), self.assertRaises(ValueError):
+                DEPLOYMENT.resolve_images(image_repo=invalid)
+        for invalid in ['', 'tag with spaces', 'tag/subpath', '-invalid']:
+            with self.subTest(tag=invalid), self.assertRaises(ValueError):
+                DEPLOYMENT.resolve_images(image_repo=repo, image_tag=invalid)
+
     @unittest.skipUnless(shutil.which('docker'), 'Docker Compose is required')
     def test_compose_release_overlay_uses_runtime_image(self):
         """Resolve deployment Compose without inheriting the Rust source Dockerfile."""

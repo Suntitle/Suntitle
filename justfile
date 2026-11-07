@@ -216,6 +216,29 @@ test-python python="python3":
 infra-select stack="dev":
     pulumi -C infrastructure stack select "{{ stack }}"
 
+# Build and push the API, proxy, and UI images under a image repository and tag.
+[positional-arguments]
+images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default("IMAGE_TAG", "dev")) platform=(env_var_or_default("SUNTITLE_IMAGE_PLATFORM", "")):
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image_repo="${1%/}"
+    image_tag="$2"
+    if [[ -z "$image_repo" || -z "$image_tag" ]]; then
+        echo 'Set IMAGE_REPO or pass an image repository. The image tag MUST NOT be empty.' >&2
+        exit 1
+    fi
+    platform_args=()
+    if [[ -n "$3" ]]; then
+        platform_args=(--platform "$3")
+    fi
+    for component in control-api ws-proxy; do
+        docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
+            --file docker/ws-proxy/Dockerfile --target "$component" \
+            --tag "$image_repo/$component:$image_tag" --push .
+    done
+    docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
+        --file ui/Dockerfile --tag "$image_repo/ui:$image_tag" --push ui
+
 # Initialize a new Pulumi stack.
 infra-init stack="dev":
     pulumi -C infrastructure stack init "{{ stack }}"

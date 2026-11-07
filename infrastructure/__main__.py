@@ -1,6 +1,7 @@
 """Deploy the existing Compose stack to EC2 with persistent Docker storage."""
 
 import json
+import os
 from pathlib import Path
 
 import pulumi
@@ -12,6 +13,8 @@ config = pulumi.Config()
 images = resolve_images(
     api_image=config.get('apiImage'), proxy_image=config.get('proxyImage'),
     ui_image=config.get('uiImage'),
+    image_repo=os.environ.get('IMAGE_REPO'),
+    image_tag=os.environ.get('IMAGE_TAG', 'dev'),
 )
 region = aws.config.region
 if not region:
