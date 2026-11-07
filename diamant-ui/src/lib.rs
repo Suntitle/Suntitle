@@ -512,7 +512,7 @@ fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str, editable: boo
             .hint_text(hint)
             .desired_width(width)
             .interactive(editable)
-            .vertical_align(Align::Center)
+            .align(egui::Align2::LEFT_CENTER)
             .margin(Margin::symmetric(10, 0));
         ui.add_sized([width, 32.0], edit);
     });

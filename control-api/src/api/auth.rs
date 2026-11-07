@@ -9,7 +9,7 @@ use actix_web::http::header;
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
 use scrypt::{
     Scrypt,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
 use sqlx::Row;
 use uuid::Uuid;
@@ -120,7 +120,7 @@ impl AuthState {
     fn authenticate(&self, username: &str, password: &str) -> Option<User> {
         let admin = self.admin.as_ref()?;
         let hash = PasswordHash::new(&admin.password_hash).ok()?;
-        let valid = Scrypt.verify_password(password.as_bytes(), &hash).is_ok();
+        let valid = Scrypt::default().verify_password(password.as_bytes(), &hash).is_ok();
         (valid && username == admin.user.username).then(|| admin.user.clone())
     }
 
@@ -166,9 +166,9 @@ impl AuthState {
 
 /// Hash a bootstrap password with an independently generated salt.
 fn hash_password(password: &str) -> Result<String, String> {
-    Scrypt
-        .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
-        .map(|hash| hash.to_string())
+    Scrypt::default()
+        .hash_password(password.as_bytes())
+        .map(|hash: PasswordHash| hash.to_string())
         .map_err(|error| error.to_string())
 }
 
@@ -282,6 +282,17 @@ mod tests {
     use actix_web::{App, test, web};
 
     use super::*;
+
+    /// Persisted PHC hashes MUST remain verifiable after the scrypt upgrade.
+    #[actix_web::test]
+    async fn legacy_password_hash_remains_valid() {
+        let hash = PasswordHash::new(
+            "$scrypt$ln=16,r=8,p=1$aM15713r3Xsvxbi31lqr1Q$nFNh2CVHVjNldFVKDHDlm4CbdRSCdEBsjjJxD+iCs5E",
+        )
+        .unwrap();
+        assert!(Scrypt::default().verify_password(b"password", &hash).is_ok());
+        assert!(Scrypt::default().verify_password(b"incorrect", &hash).is_err());
+    }
 
     /// Build an isolated administrator fixture.
     fn app_state() -> web::Data<AuthState> {

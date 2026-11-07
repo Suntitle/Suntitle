@@ -245,8 +245,8 @@ async fn download(
     let base = tokio::fs::canonicalize(base).await?;
     use sha2::{Digest, Sha256};
     let cache = base.join(format!(
-        ".payload-{:x}.json",
-        Sha256::digest(reference.as_bytes())
+        ".payload-{}.json",
+        hex::encode(Sha256::digest(reference.as_bytes()))
     ));
     if let Ok(bytes) = tokio::fs::read(&cache).await
         && let Ok(payload) = serde_json::from_slice::<PathBuf>(&bytes)

@@ -182,12 +182,12 @@ impl ResourceStore {
 
     /// Replace desired configuration while preserving resource status and metadata.
     pub async fn update(&self, name: &str, request: NodeUpdate) -> Result<SuntitleNode, ApiError> {
-        let patch = json_patch::Patch(vec![json_patch::PatchOperation::Replace(
-            json_patch::ReplaceOperation {
-                path: "/spec".parse().expect("static JSON pointer"),
-                value: json!(request.spec),
-            },
-        )]);
+        let patch = serde_json::from_value(json!([{
+            "op": "replace",
+            "path": "/spec",
+            "value": request.spec,
+        }]))
+        .expect("valid JSON patch structure");
         Ok(self
             .nodes
             .patch(name, &PatchParams::default(), &Patch::<()>::Json(patch))

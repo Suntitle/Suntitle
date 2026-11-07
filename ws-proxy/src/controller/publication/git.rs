@@ -87,6 +87,7 @@ impl Snapshot {
                             *request.timeout_mut() = Some(std::time::Duration::from_secs(60));
                             Ok(())
                         })),
+                        ..Default::default()
                     };
                     connection.set_transport_options(Box::new(http::Options {
                         extra_headers: headers.clone(),

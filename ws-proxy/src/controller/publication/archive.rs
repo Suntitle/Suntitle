@@ -69,7 +69,7 @@ pub(super) fn prepare(
         output.flush()?;
         Ok(BTreeMap::from([(
             oci_artifact::constants::ANNOTATION_DIGEST.into(),
-            format!("sha256:{:x}", hash.finalize()),
+            format!("sha256:{}", hex::encode(hash.finalize())),
         )]))
     });
     PreparedUpload::directory(Box::pin(ReaderStream::new(read)), producer, cancellation)
