@@ -90,7 +90,10 @@ certificate CNs. Neither identity can install CRDs or RBAC. API reads hosts and
 writes node desired state, but cannot write status or host finalizers. Proxy can
 watch/manage resources and status and perform lifecycle cleanup. Nodes reference hosts through `spec.hostRef.name`. A dedicated GC controller
 deletes referencing nodes on host deletion and retains the host cleanup finalizer
-until their runtime cleanup finishes.
+until their runtime cleanup finishes. Extension deletion follows the same sequence:
+`spec.extensionRef.name` selects dependent nodes across hosts. The extension cleanup
+finalizer remains until those nodes disappear, including while hosts are offline.
+Unrelated nodes and built-in nodes are retained.
 
 Specs reuse the current typed Rust settings through an externally tagged enum:
 

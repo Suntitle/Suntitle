@@ -16,6 +16,8 @@ pub const API_GROUP: &str = "control.suntitle.io";
 pub const DEFAULT_NAMESPACE: &str = "suntitle";
 pub const NODE_FINALIZER: &str = "control.suntitle.io/runtime-cleanup";
 pub const HOST_FINALIZER: &str = "control.suntitle.io/host-cleanup";
+/// Hold extension deletion until all nodes referencing it have completed removal.
+pub const EXTENSION_FINALIZER: &str = "control.suntitle.io/extension-cleanup";
 
 /// Kubernetes addressing plus incarnation identity for future runtime messages.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
