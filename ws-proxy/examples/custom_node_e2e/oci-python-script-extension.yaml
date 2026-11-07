@@ -3,11 +3,14 @@ displayName: OCI python-script probe
 sourceType: oci
 source: "${REGISTRY}/custom-node-sources/${HOST_NAME}/python-script:fixture"
 adapter:
-  nodeRole: transcriber
+  inputType: text
+  outputType: text
   execution:
     runtime: python
     command: ./probe.py
   settings:
+    endpoint:
+      default: transcribe
     label:
       default: default label
     message:
@@ -18,7 +21,9 @@ adapter:
       required: true
   arguments:
     - flag: --server
-      source: runtime.websocketUrl
+      url:
+        base: runtime.websocketUrl
+        path: settings.endpoint
     - flag: --label
       source: settings.label
     - flag: --message

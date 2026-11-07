@@ -48,30 +48,39 @@ and returns 201 with Location. `name` is the Kubernetes identity; `displayName`
 is the human-readable label stored as `spec.displayName` in the CRD.
 Omitting `name` generates an `extension-<UUID>` name. The required spec fields
 are `displayName`, `sourceType` (`local`, `git`, `oci`, or `http`), `source`, and `adapter`.
-`adapter.nodeRole` selects `audio_source`, `transcriber`, `translator`, `display`,
-or `custom` (the default when omitted). Roles classify nodes for the UI and input
-compatibility. `runtime.websocketUrl` always supplies the configured data-plane
-base URL, independent of role. Extensions MUST append any required endpoint path
-themselves or supply a complete URL through `settings.<key>`. Argument sources do
-not support URL concatenation or interpolation. `adapter.execution` remains an
-extensible object. `adapter.settings` maps setting names to `{default?, required?}` declarations;
+`adapter.inputType` and `adapter.outputType` are optional. Omit an undeclared
+input or output. Present types MUST be `image`, `text`, or `audio`; explicit null is rejected.
+The icon uses output, then input, then the generic extension icon. They MUST NOT select
+execution behavior or endpoints. Built-in nodes omit these fields; their types
+are known from their settings variants. `runtime.websocketUrl` always supplies
+the configured data-plane base URL, independent of media types. A binding MUST
+declare exactly one `source` or `url`. URL bindings use `base: runtime.websocketUrl`
+and `path: settings.<key>`; Diamant appends that endpoint to its configured path
+prefix. Endpoint values MUST be paths, not full URLs or another authority.
+String settings are passed unchanged; interpolation and shell evaluation are not supported.
+`adapter.execution` remains an extensible object. `adapter.settings` maps setting names to `{default?, required?}` declarations;
 `required` defaults to false. A declared default supplies a value without requiring
-`required: true`. `adapter.arguments` contains bindings with `source`,
-optional `flag`, and `mode` (`value` by default, or `switch`). Switch bindings
-require a flag. Sources are `settings.<key>` or `runtime.websocketUrl`.
-For example, an extension can choose a complete display URL without declaring a role:
+`required: true`. `adapter.arguments` contains bindings with `source` or `url`,
+optional `flag`, and `mode` (`value` by default, or `flag`). Flag bindings
+require a flag and a direct source; true emits the flag, while false omits it.
+Sources are `settings.<key>` or `runtime.websocketUrl`.
+For example, an extension can inherit Diamant’s URL and declare its display endpoint:
 
 ```yaml
 adapter:
+  inputType: text
+  outputType: text
   execution:
     runtime: python
     command: ./main.py
   settings:
-    websocketUrl:
-      default: ws://127.0.0.1:3030/display
+    endpoint:
+      default: display
   arguments:
     - flag: --server
-      source: settings.websocketUrl
+      url:
+        base: runtime.websocketUrl
+        path: settings.endpoint
 ```
 
 Execution resolution uses node overrides before extension defaults and reports

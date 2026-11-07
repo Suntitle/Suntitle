@@ -4,16 +4,31 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::models::NodeRole;
+/// Media type declared by a custom extension. MUST NOT select runtime or endpoint behavior.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtensionDataType {
+    /// Image content.
+    Image,
+    /// Text content.
+    Text,
+    /// Audio content.
+    Audio,
+}
 
 /// Standard adapter fields shared by an extension and its resolved node instance.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[serde(bound(deserialize = "S: Deserialize<'de> + Default"))]
 pub struct Adapter<S: Default> {
-    /// UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
-    #[serde(default)]
-    pub node_role: NodeRole,
+    /// Optional input media type. Omission means no declared input, without selecting runtime behavior.
+    #[serde(default, deserialize_with = "declared_media_type", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ExtensionDataType")]
+    pub input_type: Option<ExtensionDataType>,
+    /// Optional output media type. Omission means no declared output, without selecting runtime behavior.
+    #[serde(default, deserialize_with = "declared_media_type", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ExtensionDataType")]
+    pub output_type: Option<ExtensionDataType>,
     /// Typed execution contract, unchanged by plugin setting resolution.
     pub execution: super::execution::ExecutionSpec,
     /// User-defined setting declarations or resolved instance values.
@@ -22,6 +37,11 @@ pub struct Adapter<S: Default> {
     /// Ordered mappings from typed sources to command arguments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<ArgumentBinding>,
+}
+
+/// A present media type MUST be a supported string. Only omission represents no declaration.
+fn declared_media_type<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<ExtensionDataType>, D::Error> {
+    ExtensionDataType::deserialize(deserializer).map(Some)
 }
 
 /// Extension declarations use setting definitions with optional defaults.
@@ -89,28 +109,102 @@ fn arbitrary_value_schema(generator: &mut schemars::SchemaGenerator) -> schemars
 /// Ordered CLI binding reused before and after node setting resolution.
 #[derive(kube::KubeSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+// Schemars MUST leave the flattened enum open so Kubernetes can hoist its properties.
+#[schemars(!deny_unknown_fields)]
 #[x_kube(cel)]
-#[x_kube(validation = kube::core::Rule::new("!has(self.mode) || self.mode != 'switch' || (has(self.flag) && size(self.flag) > 0)")
-    .message("switch arguments require a flag"))]
+#[x_kube(validation = kube::core::Rule::new("!has(self.mode) || self.mode != 'flag' || has(self.flag)")
+    .message("flag mode requires a flag"))]
+#[x_kube(validation = kube::core::Rule::new("!has(self.url) || !has(self.mode) || self.mode == 'value'")
+    .message("url arguments require value mode"))]
 pub struct ArgumentBinding {
     /// Omit the flag for a positional value.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub flag: Option<String>,
-    /// Standard runtime value or exact user-defined setting key.
-    pub source: ArgumentSource,
-    /// Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
+    /// Exactly one direct source or structured URL, flattened into the wire object.
+    #[serde(flatten)]
+    pub value: ArgumentValue,
+    /// Convert to a scalar value or boolean flag. URLs MUST use value mode.
     #[serde(default, skip_serializing_if = "ArgumentMode::is_value")]
     #[schemars(extend("default" = "value"))]
     pub mode: ArgumentMode,
 }
 
+/// Mutually exclusive argument inputs. The wire keys remain source and url.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ArgumentValue {
+    /// Read one runtime value or user setting without interpolation.
+    Source(ArgumentSource),
+    /// Compose a runtime-owned base URL and a setting-owned endpoint.
+    Url(ArgumentUrl),
+}
+
+/// Runtime-owned URL origin with a user-owned path. Media types MUST NOT affect composition.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArgumentUrl {
+    /// Diamant's configured base URL. No user-defined origin is accepted.
+    pub base: RuntimeValue,
+    /// Setting reference containing the endpoint path to append.
+    pub path: SettingReference,
+}
+
+/// Exact nonempty setting key, represented on the wire as settings.<key>.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(try_from = "String", into = "String")]
+pub struct SettingReference(
+    /// User-owned map key. MUST be nonempty.
+    String,
+);
+
+impl SettingReference {
+    /// Return the exact setting key without its wire prefix.
+    pub fn key(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for SettingReference {
+    type Error = &'static str;
+
+    /// Restrict URL paths to setting references during deserialization.
+    fn try_from(source: String) -> Result<Self, Self::Error> {
+        match ArgumentSource::try_from(source)? {
+            ArgumentSource::Setting(key) => Ok(Self(key)),
+            ArgumentSource::Runtime(_) => Err("url.path MUST reference settings.<key>"),
+        }
+    }
+}
+
+impl From<SettingReference> for String {
+    /// Preserve the public reference syntax during serialization.
+    fn from(source: SettingReference) -> Self {
+        format!("settings.{}", source.0)
+    }
+}
+
+impl JsonSchema for SettingReference {
+    /// Reuse one schema identity for exact setting references.
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SettingReference".into()
+    }
+
+    /// Exclude runtime values and empty setting names from path references.
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        serde_json::json!({"type":"string","pattern":r"^settings\..+$"}).try_into().unwrap()
+    }
+}
+
+/// Controls whether an argument emits a scalar value or a boolean-controlled flag.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ArgumentMode {
+    /// Emit a scalar value with an optional flag.
     #[default]
     Value,
-    Switch,
+    /// Emit only the flag when its boolean source is true.
+    Flag,
 }
 
 impl ArgumentMode {
@@ -159,15 +253,18 @@ impl ExtensionAdapter {
             .arguments
             .iter()
             .filter(|binding| {
-                let ArgumentSource::Setting(name) = &binding.source else {
-                    return true;
+                let name = match &binding.value {
+                    ArgumentValue::Source(ArgumentSource::Setting(name)) => name.as_str(),
+                    ArgumentValue::Url(url) => url.path.key(),
+                    ArgumentValue::Source(ArgumentSource::Runtime(_)) => return true,
                 };
                 !self.settings.contains_key(name) || settings.contains_key(name)
             })
             .cloned()
             .collect();
         Ok(ResolvedAdapter {
-            node_role: self.node_role,
+            input_type: self.input_type,
+            output_type: self.output_type,
             execution: self.execution.clone(),
             settings,
             arguments,
@@ -176,9 +273,10 @@ impl ExtensionAdapter {
 }
 
 /// Standard runtime values available independently of plugin settings.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeValue {
     /// Configured data-plane base WebSocket URL, independent of the node role.
+    #[serde(rename = "runtime.websocketUrl")]
     WebsocketUrl,
 }
 

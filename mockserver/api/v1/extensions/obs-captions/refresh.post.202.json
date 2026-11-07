@@ -6,7 +6,8 @@
       "command": "./bin/extension",
       "runtime": "executable"
     },
-    "nodeRole": "display"
+    "inputType": "text",
+    "outputType": "text"
   },
   "refreshToken": "refresh-2",
   "status": {

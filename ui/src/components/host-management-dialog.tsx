@@ -72,7 +72,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
 
   const choices = useMemo(() => [
     ...nodesStore.nodeTypes.map((definition) => ({ key: definition.type, definition, extension: undefined as typeof extensionsStore.items[number] | undefined })),
-    ...extensionsStore.items.map((extension) => ({ key: `extension:${extension.name}`, definition: extensionDefinition(extension, nodesStore.nodeTypes.find((item) => item.type === extension.adapter.nodeRole)), extension })),
+    ...extensionsStore.items.map((extension) => ({ key: `extension:${extension.name}`, definition: extensionDefinition(extension), extension })),
   ], [nodesStore.nodeTypes, extensionsStore.items])
   const choiceLabels = useMemo(() => Object.fromEntries(choices.map((choice) => [choice.key, choice.definition.name])), [choices])
   const selectedChoice = choices.find((choice) => choice.key === selectedType)

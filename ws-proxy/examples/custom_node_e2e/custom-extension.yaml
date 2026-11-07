@@ -3,10 +3,17 @@ displayName: custom probe
 sourceType: local
 source: "${SOURCE_ROOT}/python-script"
 adapter:
+  outputType: image
   execution:
     runtime: python
     command: ./probe.py
   settings:
+    endpoint:
+      default: transcribe
+    enabled:
+      default: true
+    quiet:
+      default: false
     label:
       default: default label
     message:
@@ -17,7 +24,15 @@ adapter:
       required: true
   arguments:
     - flag: --server
-      source: runtime.websocketUrl
+      url:
+        base: runtime.websocketUrl
+        path: settings.endpoint
+    - flag: --enabled
+      source: settings.enabled
+      mode: flag
+    - flag: --quiet
+      source: settings.quiet
+      mode: flag
     - flag: --label
       source: settings.label
     - flag: --message

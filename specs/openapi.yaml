@@ -1023,7 +1023,7 @@ components:
       description: Flat node creation contract with optional resource identity.
     NodeRole:
       type: string
-      description: Pipeline role of a node or extension, independent of its execution implementation.
+      description: Built-in pipeline type or custom execution variant. Extension icons use a separate category.
       enum:
       - audio_source
       - transcriber
@@ -1158,9 +1158,9 @@ components:
                 type: string
                 description: type of condition in CamelCase or in foo.example.com/CamelCase.
           description: Node health observations keyed by condition type.
+          x-kubernetes-list-type: map
           x-kubernetes-list-map-keys:
           - type
-          x-kubernetes-list-type: map
         dispatch:
           type:
           - object
@@ -1237,8 +1237,6 @@ components:
               items:
                 type: object
                 description: Ordered CLI binding reused before and after node setting resolution.
-                required:
-                - source
                 properties:
                   flag:
                     type:
@@ -1247,20 +1245,22 @@ components:
                     description: Omit the flag for a positional value.
                     minLength: 1
                   mode:
-                    type: string
-                    description: Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
+                    oneOf:
+                    - type: string
+                      description: Emit a scalar value with an optional flag.
+                      enum:
+                      - value
+                    - type: string
+                      description: Emit only the flag when its boolean source is true.
+                      enum:
+                      - flag
+                    description: Convert to a scalar value or boolean flag. URLs MUST use value mode.
                     default: value
-                    enum:
-                    - value
-                    - switch
-                  source:
-                    type: string
-                    description: Standard runtime value or exact user-defined setting key.
-                    pattern: ^(runtime\.websocketUrl|settings\..+)$
-                additionalProperties: false
                 x-kubernetes-validations:
-                - message: switch arguments require a flag
-                  rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && size(self.flag) > 0)'
+                - message: flag mode requires a flag
+                  rule: '!has(self.mode) || self.mode != ''flag'' || has(self.flag)'
+                - message: url arguments require value mode
+                  rule: '!has(self.url) || !has(self.mode) || self.mode == ''value'''
               description: Ordered mappings from typed sources to command arguments.
             execution:
               type: object
@@ -1287,20 +1287,36 @@ components:
                   description: Optional process directory, relative to the installed root or explicitly absolute.
                   minLength: 1
               additionalProperties: false
-            nodeRole:
+            inputType:
               oneOf:
               - type: string
-                description: Produces audio for the pipeline.
+                description: Image content.
+                enum:
+                - image
               - type: string
-                description: Transcribes audio into text.
+                description: Text content.
+                enum:
+                - text
               - type: string
-                description: Translates text between languages.
+                description: Audio content.
+                enum:
+                - audio
+              description: Optional input media type. Omission means no declared input, without selecting runtime behavior.
+            outputType:
+              oneOf:
               - type: string
-                description: Presents pipeline output.
+                description: Image content.
+                enum:
+                - image
               - type: string
-                description: Default classification for extension-defined work outside the predefined pipeline roles.
-              description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
-              default: custom
+                description: Text content.
+                enum:
+                - text
+              - type: string
+                description: Audio content.
+                enum:
+                - audio
+              description: Optional output media type. Omission means no declared output, without selecting runtime behavior.
             settings:
               type: object
               description: User-defined setting declarations or resolved instance values.
@@ -1414,8 +1430,6 @@ components:
               items:
                 type: object
                 description: Ordered CLI binding reused before and after node setting resolution.
-                required:
-                - source
                 properties:
                   flag:
                     type:
@@ -1424,20 +1438,22 @@ components:
                     description: Omit the flag for a positional value.
                     minLength: 1
                   mode:
-                    type: string
-                    description: Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
+                    oneOf:
+                    - type: string
+                      description: Emit a scalar value with an optional flag.
+                      enum:
+                      - value
+                    - type: string
+                      description: Emit only the flag when its boolean source is true.
+                      enum:
+                      - flag
+                    description: Convert to a scalar value or boolean flag. URLs MUST use value mode.
                     default: value
-                    enum:
-                    - value
-                    - switch
-                  source:
-                    type: string
-                    description: Standard runtime value or exact user-defined setting key.
-                    pattern: ^(runtime\.websocketUrl|settings\..+)$
-                additionalProperties: false
                 x-kubernetes-validations:
-                - message: switch arguments require a flag
-                  rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && size(self.flag) > 0)'
+                - message: flag mode requires a flag
+                  rule: '!has(self.mode) || self.mode != ''flag'' || has(self.flag)'
+                - message: url arguments require value mode
+                  rule: '!has(self.url) || !has(self.mode) || self.mode == ''value'''
               description: Ordered mappings from typed sources to command arguments.
             execution:
               type: object
@@ -1464,20 +1480,36 @@ components:
                   description: Optional process directory, relative to the installed root or explicitly absolute.
                   minLength: 1
               additionalProperties: false
-            nodeRole:
+            inputType:
               oneOf:
               - type: string
-                description: Produces audio for the pipeline.
+                description: Image content.
+                enum:
+                - image
               - type: string
-                description: Transcribes audio into text.
+                description: Text content.
+                enum:
+                - text
               - type: string
-                description: Translates text between languages.
+                description: Audio content.
+                enum:
+                - audio
+              description: Optional input media type. Omission means no declared input, without selecting runtime behavior.
+            outputType:
+              oneOf:
               - type: string
-                description: Presents pipeline output.
+                description: Image content.
+                enum:
+                - image
               - type: string
-                description: Default classification for extension-defined work outside the predefined pipeline roles.
-              description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
-              default: custom
+                description: Text content.
+                enum:
+                - text
+              - type: string
+                description: Audio content.
+                enum:
+                - audio
+              description: Optional output media type. Omission means no declared output, without selecting runtime behavior.
             settings:
               type: object
               description: User-defined setting declarations or resolved instance values.

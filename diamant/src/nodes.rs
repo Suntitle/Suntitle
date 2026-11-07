@@ -3,6 +3,8 @@
 //! On Unix, every node is launched in its own process group. Shutdown sends
 //! SIGTERM to the complete group, waits for the configured grace period, and
 //! then uses SIGKILL as a bounded fallback.
+//! Command construction composes URL bindings from the host base and setting-owned
+//! endpoint paths immediately before process launch. Setting strings remain unchanged.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -19,7 +21,7 @@ use uuid::Uuid;
 use super::installation::PreparedExtension;
 use suntitle_core::kubernetes::resources::{NodeSettings, SuntitleNodeSpec};
 use suntitle_core::kubernetes::{
-    adapter::{ArgumentMode, ArgumentSource, RuntimeValue},
+    adapter::{ArgumentMode, ArgumentSource, ArgumentValue, RuntimeValue},
     execution::ExecutionCommand,
 };
 use suntitle_core::registration::{ApplyIdentity, CustomExecution};
@@ -516,22 +518,30 @@ fn custom_command_spec(
     };
     for binding in &adapter.arguments {
         let runtime = serde_json::Value::String(data_plane_url.as_str().to_owned());
-        let value = match &binding.source {
-            ArgumentSource::Runtime(RuntimeValue::WebsocketUrl) => &runtime,
-            ArgumentSource::Setting(key) => adapter
+        let composed;
+        let value = match &binding.value {
+            ArgumentValue::Source(ArgumentSource::Runtime(RuntimeValue::WebsocketUrl)) => &runtime,
+            ArgumentValue::Source(ArgumentSource::Setting(key)) => adapter
                 .settings
                 .get(key)
                 .ok_or_else(|| io::Error::other(format!("missing argument setting: {key}")))?,
+            ArgumentValue::Url(url) => {
+                let key = url.path.key();
+                let path = adapter.settings.get(key).and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| io::Error::other(format!("URL path setting MUST be a string: {key}")))?;
+                composed = serde_json::Value::String(websocket_url_with_path(data_plane_url, path)?);
+                &composed
+            }
         };
         match binding.mode {
-            ArgumentMode::Switch => {
+            ArgumentMode::Flag => {
                 let enabled = value
                     .as_bool()
-                    .ok_or_else(|| io::Error::other("switch argument MUST be boolean"))?;
+                    .ok_or_else(|| io::Error::other("flag argument MUST be boolean"))?;
                 let flag = binding
                     .flag
                     .as_ref()
-                    .ok_or_else(|| io::Error::other("switch argument MUST have a flag"))?;
+                    .ok_or_else(|| io::Error::other("flag mode MUST have a flag"))?;
                 if enabled {
                     args.push(flag.into());
                 }
@@ -559,6 +569,23 @@ fn custom_command_spec(
         args,
         current_dir: installation.working_directory.clone(),
     })
+}
+
+/// Append an endpoint path while retaining the configured origin, query, and path prefix.
+fn websocket_url_with_path(base: &Url, path: &str) -> io::Result<String> {
+    if path.is_empty() {
+        return Ok(base.as_str().to_owned());
+    }
+    if path.starts_with("//") || path.contains('\\') || Url::parse(path).is_ok() {
+        return Err(io::Error::other("URL endpoint MUST be a path, not an origin"));
+    }
+    let prefix = format!("{}/", base.path().trim_end_matches('/'));
+    let mut url = base.clone();
+    url.set_path(&format!("{prefix}{}", path.trim_start_matches('/')));
+    if !url.path().starts_with(&prefix) {
+        return Err(io::Error::other("URL endpoint MUST retain the configured path prefix"));
+    }
+    Ok(url.into())
 }
 
 /// Build a built-in command, deriving its client-specific address from the base URL.
@@ -678,7 +705,7 @@ mod tests {
         .unwrap();
         let mut identity = test_identity();
         let mut spec: SuntitleNodeSpec = serde_json::from_value(serde_json::json!({"displayName":"Custom","hostRef":{"name":"host"},"extensionRef":{"name":"plugin"},"settings":{"custom":{}}})).unwrap();
-        let adapter = serde_json::from_value(serde_json::json!({"nodeRole":"transcriber","execution":{"command":"./run"},"settings":{"value":"a b;$(ignored)"},"arguments":[{"flag":"--value","source":"settings.value"}]})).unwrap();
+        let adapter = serde_json::from_value(serde_json::json!({"inputType":"text","outputType":"text","execution":{"command":"./run"},"settings":{"value":"a b;$(ignored)"},"arguments":[{"flag":"--value","source":"settings.value"}]})).unwrap();
         let mut custom = CustomExecution {
             reference: "registry/extensions@sha256:test".into(),
             adapter,
@@ -745,15 +772,15 @@ mod tests {
         manager.remove(&identity).await.unwrap();
     }
 
-    /// Python variants use embedded UV and every role receives the unchanged base URL.
+    /// Python variants use embedded UV and every media type receives the unchanged base URL.
     #[tokio::test]
     async fn custom_command_modes_validate_values_and_preserve_base_url() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("plugin.py"), "pass").unwrap();
         let data_plane_url = Url::parse("wss://example.test:9443/prefix/").unwrap();
-        for role in ["audio_source", "transcriber", "translator", "display", "custom"] {
+        for output in ["image", "text", "audio"] {
             for (runtime, entry) in [("python", "./plugin.py"), ("pythonModule", "plugin.main")] {
-                let adapter = serde_json::from_value(serde_json::json!({"nodeRole":role,"execution":{"runtime":runtime,"command":entry},"settings":{"enabled":true,"zero":0,"empty":""},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"},{"flag":"--on","source":"settings.enabled","mode":"switch"},{"source":"settings.zero"},{"source":"settings.empty"}]})).unwrap();
+                let adapter = serde_json::from_value(serde_json::json!({"inputType":"audio","outputType":output,"execution":{"runtime":runtime,"command":entry},"settings":{"enabled":true,"zero":0,"empty":""},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"},{"flag":"--on","source":"settings.enabled","mode":"flag"},{"source":"settings.zero"},{"source":"settings.empty"}]})).unwrap();
                 let mut installed = PreparedExtension::prepare(
                     test_identity(),
                     "artifact".into(),
@@ -816,6 +843,36 @@ mod tests {
                         .args
                         .contains(&"--on".into())
                 );
+            }
+        }
+    }
+
+    /// URL bindings MUST inherit the host URL while the user supplies only an endpoint path.
+    #[tokio::test]
+    async fn url_arguments_compose_runtime_base_and_setting_path() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("plugin.py"), "pass").unwrap();
+        for (base, path, expected) in [
+            ("ws://127.0.0.1:3030/", "transcribe", "ws://127.0.0.1:3030/transcribe"),
+            ("wss://example.test:9443/prefix/", "translate", "wss://example.test:9443/prefix/translate"),
+            ("wss://example.test:9443/prefix", "/translate", "wss://example.test:9443/prefix/translate"),
+            ("wss://example.test:9443/prefix/?token=x", "transcribe", "wss://example.test:9443/prefix/transcribe?token=x"),
+            ("wss://example.test:9443/prefix/", "", "wss://example.test:9443/prefix/"),
+        ] {
+            let adapter = serde_json::from_value(serde_json::json!({
+                "execution":{"runtime":"python","command":"./plugin.py"},
+                "settings":{"endpoint":path,"message":"$(runtime.websocketUrl)"},
+                "arguments":[{"flag":"--server","url":{"base":"runtime.websocketUrl","path":"settings.endpoint"}},
+                    {"source":"settings.message"}]
+            })).unwrap();
+            let mut installed = PreparedExtension::prepare(test_identity(), "artifact".into(), root.path().into(), adapter).await.unwrap();
+            let command = custom_command_spec(Path::new("/embedded-diamant"), &Url::parse(base).unwrap(), &installed).unwrap();
+            assert_eq!(&command.args[command.args.len() - 3..], &[OsString::from("--server"), expected.into(), "$(runtime.websocketUrl)".into()]);
+            assert_eq!(installed.adapter.settings["endpoint"], path);
+            for invalid in [serde_json::Value::Null, serde_json::json!(42), serde_json::json!("wss://other.test/"), serde_json::json!("//other.test/"), serde_json::json!("../escape")] {
+                installed.adapter.settings.insert("endpoint".into(), invalid);
+                let prefixed = Url::parse("wss://example.test/prefix/").unwrap();
+                assert!(custom_command_spec(Path::new("/embedded-diamant"), &prefixed, &installed).is_err());
             }
         }
     }

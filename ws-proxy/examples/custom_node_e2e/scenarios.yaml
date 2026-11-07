@@ -15,6 +15,7 @@
   runtime: python
   entry: probe.py
   seedFrom: python-script
+  expectations: override-expectations.yaml
 - name: oci-python-module
   runtime: pythonModule
   entry: probe_module/__main__.py
@@ -22,3 +23,4 @@
 - name: custom
   runtime: python
   entry: probe.py
+  expectations: custom-expectations.yaml

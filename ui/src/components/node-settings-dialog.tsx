@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { nodeTypeIcons } from "@/lib/node-icons"
+import { nodeIcon } from "@/lib/node-icons"
 import { cn } from "@/lib/utils"
 import { extensionDefinition, extensionFormValues, extensionSettings } from "@/stores/extension-nodes"
 import { useStores } from "@/stores"
@@ -97,7 +97,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
   const extension = extensionsStore.items.find((item) => item.name === node?.spec.extensionRef?.name)
   const builtInDefinition = node ? nodesStore.nodeTypes.find((item) => item.type === node.type) : undefined
   const definition = node?.spec.extensionRef
-    ? extension ? extensionDefinition(extension, builtInDefinition) : null
+    ? extension ? extensionDefinition(extension) : null
     : builtInDefinition ?? null
 
   const allowedInputNodes = useMemo(() => {
@@ -148,7 +148,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
   const showInput = (definition?.inputTypes.length ?? 0) > 0
   const requiresInput = !node?.spec.extensionRef && showInput
   const canSave = Boolean(definition && nodeName.trim() && (!requiresInput || inputNodeId))
-  const InputIcon = selectedInput ? nodeTypeIcons[selectedInput.type] : Mic
+  const InputIcon = selectedInput ? nodeIcon(selectedInput) : Mic
 
   return (
     <Dialog open={node !== null} onOpenChange={handleOpenChange}>

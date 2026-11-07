@@ -17,7 +17,7 @@ use warp::Filter;
 
 /// Resolved configuration sent with the artifact, independent of adapter.yaml.
 fn adapter() -> ResolvedAdapter {
-    serde_json::from_value(json!({"nodeRole":"transcriber","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap()
+    serde_json::from_value(json!({"inputType":"text","outputType":"text","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap()
 }
 
 fn identity() -> ApplyIdentity {

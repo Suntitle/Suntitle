@@ -12,13 +12,13 @@ export function mapHost(resource: HostResource): Host {
   }
 }
 
-/** Resolve custom node roles from the referenced extension or observed adapter. */
+/** Resolve custom icons while keeping execution and built-in types independent. */
 export function mapNode(resource: NodeResource, hosts: HostResource[], extensions: Extension[] = []): Node {
   const { name: resourceName, status, ...spec } = resource
   const host = hosts.find((host) => host.name === resource.hostRef.name)
   const extension = extensions.find((item) => item.name === resource.extensionRef?.name)
   const type = resource.extensionRef
-    ? extension?.adapter.nodeRole ?? resource.status?.resolvedAdapter?.nodeRole ?? "transcriber"
+    ? "custom"
     : Object.keys(resource.settings)[0] as NodeRole
   return {
     id: resourceName,
@@ -27,6 +27,10 @@ export function mapNode(resource: NodeResource, hosts: HostResource[], extension
     name: resource.displayName,
     spec,
     type,
+    ...(type === "custom" ? {
+      inputType: extension?.adapter.inputType ?? status?.resolvedAdapter?.inputType,
+      outputType: extension?.adapter.outputType ?? status?.resolvedAdapter?.outputType,
+    } : {}),
     settings: resource.settings.custom ?? resource.settings[type],
     inputNodeId: resource.inputRef?.name ?? null,
     host: host ? mapHost(host) : {

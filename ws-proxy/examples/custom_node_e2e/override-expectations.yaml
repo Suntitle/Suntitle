@@ -1,0 +1,12 @@
+# Diamant MUST supply its configured URL and append the extension's endpoint.
+arguments:
+  - --server
+  - ws://127.0.0.1:3030/translate
+  - --label
+  - default label
+  - --message
+  - "a value with spaces; $(literal)"
+  - --report
+  - "${RUN_ROOT}/${RUNTIME}.json"
+  - --finish
+  - "${RUN_ROOT}/finish"

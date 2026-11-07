@@ -70,12 +70,13 @@ fn condition(resource: &Value, kind: &str, status: &str, reason: Option<&str>) -
         })
 }
 
-/// Watch from creation so fast installation transitions cannot be missed by polling.
+/// Watch installation and launch, preserving the declared media types in the resolved adapter.
 async fn installed_then_running(
     namespace: &support::TestNamespace,
     created: &Value,
     reference: &Value,
     version: &str,
+    adapter: &Value,
 ) -> Result<(), Box<dyn Error>> {
     let nodes = namespace.nodes();
     let name = created["name"]
@@ -102,6 +103,11 @@ async fn installed_then_running(
                 return Err(format!("node failed: {node}").into());
             }
             if condition(&node, "Installed", "True", Some("ExtensionInstalled")) {
+                let resolved = &node["status"]["resolvedAdapter"];
+                assert!(resolved.get("nodeRole").is_none());
+                for field in ["inputType", "outputType"] {
+                    assert_eq!(resolved.get(field), adapter.get(field));
+                }
                 assert_eq!(&node["status"]["artifactReference"], reference);
                 if node["status"]["phase"] == "Pending"
                     && condition(&node, "Ready", "False", Some("AwaitingLaunch"))
@@ -269,10 +275,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let registered = client
             .request("POST", "/api/v1/extensions", Some(&extension), 201)
             .await?;
-        assert_eq!(
-            registered["adapter"]["nodeRole"],
-            extension["adapter"]["nodeRole"].as_str().unwrap_or("custom")
-        );
+        assert!(registered["adapter"].get("nodeRole").is_none());
+        for field in ["inputType", "outputType"] {
+            assert_eq!(
+                registered["adapter"].get(field),
+                extension["adapter"].get(field)
+            );
+        }
         let published = client
             .wait_for(
                 &format!("/api/v1/extensions/{}", extension["name"].as_str().unwrap()),
@@ -317,7 +326,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 201,
             )
             .await?;
-        installed_then_running(&namespace, &created, reference, &version).await?;
+        installed_then_running(&namespace, &created, reference, &version, &extension["adapter"]).await?;
         let report_path = run.path().join(format!("{name}.json"));
         let report = timeout(ACTION_TIMEOUT, async {
             loop {
@@ -331,7 +340,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .await
         .map_err(|_| format!("missing process evidence for {name}"))?;
-        let mut expected = fixture(&data.join("expectations.yaml"), &replacements)?;
+        let expectations = scenario["expectations"].as_str().unwrap_or("expectations.yaml");
+        let mut expected = fixture(&data.join(expectations), &replacements)?;
         substitute(&mut expected, &[("${RUNTIME}", name)]);
         assert_eq!(report["args"], expected["arguments"]);
         let cwd = Path::new(report["cwd"].as_str().ok_or("cwd missing")?);

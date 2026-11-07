@@ -1,12 +1,12 @@
 import type { Extension, NodeSettingValue, NodeTypeDefinition } from "./models"
 
 /** Infer fields from declared defaults while retaining arbitrary JSON declarations. */
-export function extensionDefinition(extension: Extension, builtIn?: NodeTypeDefinition): NodeTypeDefinition {
+export function extensionDefinition(extension: Extension): NodeTypeDefinition {
   return {
-    type: extension.adapter.nodeRole,
+    type: "custom",
     name: extension.displayName,
     description: `Extension: ${extension.name}`,
-    inputTypes: builtIn?.inputTypes ?? [],
+    inputTypes: [],
     settings: Object.entries(extension.adapter.settings ?? {}).map(([key, declaration]) => {
       const hasDefault = Object.hasOwn(declaration, "default")
       const value = declaration.default

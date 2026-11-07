@@ -460,7 +460,9 @@ macro_rules! openapi_schema {
         impl utoipa::PartialSchema for $ty {
 
             fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-                let mut settings = schemars::generate::SchemaSettings::draft2020_12();
+                // Utoipa MUST receive enums because it drops JSON Schema const constraints.
+                let mut settings = schemars::generate::SchemaSettings::draft2020_12()
+                    .with_transform(schemars::transform::ReplaceConstValue::default());
                 settings.inline_subschemas = true;
                 let schema = settings.clone().into_generator().into_root_schema_for::<Self>();
                 let mut value = serde_json::to_value(schema).expect("resource schema serialization");
@@ -490,3 +492,34 @@ openapi_schema!(
     HostStatus,
     NodeStatus
 );
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+    use utoipa::PartialSchema;
+
+    /// Documented variants MUST retain their values and descriptions through Utoipa conversion.
+    #[test]
+    fn documented_media_types_preserve_openapi_constraints() {
+        let declared = serde_json::to_value(SuntitleExtensionSpec::schema()).unwrap();
+        let resolved = serde_json::to_value(NodeStatus::schema()).unwrap();
+        for adapter in [&declared["properties"]["adapter"], &resolved["properties"]["resolvedAdapter"]] {
+            for field in ["inputType", "outputType"] {
+                let schema = &adapter["properties"][field];
+                assert!(!adapter["required"].as_array().unwrap().contains(&json!(field)));
+                assert!(schema.get("anyOf").is_none());
+                let variants = schema["oneOf"].as_array().unwrap();
+                assert_eq!(variants.len(), 3);
+                for (variant, (value, description)) in variants.iter().zip([
+                    ("image", "Image content."),
+                    ("text", "Text content."),
+                    ("audio", "Audio content."),
+                ]) {
+                    assert_eq!(variant["type"], "string");
+                    assert_eq!(variant["enum"], json!([value]));
+                    assert_eq!(variant["description"], description);
+                }
+            }
+        }
+    }
+}

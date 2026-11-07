@@ -6,6 +6,7 @@ extensionRef:
 enabled: true
 settings:
   custom:
+    endpoint: translate
     message: "a value with spaces; $(literal)"
     report: "${RUN_ROOT}/oci-python-script.json"
     finish: "${RUN_ROOT}/finish"

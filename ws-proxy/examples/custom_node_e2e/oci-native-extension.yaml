@@ -3,7 +3,7 @@ displayName: OCI native probe
 sourceType: oci
 source: "${REGISTRY}/custom-node-sources/${HOST_NAME}/native:fixture"
 adapter:
-  nodeRole: transcriber
+  inputType: audio
   execution:
     runtime: executable
     command: ./bin/probe

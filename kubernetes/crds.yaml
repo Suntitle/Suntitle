@@ -494,6 +494,11 @@ spec:
                     description: Ordered mappings from typed sources to command arguments.
                     items:
                       description: Ordered CLI binding reused before and after node setting resolution.
+                      oneOf:
+                      - required:
+                        - source
+                      - required:
+                        - url
                       properties:
                         flag:
                           description: Omit the flag for a positional value.
@@ -502,21 +507,37 @@ spec:
                           type: string
                         mode:
                           default: value
-                          description: Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
+                          description: Convert to a scalar value or boolean flag. URLs MUST use value mode.
                           enum:
                           - value
-                          - switch
+                          - flag
                           type: string
                         source:
-                          description: Standard runtime value or exact user-defined setting key.
+                          description: Read one runtime value or user setting without interpolation.
                           pattern: ^(runtime\.websocketUrl|settings\..+)$
                           type: string
-                      required:
-                      - source
+                        url:
+                          description: Compose a runtime-owned base URL and a setting-owned endpoint.
+                          properties:
+                            base:
+                              description: Diamant's configured base URL. No user-defined origin is accepted.
+                              enum:
+                              - runtime.websocketUrl
+                              type: string
+                            path:
+                              description: Setting reference containing the endpoint path to append.
+                              pattern: ^settings\..+$
+                              type: string
+                          required:
+                          - base
+                          - path
+                          type: object
                       type: object
                       x-kubernetes-validations:
-                      - message: switch arguments require a flag
-                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && size(self.flag) > 0)'
+                      - message: flag mode requires a flag
+                        rule: '!has(self.mode) || self.mode != ''flag'' || has(self.flag)'
+                      - message: url arguments require value mode
+                        rule: '!has(self.url) || !has(self.mode) || self.mode == ''value'''
                     type: array
                   execution:
                     description: Typed execution contract, unchanged by plugin setting resolution.
@@ -541,15 +562,19 @@ spec:
                     required:
                     - command
                     type: object
-                  nodeRole:
-                    default: custom
-                    description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
+                  inputType:
+                    description: Optional input media type. Omission means no declared input, without selecting runtime behavior.
                     enum:
-                    - audio_source
-                    - transcriber
-                    - translator
-                    - display
-                    - custom
+                    - image
+                    - text
+                    - audio
+                    type: string
+                  outputType:
+                    description: Optional output media type. Omission means no declared output, without selecting runtime behavior.
+                    enum:
+                    - image
+                    - text
+                    - audio
                     type: string
                   settings:
                     description: User-defined setting declarations or resolved instance values.
@@ -595,6 +620,11 @@ spec:
                     description: Ordered mappings from typed sources to command arguments.
                     items:
                       description: Ordered CLI binding reused before and after node setting resolution.
+                      oneOf:
+                      - required:
+                        - source
+                      - required:
+                        - url
                       properties:
                         flag:
                           description: Omit the flag for a positional value.
@@ -603,21 +633,37 @@ spec:
                           type: string
                         mode:
                           default: value
-                          description: Convert to a scalar value or a boolean switch. Switches MUST have a nonempty flag.
+                          description: Convert to a scalar value or boolean flag. URLs MUST use value mode.
                           enum:
                           - value
-                          - switch
+                          - flag
                           type: string
                         source:
-                          description: Standard runtime value or exact user-defined setting key.
+                          description: Read one runtime value or user setting without interpolation.
                           pattern: ^(runtime\.websocketUrl|settings\..+)$
                           type: string
-                      required:
-                      - source
+                        url:
+                          description: Compose a runtime-owned base URL and a setting-owned endpoint.
+                          properties:
+                            base:
+                              description: Diamant's configured base URL. No user-defined origin is accepted.
+                              enum:
+                              - runtime.websocketUrl
+                              type: string
+                            path:
+                              description: Setting reference containing the endpoint path to append.
+                              pattern: ^settings\..+$
+                              type: string
+                          required:
+                          - base
+                          - path
+                          type: object
                       type: object
                       x-kubernetes-validations:
-                      - message: switch arguments require a flag
-                        rule: '!has(self.mode) || self.mode != ''switch'' || (has(self.flag) && size(self.flag) > 0)'
+                      - message: flag mode requires a flag
+                        rule: '!has(self.mode) || self.mode != ''flag'' || has(self.flag)'
+                      - message: url arguments require value mode
+                        rule: '!has(self.url) || !has(self.mode) || self.mode == ''value'''
                     type: array
                   execution:
                     description: Typed execution contract, unchanged by plugin setting resolution.
@@ -642,15 +688,19 @@ spec:
                     required:
                     - command
                     type: object
-                  nodeRole:
-                    default: custom
-                    description: UI classification and input compatibility. Defaults to custom; does not select a runtime URL.
+                  inputType:
+                    description: Optional input media type. Omission means no declared input, without selecting runtime behavior.
                     enum:
-                    - audio_source
-                    - transcriber
-                    - translator
-                    - display
-                    - custom
+                    - image
+                    - text
+                    - audio
+                    type: string
+                  outputType:
+                    description: Optional output media type. Omission means no declared output, without selecting runtime behavior.
+                    enum:
+                    - image
+                    - text
+                    - audio
                     type: string
                   settings:
                     additionalProperties:

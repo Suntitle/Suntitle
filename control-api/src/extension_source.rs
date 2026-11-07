@@ -187,7 +187,7 @@ fn decode_manifest(bytes: &[u8], source_type: ExtensionSourceType, source: &str)
     fields.insert("sourceType".into(), serde_json::to_value(source_type).unwrap());
     fields.insert("source".into(), Value::String(source.to_owned()));
     fields.remove("refreshToken");
-    let spec: SuntitleExtensionSpec = serde_json::from_value(spec).map_err(|_| invalid("Manifest requires a displayName and an adapter with valid nodeRole and execution. Check any settings and arguments."))?;
+    let spec: SuntitleExtensionSpec = serde_json::from_value(spec).map_err(|_| invalid("Manifest requires a displayName and an adapter with valid execution. Check any optional inputType, outputType, settings, and arguments."))?;
     if spec.display_name.trim().is_empty() || spec.display_name.chars().count() > 128 || spec.max_attempts == 0 {
         return Err(invalid("Manifest displayName MUST have 1–128 characters and maxAttempts MUST be positive."));
     }
@@ -201,7 +201,7 @@ mod tests {
 
     /// A portable manifest omits deployment-specific source fields.
     fn manifest() -> Value {
-        json!({"displayName":"Hello", "adapter":{"nodeRole":"translator", "execution":{"runtime":"python","command":"./hello.py"}, "settings":{"optional":{"default":null},"required":{"required":true}}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}})
+        json!({"displayName":"Hello", "adapter":{"inputType":"text","outputType":"text", "execution":{"runtime":"python","command":"./hello.py"}, "settings":{"optional":{"default":null},"required":{"required":true}}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}})
     }
 
     /// Each supported envelope retains adapter declarations while the request owns source fields.
@@ -231,7 +231,7 @@ mod tests {
     /// Invalid configuration MUST fail before resource persistence.
     #[test]
     fn rejects_invalid_manifests_and_untrusted_git_protocols() {
-        for document in [json!({}), json!({"kind":"SuntitleHost","spec":manifest()}), json!({"displayName":"Hello","adapter":{"nodeRole":"translator","execution":{"command":""}}}), json!({"displayName":"Hello","maxAttempts":0,"adapter":manifest()["adapter"]})] {
+        for document in [json!({}), json!({"kind":"SuntitleHost","spec":manifest()}), json!({"displayName":"Hello","adapter":{"inputType":"text","outputType":"text","execution":{"command":""}}}), json!({"displayName":"Hello","maxAttempts":0,"adapter":manifest()["adapter"]})] {
             assert!(decode_manifest(&serde_json::to_vec(&document).unwrap(), ExtensionSourceType::Git, "https://example.com/repo.git").is_err());
         }
         for source in ["file:///etc", "ssh://example.com/repo", "https://user:secret@example.com/repo", "--upload-pack=example"] {

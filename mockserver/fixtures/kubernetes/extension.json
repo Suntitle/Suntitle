@@ -31,7 +31,8 @@
           "source": "settings.language"
         }
       ],
-      "nodeRole": "transcriber"
+      "inputType": "text",
+      "outputType": "text"
     },
     "displayName": "Custom transcriber"
   }
