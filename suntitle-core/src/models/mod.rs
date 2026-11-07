@@ -51,9 +51,18 @@ pub struct User {
     pub username: String,
 }
 
-/// Pipeline role of a node or extension, independent of its execution implementation.
+/// Built-in pipeline type or custom execution variant. Extension icons use a separate category.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    ToSchema,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRole {
@@ -65,7 +74,7 @@ pub enum NodeRole {
     Translator,
     /// Presents pipeline output.
     Display,
-    /// Default classification for extension-defined work outside the predefined pipeline roles.
+    /// Execution variant for nodes that reference a custom extension.
     #[default]
     Custom,
 }

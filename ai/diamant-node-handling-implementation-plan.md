@@ -138,14 +138,14 @@ Reconciliation rules:
 Use `tokio::process::Command` (or a small wrapper around it) with separate arguments,
 never a shell command string. Set:
 
-- executable: `uv` (configurable with `--uv-bin` / `SUNTITLE_UV_BIN` for tests and
+- executable: `uv` (configurable with `--uv-bin` / `UV_BIN` for tests and
   nonstandard installations);
-- current directory: `--project-dir` / `SUNTITLE_PROJECT_DIR`;
+- current directory: `--project-dir` / `PROJECT_DIR`;
 - stdin: null;
 - stdout/stderr: inherited initially so node failures remain observable;
 - kill-on-drop: enabled only as a final fallback, not as the normal shutdown path.
 
-Add `--data-plane-url` / `SUNTITLE_DATA_PLANE_URL`, defaulting to the origin of the
+Add `--data-plane-url` / `DATA_PLANE_URL`, defaulting to the origin of the
 registration URL with `/register` removed. Validate the result once at startup.
 Keeping it separately configurable avoids deriving incorrect endpoints when the
 registration path is routed through a gateway.

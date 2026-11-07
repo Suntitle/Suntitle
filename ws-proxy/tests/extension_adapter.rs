@@ -6,7 +6,7 @@ use suntitle_core::kubernetes::{
 
 fn adapter() -> ExtensionAdapter {
     serde_json::from_value(json!({
-        "nodeRole":"transcriber",
+        "inputType":"text","outputType":"text",
         "execution":{"runtime":"executable", "command":"./bin/transcriber"},
         "settings":{
             "model":{"default":"fast"},
@@ -19,7 +19,7 @@ fn adapter() -> ExtensionAdapter {
             {"flag":"--server", "source":"runtime.websocketUrl"},
             {"flag":"--model", "source":"settings.model"},
             {"flag":"--threads", "source":"settings.threads"},
-            {"flag":"--gpu", "source":"settings.useGpu", "mode":"switch"},
+            {"flag":"--gpu", "source":"settings.useGpu", "mode":"flag"},
             {"flag":"--language", "source":"settings.language"},
             {"flag":"--device", "source":"settings.device"}
         ]
@@ -27,31 +27,72 @@ fn adapter() -> ExtensionAdapter {
     .unwrap()
 }
 
-/// Declared and resolved adapters MUST preserve nodeRole, including custom.
+/// Declared and resolved adapters MUST preserve independent input and output types.
 #[test]
-fn node_roles_round_trip_without_the_legacy_type_field() {
-    for role in ["audio_source", "transcriber", "translator", "display", "custom"] {
-        let document = json!({"nodeRole":role,"execution":{"command":"./run"}});
-        let adapter: ExtensionAdapter = serde_json::from_value(document.clone()).unwrap();
-        let resolved = serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
-        assert_eq!(resolved["nodeRole"], role);
-        assert!(resolved.get("type").is_none());
-        let mut legacy = document;
-        legacy.as_object_mut().unwrap().remove("nodeRole");
-        legacy["type"] = json!(role);
-        assert!(serde_json::from_value::<ExtensionAdapter>(legacy).is_err());
+fn media_types_round_trip_without_legacy_fields() {
+    for input in ["image", "text", "audio"] {
+        for output in ["image", "text", "audio"] {
+            let document =
+                json!({"inputType":input,"outputType":output,"execution":{"command":"./run"}});
+            let adapter: ExtensionAdapter = serde_json::from_value(document.clone()).unwrap();
+            let resolved =
+                serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
+            assert_eq!(resolved["inputType"], input);
+            assert_eq!(resolved["outputType"], output);
+            assert!(resolved.get("nodeRole").is_none());
+            for field in ["type", "nodeRole"] {
+                let mut legacy = document.clone();
+                legacy[field] = json!("text");
+                assert!(serde_json::from_value::<ExtensionAdapter>(legacy).is_err());
+            }
+        }
     }
 }
 
-/// An omitted role MUST resolve to custom without an explicit declaration.
+/// Declared media types MUST use supported values.
 #[test]
-fn omitted_node_role_defaults_to_custom() {
-    let adapter: ExtensionAdapter = serde_json::from_value(json!({
-        "execution":{"command":"./run"}
-    }))
-    .unwrap();
-    let resolved = serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
-    assert_eq!(resolved["nodeRole"], "custom");
+fn declared_media_types_reject_unsupported_values() {
+    let document = json!({"inputType":"audio","outputType":"text","execution":{"command":"./run"}});
+    for field in ["inputType", "outputType"] {
+        let mut missing = document.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<ExtensionAdapter>(missing).is_ok());
+        for value in [
+            json!("transcriber"),
+            json!("custom"),
+            json!(""),
+            Value::Null,
+        ] {
+            let mut invalid = document.clone();
+            invalid[field] = value;
+            assert!(serde_json::from_value::<ExtensionAdapter>(invalid).is_err());
+        }
+    }
+}
+
+/// Omitted media types MUST remain absent after resolution and serialization.
+#[test]
+fn extensions_resolve_without_input_or_output_types() {
+    for input in [None, Some(json!("audio"))] {
+        for output in [None, Some(json!("text"))] {
+            let mut document = json!({"execution":{"command":"./run"}});
+            for (field, value) in [("inputType", &input), ("outputType", &output)] {
+                if let Some(value) = value {
+                    document[field] = value.clone();
+                }
+            }
+            let adapter: ExtensionAdapter = serde_json::from_value(document).unwrap();
+            let declared = serde_json::to_value(&adapter).unwrap();
+            let resolved =
+                serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
+            for (field, value) in [("inputType", &input), ("outputType", &output)] {
+                let expected = value.as_ref();
+                assert_eq!(declared.get(field), expected);
+                assert_eq!(resolved.get(field), expected);
+            }
+            assert!(resolved.get("nodeRole").is_none());
+        }
+    }
 }
 
 #[test]
@@ -75,7 +116,8 @@ fn nodes_inherit_extension_defaults_and_mappings_without_changing_desired_state(
             })
         );
         assert_eq!(resolved.execution, extension.adapter.execution);
-        assert_eq!(resolved.node_role, extension.adapter.node_role);
+        assert_eq!(resolved.input_type, extension.adapter.input_type);
+        assert_eq!(resolved.output_type, extension.adapter.output_type);
         assert_eq!(resolved.arguments, extension.adapter.arguments[..5]);
         assert_eq!(serde_json::to_value(node).unwrap(), overrides);
     }
@@ -113,7 +155,7 @@ fn default_presence_and_override_presence_preserve_every_json_value() {
         json!({"nested":[null]}),
     ] {
         let adapter: ExtensionAdapter = serde_json::from_value(json!({
-            "nodeRole":"display", "execution":{"command":"./run"}, "settings":{"value":{"default":value}},
+            "inputType":"text","outputType":"text", "execution":{"command":"./run"}, "settings":{"value":{"default":value}},
             "arguments":[{"source":"settings.value"}]
         }))
         .unwrap();
@@ -164,9 +206,9 @@ fn optional_settings_omit_their_binding_only_when_absent_and_still_use_defaults(
 }
 
 #[test]
-fn switch_requires_a_flag_in_the_crd_rule() {
+fn flag_mode_requires_a_flag_in_the_crd_rule() {
     use suntitle_core::kubernetes::adapter::ArgumentBinding;
-    let valid = json!({"flag":"--gpu", "source":"settings.useGpu", "mode":"switch"});
+    let valid = json!({"flag":"--gpu", "source":"settings.useGpu", "mode":"flag"});
     ArgumentBinding::validate_cel(&valid, None).unwrap();
     for flag in [None, Some(Value::Null)] {
         let mut invalid = valid.clone();
@@ -174,16 +216,83 @@ fn switch_requires_a_flag_in_the_crd_rule() {
         if let Some(flag) = flag {
             invalid["flag"] = flag;
         }
-        assert!(ArgumentBinding::validate_cel(&invalid, None).is_err());
+        let binding: ArgumentBinding = serde_json::from_value(invalid).unwrap();
+        let persisted = serde_json::to_value(binding).unwrap();
+        assert!(ArgumentBinding::validate_cel(&persisted, None).is_err());
     }
     ArgumentBinding::validate_cel(&json!({"source":"settings.model", "mode":"value"}), None)
         .unwrap();
 }
 
+/// URL bindings MUST be exclusive with sources and MUST compose runtime base with a setting path.
+#[test]
+fn url_bindings_validate_wire_shape_and_crd_rules() {
+    use suntitle_core::kubernetes::adapter::ArgumentBinding;
+    let url = json!({"base":"runtime.websocketUrl","path":"settings.endpoint"});
+    let valid = json!({"flag":"--server","url":url});
+    let binding: ArgumentBinding = serde_json::from_value(valid.clone()).unwrap();
+    assert_eq!(serde_json::to_value(binding).unwrap(), valid);
+    ArgumentBinding::validate_cel(&valid, None).unwrap();
+    for invalid in [
+        json!({"flag":"--server"}),
+        json!({"source":"runtime.websocketUrl","url":url}),
+    ] {
+        assert!(serde_json::from_value::<ArgumentBinding>(invalid.clone()).is_err());
+    }
+    assert!(
+        serde_json::from_value::<ArgumentBinding>(
+            json!({"source":"settings.enabled","mode":"switch","flag":"--enabled"})
+        )
+        .is_err()
+    );
+    assert!(
+        ArgumentBinding::validate_cel(&json!({"url":url,"mode":"flag","flag":"--server"}), None)
+            .is_err()
+    );
+    for invalid in [
+        json!({"template":"$(runtime.websocketUrl)/$(settings.endpoint)"}),
+        json!({"url":{"base":"settings.server","path":"settings.endpoint"}}),
+        json!({"url":{"base":"runtime.websocketUrl","path":"runtime.websocketUrl"}}),
+        json!({"url":{"base":"runtime.websocketUrl","path":"transcribe"}}),
+    ] {
+        assert!(serde_json::from_value::<ArgumentBinding>(invalid).is_err());
+    }
+}
+
+/// Defaults and overrides MUST change only the endpoint, leaving URL composition for the host.
+#[test]
+fn url_bindings_resolve_endpoint_defaults_and_overrides() {
+    let document = json!({"execution":{"command":"./run"},
+        "settings":{"endpoint":{"default":"transcribe"}},
+        "arguments":[{"flag":"--server","url":{"base":"runtime.websocketUrl","path":"settings.endpoint"}}]});
+    let mut adapter: ExtensionAdapter = serde_json::from_value(document.clone()).unwrap();
+    for (overrides, endpoint) in [
+        (json!({}), "transcribe"),
+        (json!({"endpoint":"translate"}), "translate"),
+    ] {
+        let resolved = adapter
+            .resolve(&serde_json::from_value(overrides).unwrap())
+            .unwrap();
+        assert_eq!(resolved.settings["endpoint"], endpoint);
+        assert_eq!(
+            serde_json::to_value(resolved).unwrap()["arguments"],
+            document["arguments"]
+        );
+    }
+    adapter.settings.get_mut("endpoint").unwrap().default = None;
+    assert!(
+        adapter
+            .resolve(&Default::default())
+            .unwrap()
+            .arguments
+            .is_empty()
+    );
+}
+
 #[test]
 fn settings_are_optional_unless_explicitly_required_and_defaults_supply_values() {
     let adapter: ExtensionAdapter = serde_json::from_value(json!({
-        "nodeRole":"display", "execution":{"command":"./run"},
+        "inputType":"text","outputType":"text", "execution":{"command":"./run"},
         "settings":{
             "optional":{}, "defaulted":{"default":"value"},
             "requiredWithDefault":{"required":true,"default":null}

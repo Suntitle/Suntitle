@@ -81,7 +81,7 @@ impl Publisher {
                 });
                 let first = content.next().await;
                 let descriptor = if first.is_none() {
-                    let digest = format!("sha256:{:x}", Sha256::digest(b""));
+                    let digest = format!("sha256:{}", hex::encode(Sha256::digest(b"")));
                     self.client.push_blob(&target, "", &digest).await?;
                     OciDescriptor {
                         digest,
@@ -117,7 +117,7 @@ impl Publisher {
                     annotations: Some(upload.annotations.clone()),
                     ..descriptor
                 };
-                let digest = format!("sha256:{:x}", Sha256::digest(b"{}"));
+                let digest = format!("sha256:{}", hex::encode(Sha256::digest(b"{}")));
                 self.client.push_blob(&target, "{}", &digest).await?;
                 let manifest = OciManifest::Image(OciImageManifest {
                     media_type: Some(OCI_IMAGE_MEDIA_TYPE.into()),

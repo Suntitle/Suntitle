@@ -6,7 +6,7 @@ const accessToken = "mock-token"
 function resource(spec?: Partial<ExtensionSpec>): Extension {
   return {
     name: "custom-captioner",
-    displayName: "Custom captioner", sourceType: "local", source: "/opt/extensions/captioner", adapter: { nodeRole: "transcriber", execution: { command: "./captioner", runtime: "executable" } }, ...spec,
+    displayName: "Custom captioner", sourceType: "local", source: "/opt/extensions/captioner", adapter: { inputType: "audio", outputType: "text", execution: { command: "./captioner", runtime: "executable" } }, ...spec,
   }
 }
 
@@ -30,23 +30,45 @@ function stubRegistration(extension: Extension) {
 }
 
 describe("Extensions page", () => {
-  it("uses the existing node icon for each extension role", () => {
-    const roles = [
-      ["audio_source", "mic"],
-      ["transcriber", "audio-waveform"],
-      ["translator", "languages"],
-      ["display", "monitor"],
-      ["custom", "blocks"],
+  it("uses the declared output type for each custom extension", () => {
+    const types = [
+      ["image", "image"],
+      ["text", "text-align-start"],
+      ["audio", "audio-waveform"],
     ] as const
-    visitAuthenticatedExtensions(roles.map(([nodeRole]) => ({
-      ...resource({ displayName: `${nodeRole} extension`, adapter: { nodeRole, execution: { command: "./run" } } }),
-      name: nodeRole,
+    visitAuthenticatedExtensions(types.map(([outputType]) => ({
+      ...resource({ displayName: `${outputType} extension`, adapter: { inputType: "audio", outputType, execution: { command: "./run" } } }),
+      name: outputType,
     })))
-    for (const [role, icon] of roles) {
-      cy.contains("tr", `${role} extension`).find(`svg.lucide-${icon}`).should("be.visible")
+    for (const [outputType, icon] of types) {
+      cy.contains("tr", `${outputType} extension`).should("contain.text", `audio → ${outputType}`).find(`svg.lucide-${icon}`).should("be.visible")
     }
-    cy.screenshot("extension-role-icons")
+    cy.screenshot("extension-output-icons")
   })
+
+  it("shows a source extension without an inputType or a dangling arrow", () => {
+    const source = resource()
+    delete source.adapter.inputType
+    visitAuthenticatedExtensions([source])
+    cy.contains("tr", source.displayName).within(() => {
+      cy.get("svg.lucide-text-align-start").should("be.visible")
+      cy.contains("span", "text").should("not.contain.text", "→")
+      cy.root().should("not.contain.text", "undefined")
+    })
+  })
+
+  for (const inputType of ["audio", undefined] as const) {
+    it(`renders input ${inputType} and omitted output without a dangling arrow`, () => {
+      const item = resource()
+      item.adapter.inputType = inputType
+      delete item.adapter.outputType
+      visitAuthenticatedExtensions([item])
+      cy.contains("tr", item.displayName).within(() => {
+        cy.get(`svg.lucide-${inputType ? "audio-waveform" : "blocks"}`).should("be.visible")
+        cy.root().should("not.contain.text", "→").and("not.contain.text", "undefined").and("not.contain.text", "null")
+      })
+    })
+  }
 
   it("reads flat extensions and preserves resource status after an accepted refresh", () => {
     cy.fixture("api/v1/extensions.json").then((list) => {

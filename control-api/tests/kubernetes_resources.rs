@@ -53,7 +53,7 @@ fn generation_command_does_not_initialize_storage_or_kubernetes() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_control_api"))
         .arg("generate-crds")
         .env("DATABASE_URL", "invalid")
-        .env("SUNTITLE_BOOTSTRAP_KUBECONFIG", "/does-not-exist")
+        .env("BOOTSTRAP_KUBECONFIG", "/does-not-exist")
         .output()
         .unwrap();
     assert!(
@@ -176,7 +176,8 @@ fn settings_reject_missing_unknown_multiple_and_mismatched_variants() {
         json!({"audio_source":null}),
         audio,
     ] {
-        let document = json!({"displayName":"Node","hostRef":{"name":"studio"},"settings":settings});
+        let document =
+            json!({"displayName":"Node","hostRef":{"name":"studio"},"settings":settings});
         assert!(
             serde_json::from_value::<SuntitleNodeSpec>(document.clone()).is_err(),
             "accepted invalid settings: {document}"
@@ -254,7 +255,12 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     let spec = &schema["openAPIV3Schema"]["properties"]["spec"];
     assert!(spec["properties"].get("name").is_none());
     assert_eq!(spec["properties"]["displayName"]["minLength"], 1);
-    assert!(spec["required"].as_array().unwrap().contains(&json!("displayName")));
+    assert!(
+        spec["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("displayName"))
+    );
     assert_eq!(
         spec["properties"]["sourceType"]["enum"],
         json!(["local", "git", "oci", "http"])
@@ -263,15 +269,21 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     assert_eq!(spec["properties"]["adapter"]["type"], "object");
     let adapter_schema = &spec["properties"]["adapter"]["properties"];
     assert!(adapter_schema.get("type").is_none());
-    assert_eq!(
-        adapter_schema["nodeRole"]["enum"],
-        json!(["audio_source", "transcriber", "translator", "display", "custom"])
-    );
-    assert_eq!(adapter_schema["nodeRole"]["default"], "custom");
-    assert!(
-        !spec["properties"]["adapter"]["required"]
-            .as_array().unwrap().contains(&json!("nodeRole"))
-    );
+    for field in ["inputType", "outputType"] {
+        assert_eq!(
+            adapter_schema[field]["enum"],
+            json!(["image", "text", "audio"])
+        );
+        assert!(adapter_schema[field].get("default").is_none());
+        assert!(
+            !spec["properties"]["adapter"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(field))
+        );
+        assert_ne!(adapter_schema[field]["nullable"], true);
+    }
+    assert!(adapter_schema.get("nodeRole").is_none());
     let execution = &adapter_schema["execution"];
     assert_eq!(execution["type"], "object");
     assert!(
@@ -299,6 +311,28 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     );
     use utoipa::OpenApi;
     let api = serde_json::to_value(control_api::api::ApiDoc::openapi()).unwrap();
+    for field in ["inputType", "outputType"] {
+        let adapter =
+            &api["components"]["schemas"]["SuntitleExtensionSpec"]["properties"]["adapter"];
+        assert!(
+            !adapter["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(field))
+        );
+        let schema = &adapter["properties"][field];
+        let media = schema;
+        assert!(schema.get("anyOf").is_none());
+        assert_eq!(
+            media["oneOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|variant| variant["enum"][0].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("image"), json!("text"), json!("audio")]
+        );
+    }
     assert_eq!(
         api["components"]["schemas"]["SuntitleExtensionSpec"]["properties"]["sourceType"]["enum"],
         json!(["local", "git", "oci", "http"])
@@ -319,11 +353,19 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     let binding = &adapter_schema["arguments"]["items"];
     assert_eq!(
         binding["properties"]["mode"]["enum"],
-        json!(["value", "switch"])
+        json!(["value", "flag"])
     );
     assert_eq!(binding["properties"]["mode"]["default"], "value");
-    assert_eq!(binding["required"], json!(["source"]));
-    let adapter = json!({"nodeRole":"transcriber", "execution":{"runtime":"executable", "command":"./run"},
+    assert!(binding.get("required").is_none());
+    assert_eq!(
+        binding["oneOf"],
+        json!([{"required":["source"]},{"required":["url"]}])
+    );
+    assert_eq!(
+        binding["properties"]["url"]["properties"]["base"]["enum"],
+        json!(["runtime.websocketUrl"])
+    );
+    let adapter = json!({"inputType":"text","outputType":"text", "execution":{"runtime":"executable", "command":"./run"},
         "settings":{"nested":{"default":{"values":[null, false, 0, ""]}}},
         "arguments":[{"flag":"--server", "source":"runtime.websocketUrl"}]});
     for source_type in ["local", "git", "oci", "http"] {

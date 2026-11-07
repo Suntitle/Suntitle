@@ -3,7 +3,6 @@ displayName: python-module probe
 sourceType: local
 source: "${SOURCE_ROOT}/python-module"
 adapter:
-  nodeRole: transcriber
   execution:
     runtime: pythonModule
     command: probe_module

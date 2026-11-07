@@ -16,14 +16,6 @@ COPY kubernetes ./kubernetes
 COPY specs ./specs
 COPY docker/ws-proxy/check-static.sh /usr/local/bin/check-static
 
-FROM sources AS control-api-build
-RUN cargo build --locked --release -p control-api --bin control_api \
-    && sh /usr/local/bin/check-static target/release/control_api
-
-FROM sources AS ws-proxy-build
-RUN cargo build --locked --release -p ws-proxy --bin ws-proxy \
-    && sh /usr/local/bin/check-static target/release/ws-proxy
-
 FROM sources AS release
 RUN cargo build --locked --release -p control-api -p ws-proxy --bin control_api --bin ws-proxy \
     && sh /usr/local/bin/check-static target/release/control_api target/release/ws-proxy
@@ -36,9 +28,9 @@ FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates curl bash git
 
 FROM runtime AS control-api
-COPY --from=control-api-build /build/target/release/control_api /usr/local/bin/control_api
+COPY --from=release /build/target/release/control_api /usr/local/bin/control_api
 CMD ["control_api"]
 
 FROM runtime AS ws-proxy
-COPY --from=ws-proxy-build /build/target/release/ws-proxy /usr/local/bin/ws-proxy
+COPY --from=release /build/target/release/ws-proxy /usr/local/bin/ws-proxy
 CMD ["ws-proxy"]

@@ -1,9 +1,9 @@
 //! Desired writes persist before runtime reconciliation. Reads pass through resource status.
 
 use super::errors::{ApiError, ApiResult, ErrorEnvelope};
+use super::nodes::Node;
 use crate::store::{NodeCreate, ResourceList, ResourceStore};
 use actix_web::{HttpResponse, get, post, web};
-use super::nodes::Node;
 use suntitle_core::kubernetes::resources::{HostStatus, SuntitleHost, SuntitleHostSpec};
 
 /// Public host identity, flat desired configuration, and unchanged resource status.

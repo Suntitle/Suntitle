@@ -8,11 +8,11 @@ Backing services stay private. Diamant runs on client hosts.
 
 Requires Pulumi, uv, an AWS login, and a default public subnet in `eu-north-1`.
 For a fresh deployment using local Pulumi state, choose your own stack name
-(`alice-dev` in this example):
+(`example-dev` in this example):
 
 ```bash
 pulumi login --local
-just infra-init alice-dev
+just infra-init example-dev
 just infra-region eu-north-1
 # Export temporary credentials if using aws login.
 eval "$(aws configure export-credentials --profile default --format env)"
@@ -20,9 +20,9 @@ just infra-up
 just infra-ip
 ```
 
-For an existing stack, use `just infra-select alice-dev` instead of initializing it.
-Replace `alice-dev` with your stack name. `dev` is only the recipes' default.
-Pulumi stores this stack's configuration in `Pulumi.alice-dev.yaml`, including
+For an existing stack, use `just infra-select example-dev` instead of initializing it.
+Replace `example-dev` with your stack name. `dev` is only the recipes' default.
+Pulumi stores this stack's configuration in `Pulumi.example-dev.yaml`, including
 its encryption salt. Keep the file and your passphrase backed up; personal stack
 files are ignored by Git. Local deployment state is stored separately under
 `~/.pulumi` and also needs a backup.
@@ -39,7 +39,15 @@ bootstrap. EC2 pulls images and runs Compose without compiling or building image
 The selected images MUST be readable by the instance. Registry authentication is
 not configured here; public GHCR packages permit anonymous pulls.
 
-For custom image sources, set any of:
+Set `IMAGE_REPO` to your image repository, such as
+`ghcr.io/your-namespace/suntitle`, then build and deploy:
+
+```bash
+just images-push
+just infra-up
+```
+
+For other custom image sources, set any of:
 
 ```bash
 pulumi -C infrastructure config set infrastructure:apiImage registry.example.com/suntitle/api:v2
@@ -59,7 +67,7 @@ Remove an override with `pulumi -C infrastructure config rm infrastructure:apiIm
 (or `proxyImage` / `uiImage`) to restore its default. The former `releaseVersion`
 and `releaseRepository` settings are no longer used.
 
-Image pull failures stop instance provisioning. Mutable tags, including `latest`,
+Image pull failures stop instance provisioning. Mutable tags, including `dev` and `latest`,
 are pulled on provisioning; changing the remote tag alone does not change Pulumi
 inputs or trigger an update when running `just infra-up`. Use a new image tag or
 digest to trigger an instance replacement.
@@ -68,6 +76,12 @@ The checkout's Compose configuration and certificate setup are uploaded to priva
 S3. Rust/UI source, binary installers, local `.env` files, certificates, and
 extension payloads are excluded. The instance creates its own credentials.
 Startup continues after Pulumi finishes; inspect cloud-init for readiness.
+
+On first startup, provisioning creates the `admin` account with a random password.
+The password is retained on the persistent data volume across instance replacements.
+Retrieve it through `just infra-ssh` with `sudo cat /srv/suntitle/admin-password`.
+The API uses these credentials only when initializing an empty administrator table;
+later startups retain the account stored in PostgreSQL.
 
 ## Connect and inspect
 

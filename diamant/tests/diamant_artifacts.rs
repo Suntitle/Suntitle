@@ -17,7 +17,7 @@ use warp::Filter;
 
 /// Resolved configuration sent with the artifact, independent of adapter.yaml.
 fn adapter() -> ResolvedAdapter {
-    serde_json::from_value(json!({"nodeRole":"transcriber","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap()
+    serde_json::from_value(json!({"inputType":"text","outputType":"text","execution":{"runtime":"executable","command":"./run"},"settings":{"language":"cs"},"arguments":[{"flag":"--language","source":"settings.language"}]})).unwrap()
 }
 
 fn identity() -> ApplyIdentity {
@@ -36,7 +36,7 @@ fn identity() -> ApplyIdentity {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 async fn registry(corrupt: bool, delay: Duration) -> (String, tokio::task::JoinHandle<()>) {

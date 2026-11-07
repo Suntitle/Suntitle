@@ -112,7 +112,8 @@ impl State {
         Ok(())
     }
 
-    /// Create or reuse a host and replace its connection.
+    /// Create or reuse a host using a lowercase DNS name and replace its connection.
+    /// The display name MUST retain the agent's original hostname.
     pub(super) async fn register(
         &mut self,
         name: String,
@@ -123,13 +124,19 @@ impl State {
         if name.is_empty() || version.trim().is_empty() {
             return Err("host name and agent version are required".into());
         }
-        let mut host = match self.hosts_api.get_opt(&name).await? {
+        let resource_name = name.to_ascii_lowercase();
+        let mut host = match self.hosts_api.get_opt(&resource_name).await? {
             Some(host) => host,
             None => {
                 self.hosts_api
                     .create(
                         &PostParams::default(),
-                        &SuntitleHost::new(&name, SuntitleHostSpec { display_name: name.clone() }),
+                        &SuntitleHost::new(
+                            &resource_name,
+                            SuntitleHostSpec {
+                                display_name: name.clone(),
+                            },
+                        ),
                     )
                     .await?
             }

@@ -15,9 +15,17 @@ payload into a separate `custom-node-sources` repository. The `oci-*-extension.y
 requests reference those source tags. HUB mirrors them into its managed repository;
 the test checks that repository changes while the manifest digest is preserved.
 No external registry, ORAS, or container-image CLI is required. The seventh case
-omits `adapter.nodeRole` using the Python-script payload and verifies that it defaults
-to `custom`. Every case verifies that `runtime.websocketUrl` supplies the configured
-data-plane base URL regardless of role.
+uses the Python-script payload with no `inputType` and `image` output. The OCI module
+case declares `image` input and `text` output. Native payloads have `audio` input
+and no declared output. The local module omits both types; other
+Python payloads use `text`. Every case checks that registration and the resolved
+adapter preserve media types without `nodeRole`, including omitted declarations.
+`runtime.websocketUrl` supplies the configured base URL regardless of media types.
+The `custom` case binds `--server` with `url.base: runtime.websocketUrl` and
+`url.path: settings.endpoint`. The endpoint defaults to `transcribe`; process
+evidence MUST contain `ws://127.0.0.1:3030/transcribe` without a node override.
+The OCI script case overrides that endpoint to `translate`; its process MUST
+receive `ws://127.0.0.1:3030/translate`. No string interpolation occurs.
 
 Generate certificates with `just generate-certs` first. The test requires Docker
 Compose with `!reset`/`!override` support, Rust, Unix, `/usr/bin/python3`, and free
@@ -36,8 +44,9 @@ Host and node harnesses use the same shared process/API helpers and also require
 `just e2e-build` before direct execution.
 
 The `*-extension.yaml` and `*-node.yaml` files are the complete API request bodies.
-`scenarios.yaml` enumerates cases; `expectations.yaml` contains expected process
-arguments. The harness replaces `${SOURCE_ROOT}`, `${HOST_NAME}`, and `${RUN_ROOT}`
+`scenarios.yaml` enumerates cases and optional expectation files. `expectations.yaml`
+contains shared process arguments; `custom-expectations.yaml` checks the complete URL.
+The harness replaces `${SOURCE_ROOT}`, `${HOST_NAME}`, and `${RUN_ROOT}`
 in string values. `${REGISTRY}` selects the registry authority; `${RUNTIME}`
 identifies the expected report filename. No shell expansion occurs. The message
 intentionally contains spaces and shell syntax.

@@ -3,7 +3,8 @@ displayName: OCI python-module probe
 sourceType: oci
 source: "${REGISTRY}/custom-node-sources/${HOST_NAME}/python-module:fixture"
 adapter:
-  nodeRole: transcriber
+  inputType: image
+  outputType: text
   execution:
     runtime: pythonModule
     command: probe_module

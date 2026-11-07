@@ -356,7 +356,9 @@ async fn installation_resolves_host_name_with_direct_resource_lookup() {
         if status == 201 {
             assert_eq!(response["displayName"], "Screen");
             assert_eq!(response["hostRef"]["name"], "target-host");
-            for field in ["apiVersion", "kind", "metadata", "spec"] { assert!(response.get(field).is_none()); }
+            for field in ["apiVersion", "kind", "metadata", "spec"] {
+                assert!(response.get(field).is_none());
+            }
         }
     }
     assert_eq!(lists.load(Ordering::SeqCst), 4);
@@ -369,8 +371,14 @@ async fn installation_resolves_host_name_with_direct_resource_lookup() {
 async fn host_and_node_responses_are_flat_and_preserve_status() {
     use std::sync::{Arc, Mutex};
     use warp::Filter;
-    let hosts: Value = serde_json::from_str(include_str!("../../mockserver/fixtures/kubernetes/hosts.json")).unwrap();
-    let mut nodes: Value = serde_json::from_str(include_str!("../../mockserver/fixtures/kubernetes/nodes.json")).unwrap();
+    let hosts: Value = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/hosts.json"
+    ))
+    .unwrap();
+    let mut nodes: Value = serde_json::from_str(include_str!(
+        "../../mockserver/fixtures/kubernetes/nodes.json"
+    ))
+    .unwrap();
     let status = json!({"phase":"Running","observedGeneration":1});
     nodes["items"][0]["status"] = status.clone();
     let state = Arc::new(Mutex::new(nodes));
@@ -401,7 +409,13 @@ async fn host_and_node_responses_are_flat_and_preserve_status() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
-    let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "suntitle");
+    let store = ResourceStore::new(
+        Client::try_from(kube::Config::new(
+            format!("http://{address}").parse().unwrap(),
+        ))
+        .unwrap(),
+        "suntitle",
+    );
     let hosts = expect(&store, Method::GET, "/api/v1/hosts", None, 200).await;
     assert_eq!(hosts["items"][0]["name"], "studio-host");
     assert!(hosts["items"][0]["displayName"].is_string());
@@ -420,7 +434,9 @@ async fn host_and_node_responses_are_flat_and_preserve_status() {
         assert_eq!(response["name"], name);
     }
     for response in [&hosts["items"][0], &updated, &fetched, &restarted] {
-        for field in ["apiVersion", "kind", "metadata", "spec", "uid"] { assert!(response.get(field).is_none()); }
+        for field in ["apiVersion", "kind", "metadata", "spec", "uid"] {
+            assert!(response.get(field).is_none());
+        }
     }
     server.abort();
 }
@@ -510,7 +526,10 @@ async fn extension_requests_persist_resources_and_refresh_only_the_request_token
         Some("/api/v1/extensions/custom-transcriber")
     );
     for field in ["apiVersion", "kind", "metadata", "spec", "generation"] {
-        assert!(created.get(field).is_none(), "unexpected Kubernetes field: {field}");
+        assert!(
+            created.get(field).is_none(),
+            "unexpected Kubernetes field: {field}"
+        );
     }
     assert_eq!(created["name"], body["name"]);
     for (field, value) in body.as_object().unwrap() {
@@ -535,7 +554,10 @@ async fn extension_requests_persist_resources_and_refresh_only_the_request_token
         )
         .await;
         assert!(refreshed.get("generation").is_none());
-        assert_eq!(stored.lock().unwrap().as_ref().unwrap()["metadata"]["generation"], generation);
+        assert_eq!(
+            stored.lock().unwrap().as_ref().unwrap()["metadata"]["generation"],
+            generation
+        );
         assert_eq!(refreshed["name"], created["name"]);
         assert_eq!(refreshed["status"], publication);
         for (field, value) in body.as_object().unwrap() {
@@ -555,10 +577,7 @@ async fn extension_requests_persist_resources_and_refresh_only_the_request_token
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(
         location.unwrap(),
-        format!(
-            "/api/v1/extensions/{}",
-            resource["name"].as_str().unwrap()
-        )
+        format!("/api/v1/extensions/{}", resource["name"].as_str().unwrap())
     );
     server.abort();
 }
@@ -616,8 +635,26 @@ async fn extension_api_preserves_kubernetes_errors_and_rejects_malformed_request
             json!({"source":"legacy"}),
             json!({"spec":{"displayName":"Missing adapter","sourceType":"git","source":"example"}}),
             json!({"name":"legacy-id", "spec":body}),
-            { let mut value = body.clone(); value["apiVersion"] = json!("control.suntitle.io/v1alpha1"); value },
-            { let mut value = body.clone(); value["metadata"] = json!({"name":"legacy-id"}); value },
+            {
+                let mut value = body.clone();
+                value["apiVersion"] = json!("control.suntitle.io/v1alpha1");
+                value
+            },
+            {
+                let mut value = body.clone();
+                value["metadata"] = json!({"name":"legacy-id"});
+                value
+            },
+            {
+                let mut value = body.clone();
+                value["adapter"]["inputType"] = Value::Null;
+                value
+            },
+            {
+                let mut value = body.clone();
+                value["adapter"]["outputType"] = Value::Null;
+                value
+            },
         ] {
             expect(
                 &store,
@@ -692,32 +729,70 @@ async fn readiness_requires_extension_crd_and_readable_collection() {
 /// Source registration MUST read manifest configuration and persist only the resolved resource.
 #[actix_web::test]
 async fn source_registration_resolves_manifest_before_kubernetes_write() {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use warp::Filter;
 
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
-    let route = warp::post().and(warp::body::json()).map(move |body: Value| {
-        count.fetch_add(1, Ordering::SeqCst);
-        warp::reply::with_status(warp::reply::json(&body), warp::http::StatusCode::CREATED)
-    });
+    let route = warp::post()
+        .and(warp::body::json())
+        .map(move |body: Value| {
+            count.fetch_add(1, Ordering::SeqCst);
+            warp::reply::with_status(warp::reply::json(&body), warp::http::StatusCode::CREATED)
+        });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
-    let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "test");
+    let store = ResourceStore::new(
+        Client::try_from(kube::Config::new(
+            format!("http://{address}").parse().unwrap(),
+        ))
+        .unwrap(),
+        "test",
+    );
     let directory = tempfile::tempdir().unwrap();
-    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"displayName":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"nodeRole":"translator","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
-    std::fs::write(directory.path().join("manifest.yaml"), serde_yaml::to_string(&manifest).unwrap()).unwrap();
+    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"displayName":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"inputType":"text","outputType":"text","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
+    std::fs::write(
+        directory.path().join("manifest.yaml"),
+        serde_yaml::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
     let source = directory.path().to_str().unwrap();
-    let (status, created, location) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":source}))).await;
+    let (status, created, location) = request(
+        &store,
+        Method::POST,
+        "/api/v1/extensions",
+        Some(json!({"sourceType":"local","source":source})),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     assert_eq!(location.as_deref(), Some("/api/v1/extensions/hello"));
     assert_eq!(created["name"], "hello");
     assert_eq!(created["source"], source);
     assert_eq!(created["sourceType"], "local");
-    assert_eq!(created["adapter"], json!({"nodeRole":"translator","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}));
-    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":directory.path().join("missing")})), 422).await;
-    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"zip","source":source})), 400).await;
+    assert_eq!(
+        created["adapter"],
+        json!({"inputType":"text","outputType":"text","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]})
+    );
+    expect(
+        &store,
+        Method::POST,
+        "/api/v1/extensions",
+        Some(json!({"sourceType":"local","source":directory.path().join("missing")})),
+        422,
+    )
+    .await;
+    expect(
+        &store,
+        Method::POST,
+        "/api/v1/extensions",
+        Some(json!({"sourceType":"zip","source":source})),
+        400,
+    )
+    .await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     server.abort();
 }

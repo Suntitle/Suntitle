@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { NodeActionsMenu } from "@/components/node-actions-menu"
 import { NodeSettingsDialog } from "@/components/node-settings-dialog"
-import { nodeTypeIcons } from "@/lib/node-icons"
+import { nodeIcon } from "@/lib/node-icons"
 import { cn } from "@/lib/utils"
 import { useStores } from "@/stores"
 import type { DataType, Node, NodeStatus, NodeRole } from "@/stores/models"
@@ -183,9 +183,9 @@ function getPipelineLabel(index: number) {
   return index < 26 ? `Pipeline ${String.fromCharCode(65 + index)}` : `Pipeline ${index + 1}`
 }
 
-/** Display extension identity while retaining its pipeline role for icons and connections. */
+/** Display extension identity and its icon independently of pipeline connections. */
 export function NodeCard({ node, position, onSelect }: { node: Node; position: { x: number; y: number }; onSelect: (node: Node) => void }) {
-  const Icon = nodeTypeIcons[node.type]
+  const Icon = nodeIcon(node)
   const state = node.enabled ? node.status : "disabled"
 
   return (

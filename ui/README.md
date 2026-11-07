@@ -31,7 +31,7 @@ file and change the target:
 ```bash
 cd ui
 cp .env.example .env.local
-# Edit SUNTITLE_API_PROXY_TARGET, then restart npm run dev.
+# Edit API_PROXY_TARGET, then restart npm run dev.
 ```
 
 ## Cypress integration tests

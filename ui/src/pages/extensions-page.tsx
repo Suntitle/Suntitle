@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { nodeTypeIcons } from "@/lib/node-icons"
+import { extensionIcon } from "@/lib/node-icons"
 import { useStores } from "@/stores"
 import type { Extension, ExtensionSourceType } from "@/stores/models"
 
@@ -101,7 +101,7 @@ export const ExtensionsPage = observer(function ExtensionsPage() {
                     <TableRow className="hover:bg-transparent"><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">No extensions are registered yet.</TableCell></TableRow>
                   )}
                   {extensionsStore.items.map((extension) => {
-                    const Icon = nodeTypeIcons[extension.adapter.nodeRole]
+                    const Icon = extensionIcon(extension.adapter)
                     return (
                       <TableRow key={extension.name} className="hover:bg-violet-50/35">
                         <TableCell className="pl-5 sm:pl-6">
@@ -109,7 +109,7 @@ export const ExtensionsPage = observer(function ExtensionsPage() {
                             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-100 text-violet-700"><Icon className="size-4" aria-hidden="true" /></span>
                             <span className="min-w-0">
                               <span className="block font-medium">{extension.displayName}</span>
-                              <span className="block max-w-sm truncate text-xs text-muted-foreground">{extension.adapter.nodeRole}</span>
+                              <span className="block max-w-sm truncate text-xs text-muted-foreground">{[extension.adapter.inputType, extension.adapter.outputType].filter(Boolean).join(" → ")}</span>
                             </span>
                           </span>
                         </TableCell>

@@ -64,7 +64,7 @@ class InfrastructureTest(unittest.TestCase):
                          'proxy': 'example/proxy:v2', 'ui': 'example/ui:v2'})
         script = DEPLOYMENT.render_user_data(**arguments)
         subprocess.run(['bash', '-n'], input=script, text=True, check=True)
-        self.assertIn('export SUNTITLE_API_IMAGE=example/api:v2', script)
+        self.assertIn('export API_IMAGE=example/api:v2', script)
         self.assertIn('docker compose --env-file .env.local pull', script)
         self.assertIn('up --no-build', script)
         self.assertNotIn('docker compose --env-file .env.local build', script)
@@ -96,6 +96,32 @@ class InfrastructureTest(unittest.TestCase):
                     if exit_code == 0:
                         self.assertIn('up --no-build', commands[1])
 
+    def test_bootstrap_preserves_admin_credentials(self):
+        """Fresh deployments MUST receive private admin credentials retained on reruns."""
+        bootstrap = (ROOT / 'infrastructure/bootstrap.sh').read_text()
+        script = bootstrap[bootstrap.index('if [[ ! -s /srv/suntitle/postgres-password'):]
+        script = script[:script.index('\nbash infrastructure/generate-pki.sh')]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = 'set -euo pipefail\numask 077\n' + script.replace('/srv/suntitle', str(root))
+            environment = os.environ | {'REGISTRY_HOST': 'registry.example.com',
+                                        'API_IMAGE': 'example/api:v1',
+                                        'PROXY_IMAGE': 'example/proxy:v1',
+                                        'UI_IMAGE': 'example/ui:v1'}
+            previous = None
+            for _ in range(2):
+                subprocess.run(['bash', '-c', script], cwd=root, env=environment, check=True)
+                dotenv = dict(line.split('=', 1) for line in (root / '.env.local').read_text().splitlines())
+                password = (root / 'admin-password').read_text().strip()
+                self.assertEqual(dotenv['ADMIN_USERNAME'], 'admin')
+                self.assertRegex(password, r'^[0-9a-f]{64}$')
+                self.assertEqual(dotenv['ADMIN_PASSWORD'], password)
+                self.assertEqual((root / 'admin-password').stat().st_mode & 0o777, 0o600)
+                self.assertEqual((root / '.env.local').stat().st_mode & 0o777, 0o600)
+                if previous is not None:
+                    self.assertEqual(dotenv, previous)
+                previous = dotenv
+
     def test_image_overrides_and_latest_defaults(self):
         """Default to GHCR latest without network access and preserve image overrides."""
         defaults = {'api': 'ghcr.io/suntitle/suntitle/control-api:latest',
@@ -115,17 +141,34 @@ class InfrastructureTest(unittest.TestCase):
                 with self.subTest(component=component), self.assertRaises(ValueError):
                     DEPLOYMENT.resolve_images(**{f'{component}_image': 'image\nINJECTED=true'})
 
+    def test_image_repo_defaults_and_component_precedence(self):
+        """Repository images default to dev while explicit component references win."""
+        repo = 'ghcr.io/example/suntitle'
+        expected = {'api': f'{repo}/control-api:dev',
+                    'proxy': f'{repo}/ws-proxy:dev', 'ui': f'{repo}/ui:dev'}
+        self.assertEqual(DEPLOYMENT.resolve_images(image_repo=repo + '/'), expected)
+        self.assertEqual(DEPLOYMENT.resolve_images(image_repo=repo, image_tag='dev-002'),
+                         {key: value.replace(':dev', ':dev-002') for key, value in expected.items()})
+        self.assertEqual(DEPLOYMENT.resolve_images(image_repo=repo, api_image='custom/api:v2'),
+                         expected | {'api': 'custom/api:v2'})
+        for invalid in ['', '/', 'https://registry/image', 'image\nINJECTED=true']:
+            with self.subTest(repo=invalid), self.assertRaises(ValueError):
+                DEPLOYMENT.resolve_images(image_repo=invalid)
+        for invalid in ['', 'tag with spaces', 'tag/subpath', '-invalid']:
+            with self.subTest(tag=invalid), self.assertRaises(ValueError):
+                DEPLOYMENT.resolve_images(image_repo=repo, image_tag=invalid)
+
     @unittest.skipUnless(shutil.which('docker'), 'Docker Compose is required')
     def test_compose_release_overlay_uses_runtime_image(self):
         """Resolve deployment Compose without inheriting the Rust source Dockerfile."""
         environment = {key: value for key, value in os.environ.items()
-                       if key not in {'COMPOSE_FILE', 'SUNTITLE_API_IMAGE', 'SUNTITLE_PROXY_IMAGE', 'SUNTITLE_UI_IMAGE'}}
+                       if key not in {'COMPOSE_FILE', 'API_IMAGE', 'PROXY_IMAGE', 'UI_IMAGE'}}
         with tempfile.TemporaryDirectory() as temporary:
             dotenv = Path(temporary) / '.env.local'
             dotenv.write_text(f'COMPOSE_FILE={ROOT}/compose.yaml:{ROOT}/compose.release.yaml\n'
-                              'SUNTITLE_API_IMAGE=custom/api:v1\n'
-                              'SUNTITLE_PROXY_IMAGE=custom/proxy:v2\n'
-                              'SUNTITLE_UI_IMAGE=custom/ui:v3\n')
+                              'API_IMAGE=custom/api:v1\n'
+                              'PROXY_IMAGE=custom/proxy:v2\n'
+                              'UI_IMAGE=custom/ui:v3\n')
             output = subprocess.check_output([
                 'docker', 'compose', '--env-file', str(dotenv), 'config', '--format', 'json',
             ], cwd=ROOT, env=environment, text=True)

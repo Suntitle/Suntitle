@@ -58,9 +58,9 @@ def render_user_data(bucket: str, key: str, region: str, volume_id: str,
         'SOURCE_BUCKET': bucket, 'SOURCE_KEY': key, 'AWS_DEFAULT_REGION': region,
         'DATA_VOLUME_ID': volume_id, 'REGISTRY_HOST': registry_host,
         'COMPOSE_VERSION': compose_version,
-        'SUNTITLE_API_IMAGE': images['api'],
-        'SUNTITLE_PROXY_IMAGE': images['proxy'],
-        'SUNTITLE_UI_IMAGE': images['ui'],
+        'API_IMAGE': images['api'],
+        'PROXY_IMAGE': images['proxy'],
+        'UI_IMAGE': images['ui'],
     }
     assignments = '\n'.join(f'export {name}={shlex.quote(value)}' for name, value in values.items())
     script = Path(__file__).with_name('bootstrap.sh').read_text()
@@ -74,14 +74,24 @@ def validate_image(image: str) -> None:
 
 
 def resolve_images(api_image: str | None = None, proxy_image: str | None = None,
-                   ui_image: str | None = None) -> dict[str, str]:
-    """Select GHCR latest images with validated per-component overrides.
+                   ui_image: str | None = None, image_repo: str | None = None,
+                   image_tag: str = 'dev') -> dict[str, str]:
+    """Select component overrides, then repository images, then GHCR latest defaults.
 
+    A custom repository uses image_tag, which defaults to dev. Empty repositories and tags
+    MUST be rejected. A trailing repository slash is ignored.
     Selection MUST complete before AWS resources exist and requires no network lookup.
     """
+    if image_repo is not None:
+        image_repo = image_repo.rstrip('/')
+        if not image_repo or not re.fullmatch(r'[\w][\w.-]{0,127}', image_tag, flags=re.ASCII):
+            raise ValueError('A custom image repository MUST be nonempty and its tag MUST be a valid Docker tag.')
+        validate_image(image_repo)
     overrides = {'api': api_image, 'proxy': proxy_image, 'ui': ui_image}
     components = {'api': 'control-api', 'proxy': 'ws-proxy', 'ui': 'ui'}
-    images = {name: image if image is not None else f'ghcr.io/suntitle/suntitle/{components[name]}:latest'
+    repo = image_repo if image_repo is not None else 'ghcr.io/suntitle/suntitle'
+    tag = image_tag if image_repo is not None else 'latest'
+    images = {name: image if image is not None else f'{repo}/{components[name]}:{tag}'
               for name, image in overrides.items()}
     for image in images.values():
         validate_image(image)

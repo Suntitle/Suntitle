@@ -33,6 +33,7 @@ tokio-tungstenite.workspace = true
 uuid.workspace = true
 url.workspace = true
 sha2.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 warp.workspace = true

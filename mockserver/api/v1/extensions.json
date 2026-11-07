@@ -8,7 +8,8 @@
           "command": "./bin/extension",
           "runtime": "executable"
         },
-        "nodeRole": "display"
+        "inputType": "text",
+        "outputType": "text"
       },
       "status": {
         "observedGeneration": 1,
@@ -35,7 +36,8 @@
           "command": "./bin/extension",
           "runtime": "executable"
         },
-        "nodeRole": "display"
+        "inputType": "text",
+        "outputType": "text"
       },
       "status": {
         "observedGeneration": 1,

@@ -46,10 +46,7 @@ pub async fn list_nodes(store: web::Data<ResourceStore>) -> ApiResult<ResourceLi
     params(("name" = String, Path)),
     responses((status = 200, body = Node), (status = 404, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)))]
 #[get("/nodes/{name}")]
-pub async fn get_node(
-    store: web::Data<ResourceStore>,
-    name: web::Path<String>,
-) -> ApiResult<Node> {
+pub async fn get_node(store: web::Data<ResourceStore>, name: web::Path<String>) -> ApiResult<Node> {
     Ok(web::Json(store.node(&name).await?.into()))
 }
 
@@ -64,7 +61,9 @@ pub async fn update_node(
     name: web::Path<String>,
     body: web::Json<NodeUpdate>,
 ) -> ApiResult<Node> {
-    Ok(web::Json(store.update(&name, body.into_inner()).await?.into()))
+    Ok(web::Json(
+        store.update(&name, body.into_inner()).await?.into(),
+    ))
 }
 
 /// Request a restart and return the resource status unchanged.

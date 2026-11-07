@@ -7,19 +7,19 @@ use utoipa_actix_web::AppExt;
 
 #[derive(Parser)]
 #[command(about = "Suntitle control API and Kubernetes resource bootstrap")]
+/// Control API credentials, namespace, and optional bootstrap operation.
 struct Args {
+    /// Bootstrap operation; absent when running the API server.
     #[command(subcommand)]
     command: Option<Command>,
-    #[arg(long, env = "SUNTITLE_API_KUBECONFIG")]
+    /// Kubernetes credentials required when running the API server.
+    #[arg(long, env = "API_KUBECONFIG")]
     kubeconfig: Option<PathBuf>,
-    #[arg(
-        long,
-        default_value = "suntitle",
-        env = "SUNTITLE_KUBERNETES_NAMESPACE"
-    )]
+    /// Namespace containing the managed resources.
+    #[arg(long, default_value = "suntitle", env = "KUBERNETES_NAMESPACE")]
     namespace: String,
     /// Optionally install CRDs before starting the API.
-    #[arg(long, env = "SUNTITLE_BOOTSTRAP_KUBECONFIG")]
+    #[arg(long, env = "BOOTSTRAP_KUBECONFIG")]
     bootstrap_kubeconfig: Option<PathBuf>,
 }
 
@@ -29,13 +29,11 @@ enum Command {
     GenerateCrds,
     /// Apply namespace, CRDs and API/proxy RBAC; wait for established CRDs.
     BootstrapKubernetes {
-        #[arg(long, env = "SUNTITLE_BOOTSTRAP_KUBECONFIG")]
+        /// Kubernetes credentials authorized to create cluster resources.
+        #[arg(long, env = "BOOTSTRAP_KUBECONFIG")]
         kubeconfig: PathBuf,
-        #[arg(
-            long,
-            default_value = "suntitle",
-            env = "SUNTITLE_KUBERNETES_NAMESPACE"
-        )]
+        /// Namespace receiving the API and proxy access bindings.
+        #[arg(long, default_value = "suntitle", env = "KUBERNETES_NAMESPACE")]
         namespace: String,
     },
 }
@@ -74,9 +72,9 @@ async fn main() -> std::io::Result<()> {
             .await
             .map_err(std::io::Error::other)?;
     }
-    let path = args.kubeconfig.ok_or_else(|| {
-        std::io::Error::other("--kubeconfig or SUNTITLE_API_KUBECONFIG is required")
-    })?;
+    let path = args
+        .kubeconfig
+        .ok_or_else(|| std::io::Error::other("--kubeconfig or API_KUBECONFIG is required"))?;
     let client = kubernetes::client_from_kubeconfig(&path)
         .await
         .map_err(std::io::Error::other)?;

@@ -20,40 +20,32 @@ use ws_proxy::controller::Controller;
 /// Proxy, Kubernetes, and extension publication configuration.
 struct Args {
     /// Explicit credentials for Kubernetes resource watches and status updates.
-    #[arg(long, env = "SUNTITLE_PROXY_KUBECONFIG")]
+    #[arg(long, env = "PROXY_KUBECONFIG")]
     kubeconfig: std::path::PathBuf,
     /// Namespace containing hosts, nodes, and extensions.
-    #[arg(
-        long,
-        env = "SUNTITLE_KUBERNETES_NAMESPACE",
-        default_value = "suntitle"
-    )]
+    #[arg(long, env = "KUBERNETES_NAMESPACE", default_value = "suntitle")]
     namespace: String,
     /// Reachable registry authority and repository prefix for extension artifacts.
     #[arg(
         long,
-        env = "SUNTITLE_EXTENSION_REGISTRY",
+        env = "EXTENSION_REGISTRY",
         default_value = "registry.localhost/suntitle/extensions"
     )]
     extension_registry: String,
     /// Explicit local-development permission to use HTTP for OCI transfers.
-    #[arg(long, env = "SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP")]
+    #[arg(long, env = "EXTENSION_REGISTRY_PLAIN_HTTP")]
     extension_registry_plain_http: bool,
     /// PEM certificate bundle trusted for registry TLS.
-    #[arg(long, env = "SUNTITLE_EXTENSION_REGISTRY_CA_FILE")]
+    #[arg(long, env = "EXTENSION_REGISTRY_CA_FILE")]
     extension_registry_ca_file: Option<std::path::PathBuf>,
     /// JSON map of registry authorities to username/password credentials.
-    #[arg(long, env = "SUNTITLE_EXTENSION_CREDENTIALS_FILE")]
+    #[arg(long, env = "EXTENSION_CREDENTIALS_FILE")]
     extension_credentials_file: Option<std::path::PathBuf>,
     /// Publication workers, independently bounded from controller concurrency.
-    #[arg(long, env = "SUNTITLE_EXTENSION_CONCURRENCY", default_value_t = 2)]
+    #[arg(long, env = "EXTENSION_CONCURRENCY", default_value_t = 2)]
     extension_concurrency: usize,
     /// Maximum duration of one preparation and publication attempt.
-    #[arg(
-        long,
-        env = "SUNTITLE_EXTENSION_TIMEOUT_SECONDS",
-        default_value_t = 600
-    )]
+    #[arg(long, env = "EXTENSION_TIMEOUT_SECONDS", default_value_t = 600)]
     extension_timeout_seconds: u64,
 }
 

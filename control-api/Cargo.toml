@@ -21,7 +21,6 @@ utoipa.workspace = true
 utoipa-actix-web.workspace = true
 uuid.workspace = true
 validator.workspace = true
-json-patch.workspace = true
 chrono.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
@@ -29,8 +28,9 @@ tempfile.workspace = true
 oci-artifact.workspace = true
 
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres"] }
-scrypt = { version = "0.11", features = ["simple"] }
+scrypt = { version = "0.12", features = ["phc", "getrandom"] }
 
 [dev-dependencies]
+json-patch.workspace = true
 futures-util.workspace = true
 warp.workspace = true

@@ -1,5 +1,7 @@
-/** Pipeline role, including general-purpose extension execution. */
+/** Built-in node types and the custom execution variant. */
 export type NodeRole = "audio_source" | "transcriber" | "translator" | "display" | "custom"
+/** Custom extension media type. MUST NOT prescribe runtime or endpoint behavior. */
+export type ExtensionDataType = "image" | "text" | "audio"
 export type NodeSettingInput = "text" | "number" | "select" | "checkbox"
 export type NodeSettingValueType = "string" | "integer" | "number" | "boolean"
 export type NodeSettingValue = string | number | boolean | null
@@ -30,8 +32,10 @@ export interface ExtensionSpec {
   refreshToken?: string | null
   /** Execution contract packaged with the extension. */
   adapter: {
-    /** Pipeline role of this adapter. */
-    nodeRole: NodeRole
+    /** Omit when the extension declares no input. */
+    inputType?: ExtensionDataType
+    /** Omit when the extension declares no output. */
+    outputType?: ExtensionDataType
     /** Executable or module configuration. */
     execution: {
       /** Executable path or module name. MUST be nonempty. */
@@ -41,15 +45,30 @@ export interface ExtensionSpec {
       /** Optional process working directory. */
       workingDirectory?: string | null
     }
-    /** Ordered command argument bindings. */
+    /** Ordered bindings. Each MUST declare either source or url. */
     arguments?: Array<{
+      /** Omit for positional arguments; flag mode MUST have a flag. */
+      flag?: string | null
+    } & ({
       /** Runtime websocket URL or exact settings key. */
       source: string
-      /** Omit for positional arguments; switches MUST have a flag. */
-      flag?: string | null
-      /** Defaults to scalar value binding. */
-      mode?: "value" | "switch"
-    }>
+      /** Defaults to value. Flag mode emits only the flag when its boolean source is true. */
+      mode?: "value" | "flag"
+      /** URL composition is exclusive with source. */
+      url?: never
+    } | {
+      /** Compose Diamant's configured URL with a user-owned endpoint path. */
+      url: {
+        /** Base address supplied by the host installation. */
+        base: "runtime.websocketUrl"
+        /** Reference to settings.<key> containing the endpoint path. */
+        path: string
+      }
+      /** URLs are always scalar arguments. */
+      mode?: "value"
+      /** Direct source is exclusive with url. */
+      source?: never
+    })>
     /** Setting declarations; omitted defaults differ from explicit null. */
     settings?: Record<string, {
       /** Require a value when no default is declared. */
@@ -261,6 +280,10 @@ export interface DisplayNode extends NodeBase {
 export interface CustomNode extends NodeBase {
   /** No predefined pipeline endpoint. */
   type: "custom"
+  /** Input media type from the extension or observed adapter; absent before discovery. */
+  inputType?: ExtensionDataType
+  /** Output media type used for the icon; absent before discovery. */
+  outputType?: ExtensionDataType
   /** Values supplied to the referenced extension. */
   settings: Record<string, unknown>
 }
@@ -295,7 +318,7 @@ export type NodeUpdate =
 
 /** Edit custom instance values while retaining extension identity. */
 export interface CustomNodeUpdate extends NodeUpdateBase {
-  /** Pipeline role resolved from the extension. */
+  /** Custom execution variant, independent of its icon category. */
   type: NodeRole
   /** Resource name of the referenced extension. */
   extensionRef: string
@@ -364,8 +387,10 @@ export interface NodeResource extends NodeSpec {
     phase?: "Pending" | "Running" | "Disabled" | "Failed" | "Disconnected" | "Terminating"
     /** Observed custom execution contract; absent before preparation. */
     resolvedAdapter?: {
-      /** Pipeline role preserved independently of custom setting values. */
-      nodeRole: NodeRole
+      /** Absent when the extension declares no input. */
+      inputType?: ExtensionDataType
+      /** Absent when the extension declares no output. */
+      outputType?: ExtensionDataType
     }
   }
 }

@@ -2,8 +2,8 @@ use actix_web::{get, web};
 
 use super::errors::{ApiResult, Unauthorized};
 use super::models::{
-    NodeSettingDefinition, NodeSettingInput, NodeSettingOption, NodeSettingValue,
-    NodeSettingValueType, NodeRole, NodeTypeDefinition, NodeTypeDefinitionList,
+    NodeRole, NodeSettingDefinition, NodeSettingInput, NodeSettingOption, NodeSettingValue,
+    NodeSettingValueType, NodeTypeDefinition, NodeTypeDefinitionList,
 };
 
 fn setting(

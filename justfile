@@ -213,31 +213,59 @@ test-python python="python3":
     {{quote(python)}} -m unittest discover -s tests -v
 
 # Select an existing Pulumi stack.
-infra-select stack="dev":
-    pulumi -C infrastructure stack select "{{ stack }}"
+infra-select stack="dev": (aws-login "pulumi" "-C" "infrastructure" "stack" "select" stack)
+
+# Build and push the API, proxy, and UI images under a image repository and tag.
+[positional-arguments]
+images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default("IMAGE_TAG", "dev")) platform=(env_var_or_default("IMAGE_PLATFORM", "linux/amd64")):
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image_repo="${1%/}"
+    image_tag="$2"
+    if [[ -z "$image_repo" || -z "$image_tag" ]]; then
+        echo 'Set IMAGE_REPO or pass an image repository. The image tag MUST NOT be empty.' >&2
+        exit 1
+    fi
+    platform_args=()
+    if [[ -n "$3" ]]; then
+        platform_args=(--platform "$3")
+    fi
+    for component in control-api ws-proxy; do
+        docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
+            --file docker/ws-proxy/Dockerfile --target "$component" \
+            --tag "$image_repo/$component:$image_tag" --push .
+    done
+    docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
+        --file ui/Dockerfile --tag "$image_repo/ui:$image_tag" --push ui
 
 # Initialize a new Pulumi stack.
-infra-init stack="dev":
-    pulumi -C infrastructure stack init "{{ stack }}"
+infra-init stack="dev": (aws-login "pulumi" "-C" "infrastructure" "stack" "init" stack)
 
 # Preview the Pulumi deployment.
-infra-preview:
-    pulumi -C infrastructure preview
+infra-preview: (aws-login "pulumi" "-C" "infrastructure" "preview")
 
-# Deploy the Pulumi stack.
-infra-up:
-    pulumi -C infrastructure up
+# Load default AWS credentials and optionally run a command with them.
+[positional-arguments]
+aws-login *command:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    credentials="$(aws configure export-credentials --profile default --format env)"
+    eval "$credentials"
+    exec "$@"
+
+# Deploy the Pulumi stack with default AWS credentials.
+infra-up: (aws-login "pulumi" "-C" "infrastructure" "up")
 
 # Set the Pulumi stack's AWS region.
-infra-region region:
-    pulumi -C infrastructure config set aws:region "{{ region }}"
+infra-region region: (aws-login "pulumi" "-C" "infrastructure" "config" "set" "aws:region" region)
 
 # Print the deployed proxy's public IP.
-infra-ip:
-    pulumi -C infrastructure stack output publicIp
+infra-ip: (aws-login "pulumi" "-C" "infrastructure" "stack" "output" "publicIp")
 
 # Open an SSM shell on the selected stack's instance in its configured AWS region.
-infra-ssh:
+infra-ssh: (aws-login "just" "_infra-ssh")
+
+_infra-ssh:
     #!/usr/bin/env bash
     set -euo pipefail
     aws_region="$(pulumi -C infrastructure config get aws:region)"
@@ -245,8 +273,7 @@ infra-ssh:
     exec aws ssm start-session --region "$aws_region" --target "$instance_id"
 
 # Destroy the Pulumi stack's AWS resources.
-infra-destroy:
-    pulumi -C infrastructure destroy
+infra-destroy: (aws-login "pulumi" "-C" "infrastructure" "destroy")
 
 # Destroy the stack, including its persistent data volume.
 alias infra-down := infra-destroy
@@ -270,7 +297,7 @@ ui: _ui-dependencies kubernetes-up
     }
     trap cleanup EXIT INT TERM
 
-    (cd ui && exec env SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js)
+    (cd ui && exec env API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js)
 
 # Start the UI and mock API together. Ctrl+C stops both processes.
 ui-mock: _ui-dependencies
@@ -298,7 +325,7 @@ ui-dev: _ui-dependencies
 
 # Start only the UI development server, proxied to the control API.
 ui-backend: _ui-dependencies
-    SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 npm --prefix ui run dev
+    API_PROXY_TARGET=http://127.0.0.1:3031 npm --prefix ui run dev
 
 # Create the UI's local environment file without overwriting an existing one.
 ui-env:
