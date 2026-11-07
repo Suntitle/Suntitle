@@ -58,9 +58,9 @@ def render_user_data(bucket: str, key: str, region: str, volume_id: str,
         'SOURCE_BUCKET': bucket, 'SOURCE_KEY': key, 'AWS_DEFAULT_REGION': region,
         'DATA_VOLUME_ID': volume_id, 'REGISTRY_HOST': registry_host,
         'COMPOSE_VERSION': compose_version,
-        'SUNTITLE_API_IMAGE': images['api'],
-        'SUNTITLE_PROXY_IMAGE': images['proxy'],
-        'SUNTITLE_UI_IMAGE': images['ui'],
+        'API_IMAGE': images['api'],
+        'PROXY_IMAGE': images['proxy'],
+        'UI_IMAGE': images['ui'],
     }
     assignments = '\n'.join(f'export {name}={shlex.quote(value)}' for name, value in values.items())
     script = Path(__file__).with_name('bootstrap.sh').read_text()

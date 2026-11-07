@@ -54,17 +54,30 @@ impl ExtensionRegistration {
 
 /// Return a client-readable failure without exposing credentials or manifest contents.
 fn invalid(message: impl Into<String>) -> ApiError {
-    ApiError::problem(StatusCode::UNPROCESSABLE_ENTITY, "Invalid extension source", message)
+    ApiError::problem(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "Invalid extension source",
+        message,
+    )
 }
 
 /// Read one regular manifest with a hard byte limit.
 async fn read_file(path: &Path) -> Result<Vec<u8>, ApiError> {
-    if !tokio::fs::metadata(path).await.map_err(|_| invalid("Cannot inspect the extension manifest."))?.is_file() {
+    if !tokio::fs::metadata(path)
+        .await
+        .map_err(|_| invalid("Cannot inspect the extension manifest."))?
+        .is_file()
+    {
         return Err(invalid("The extension manifest MUST be a regular file."));
     }
-    let file = tokio::fs::File::open(path).await.map_err(|_| invalid("Cannot read the extension manifest. Check its path and permissions."))?;
+    let file = tokio::fs::File::open(path).await.map_err(|_| {
+        invalid("Cannot read the extension manifest. Check its path and permissions.")
+    })?;
     let mut bytes = Vec::new();
-    file.take(MANIFEST_LIMIT + 1).read_to_end(&mut bytes).await.map_err(|_| invalid("Cannot read the extension manifest."))?;
+    file.take(MANIFEST_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| invalid("Cannot read the extension manifest."))?;
     bounded(bytes)
 }
 
@@ -79,24 +92,38 @@ fn bounded(bytes: Vec<u8>) -> Result<Vec<u8>, ApiError> {
 /// Find a manifest in an absolute extension directory.
 async fn read_directory(directory: &Path) -> Result<Vec<u8>, ApiError> {
     if !directory.is_absolute() || !directory.is_dir() {
-        return Err(invalid("Local source MUST be an absolute directory accessible to the server."));
+        return Err(invalid(
+            "Local source MUST be an absolute directory accessible to the server.",
+        ));
     }
     for filename in MANIFEST_NAMES {
         let path = directory.join(filename);
         match tokio::fs::metadata(&path).await {
             Ok(_) => return read_file(&path).await,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => return Err(invalid("Cannot access the extension manifest. Check directory permissions.")),
+            Err(_) => {
+                return Err(invalid(
+                    "Cannot access the extension manifest. Check directory permissions.",
+                ));
+            }
         }
     }
-    Err(invalid("No manifest.yaml, manifest.yml, or manifest.json found in the extension directory."))
+    Err(invalid(
+        "No manifest.yaml, manifest.yml, or manifest.json found in the extension directory.",
+    ))
 }
 
 /// Require HTTP(S) without credentials for remote manifest discovery.
 fn http_url(source: &str) -> Result<reqwest::Url, ApiError> {
-    let url = reqwest::Url::parse(source).map_err(|_| invalid("Source requires an HTTP(S) URL."))?;
-    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
-        return Err(invalid("Source requires HTTP(S) without embedded credentials. SSH Git URLs are unsupported."));
+    let url =
+        reqwest::Url::parse(source).map_err(|_| invalid("Source requires an HTTP(S) URL."))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(invalid(
+            "Source requires HTTP(S) without embedded credentials. SSH Git URLs are unsupported.",
+        ));
     }
     Ok(url)
 }
@@ -105,61 +132,121 @@ fn http_url(source: &str) -> Result<reqwest::Url, ApiError> {
 async fn read_http(source: &str) -> Result<Vec<u8>, ApiError> {
     let url = http_url(source)?;
     if url.path().ends_with('/') {
-        return Err(invalid("HTTP source MUST point to the extension payload file, with a sibling manifest."));
+        return Err(invalid(
+            "HTTP source MUST point to the extension payload file, with a sibling manifest.",
+        ));
     }
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(20)).build().map_err(|_| invalid("Cannot initialize manifest transport."))?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|_| invalid("Cannot initialize manifest transport."))?;
     for filename in MANIFEST_NAMES {
-        let mut location = url.join(filename).map_err(|_| invalid("Invalid manifest URL."))?;
+        let mut location = url
+            .join(filename)
+            .map_err(|_| invalid("Invalid manifest URL."))?;
         location.set_query(url.query());
-        let mut response = client.get(location).send().await.map_err(|_| invalid("Cannot fetch the extension manifest. Check URL and connectivity."))?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND { continue; }
-        if !response.status().is_success() { return Err(invalid("The manifest server rejected the request.")); }
+        let mut response = client.get(location).send().await.map_err(|_| {
+            invalid("Cannot fetch the extension manifest. Check URL and connectivity.")
+        })?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !response.status().is_success() {
+            return Err(invalid("The manifest server rejected the request."));
+        }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| invalid("Manifest transfer failed."))? {
-            if bytes.len() + chunk.len() > MANIFEST_LIMIT as usize { return Err(invalid("Extension manifest exceeds 1 MiB.")); }
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| invalid("Manifest transfer failed."))?
+        {
+            if bytes.len() + chunk.len() > MANIFEST_LIMIT as usize {
+                return Err(invalid("Extension manifest exceeds 1 MiB."));
+            }
             bytes.extend_from_slice(&chunk);
         }
         return Ok(bytes);
     }
-    Err(invalid("No sibling manifest.yaml, manifest.yml, or manifest.json found at the HTTP source."))
+    Err(invalid(
+        "No sibling manifest.yaml, manifest.yml, or manifest.json found at the HTTP source.",
+    ))
 }
 
 /// Fetch the default Git revision without executing repository code or checking out files.
 async fn read_git(source: &str) -> Result<Vec<u8>, ApiError> {
     http_url(source)?;
-    let directory = tempfile::tempdir().map_err(|_| invalid("Cannot create manifest staging directory."))?;
+    let directory =
+        tempfile::tempdir().map_err(|_| invalid("Cannot create manifest staging directory."))?;
     let repository = directory.path().join("repository");
-    let status = git_command().args(["clone", "--bare", "--depth=1", "--", source]).arg(&repository)
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().await
+    let status = git_command()
+        .args(["clone", "--bare", "--depth=1", "--", source])
+        .arg(&repository)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
         .map_err(|_| invalid("Cannot run Git to read the extension manifest."))?;
-    if !status.success() { return Err(invalid("Cannot fetch Git source. Check repository access and URL.")); }
+    if !status.success() {
+        return Err(invalid(
+            "Cannot fetch Git source. Check repository access and URL.",
+        ));
+    }
     for filename in MANIFEST_NAMES {
         let object = format!("HEAD:{filename}");
-        let size = git_command().arg("--git-dir").arg(&repository).args(["cat-file", "-s", &object]).output().await.map_err(|_| invalid("Cannot inspect Git manifest."))?;
-        if !size.status.success() { continue; }
-        let length = String::from_utf8_lossy(&size.stdout).trim().parse::<u64>().map_err(|_| invalid("Invalid Git manifest size."))?;
-        if length > MANIFEST_LIMIT { return Err(invalid("Extension manifest exceeds 1 MiB.")); }
-        let output = git_command().arg("--git-dir").arg(&repository).args(["cat-file", "blob", &object]).output().await.map_err(|_| invalid("Cannot read Git manifest."))?;
-        if !output.status.success() { return Err(invalid("Git manifest MUST be a regular file.")); }
+        let size = git_command()
+            .arg("--git-dir")
+            .arg(&repository)
+            .args(["cat-file", "-s", &object])
+            .output()
+            .await
+            .map_err(|_| invalid("Cannot inspect Git manifest."))?;
+        if !size.status.success() {
+            continue;
+        }
+        let length = String::from_utf8_lossy(&size.stdout)
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| invalid("Invalid Git manifest size."))?;
+        if length > MANIFEST_LIMIT {
+            return Err(invalid("Extension manifest exceeds 1 MiB."));
+        }
+        let output = git_command()
+            .arg("--git-dir")
+            .arg(&repository)
+            .args(["cat-file", "blob", &object])
+            .output()
+            .await
+            .map_err(|_| invalid("Cannot read Git manifest."))?;
+        if !output.status.success() {
+            return Err(invalid("Git manifest MUST be a regular file."));
+        }
         return bounded(output.stdout);
     }
-    Err(invalid("No root manifest.yaml, manifest.yml, or manifest.json found in the Git source."))
+    Err(invalid(
+        "No root manifest.yaml, manifest.yml, or manifest.json found in the Git source.",
+    ))
 }
 
 /// Disable host Git helpers and interactive prompts. Dropped requests kill child processes.
 fn git_command() -> tokio::process::Command {
     let mut command = tokio::process::Command::new("git");
-    command.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_TERMINAL_PROMPT", "0").kill_on_drop(true);
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .kill_on_drop(true);
     command
 }
 
 /// Download OCI payloads to private staging and read their root manifest.
 async fn read_oci(source: &str) -> Result<Vec<u8>, ApiError> {
-    let directory = tempfile::tempdir().map_err(|_| invalid("Cannot create OCI manifest staging directory."))?;
+    let directory = tempfile::tempdir()
+        .map_err(|_| invalid("Cannot create OCI manifest staging directory."))?;
     let downloader = oci_artifact::Downloader::new(oci_artifact::client::TransportOptions {
-        plain_http: std::env::var("SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP").as_deref() == Ok("true"),
+        plain_http: std::env::var("EXTENSION_REGISTRY_PLAIN_HTTP").as_deref() == Ok("true"),
         ..Default::default()
-    }).map_err(|_| invalid("Cannot initialize OCI manifest transport."))?;
+    })
+    .map_err(|_| invalid("Cannot initialize OCI manifest transport."))?;
     let request = oci_artifact::DownloadRequest::new(source, directory.path());
     let token = request.cancellation.clone();
     let operation = downloader.download(request);
@@ -171,25 +258,49 @@ async fn read_oci(source: &str) -> Result<Vec<u8>, ApiError> {
             let _ = operation.await;
             return Err(invalid("Reading the OCI manifest timed out."));
         }
-    }.map_err(|_| invalid("Cannot read OCI source. Check reference, registry access, and transport settings."))?;
+    }
+    .map_err(|_| {
+        invalid("Cannot read OCI source. Check reference, registry access, and transport settings.")
+    })?;
     read_directory(&result.payload_path).await
 }
 
 /// Accept resource, create-request, or standalone spec manifests; ignore status and source overrides.
-fn decode_manifest(bytes: &[u8], source_type: ExtensionSourceType, source: &str) -> Result<ExtensionCreate, ApiError> {
-    let document: Value = serde_yaml::from_slice(bytes).map_err(|_| invalid("Extension manifest MUST contain valid YAML or JSON."))?;
+fn decode_manifest(
+    bytes: &[u8],
+    source_type: ExtensionSourceType,
+    source: &str,
+) -> Result<ExtensionCreate, ApiError> {
+    let document: Value = serde_yaml::from_slice(bytes)
+        .map_err(|_| invalid("Extension manifest MUST contain valid YAML or JSON."))?;
     if let Some(kind) = document.get("kind") {
-        if kind != "SuntitleExtension" { return Err(invalid("Manifest kind MUST be SuntitleExtension.")); }
+        if kind != "SuntitleExtension" {
+            return Err(invalid("Manifest kind MUST be SuntitleExtension."));
+        }
     }
-    let name = document.pointer("/metadata/name").or_else(|| document.get("name")).and_then(Value::as_str).map(str::to_owned);
+    let name = document
+        .pointer("/metadata/name")
+        .or_else(|| document.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let mut spec = document.get("spec").unwrap_or(&document).clone();
-    let fields = spec.as_object_mut().ok_or_else(|| invalid("Manifest MUST contain an extension spec object."))?;
-    fields.insert("sourceType".into(), serde_json::to_value(source_type).unwrap());
+    let fields = spec
+        .as_object_mut()
+        .ok_or_else(|| invalid("Manifest MUST contain an extension spec object."))?;
+    fields.insert(
+        "sourceType".into(),
+        serde_json::to_value(source_type).unwrap(),
+    );
     fields.insert("source".into(), Value::String(source.to_owned()));
     fields.remove("refreshToken");
     let spec: SuntitleExtensionSpec = serde_json::from_value(spec).map_err(|_| invalid("Manifest requires a displayName and an adapter with valid execution. Check any optional inputType, outputType, settings, and arguments."))?;
-    if spec.display_name.trim().is_empty() || spec.display_name.chars().count() > 128 || spec.max_attempts == 0 {
-        return Err(invalid("Manifest displayName MUST have 1–128 characters and maxAttempts MUST be positive."));
+    if spec.display_name.trim().is_empty()
+        || spec.display_name.chars().count() > 128
+        || spec.max_attempts == 0
+    {
+        return Err(invalid(
+            "Manifest displayName MUST have 1–128 characters and maxAttempts MUST be positive.",
+        ));
     }
     Ok(ExtensionCreate { name, spec })
 }
@@ -214,16 +325,34 @@ mod tests {
             json!({"kind":"SuntitleExtension","metadata":{"name":"hello"},"spec":manifest(),"status":{"artifactReference":"old"}}),
         ] {
             let bytes = serde_yaml::to_string(&document).unwrap();
-            let registered = decode_manifest(bytes.as_bytes(), ExtensionSourceType::Local, "/mounted/hello").unwrap();
-            let expected_name = document.pointer("/metadata/name").or_else(|| document.get("name")).and_then(Value::as_str);
+            let registered = decode_manifest(
+                bytes.as_bytes(),
+                ExtensionSourceType::Local,
+                "/mounted/hello",
+            )
+            .unwrap();
+            let expected_name = document
+                .pointer("/metadata/name")
+                .or_else(|| document.get("name"))
+                .and_then(Value::as_str);
             assert_eq!(registered.name.as_deref(), expected_name);
             let spec = serde_json::to_value(registered.spec).unwrap();
             assert_eq!(spec["displayName"], "Hello");
             assert_eq!(spec["source"], "/mounted/hello");
             assert_eq!(spec["sourceType"], "local");
-            assert_eq!(spec["adapter"]["settings"]["optional"]["default"], Value::Null);
-            assert!(spec["adapter"]["settings"]["optional"].get("default").is_some());
-            assert_eq!(spec["adapter"]["arguments"][0]["source"], "runtime.websocketUrl");
+            assert_eq!(
+                spec["adapter"]["settings"]["optional"]["default"],
+                Value::Null
+            );
+            assert!(
+                spec["adapter"]["settings"]["optional"]
+                    .get("default")
+                    .is_some()
+            );
+            assert_eq!(
+                spec["adapter"]["arguments"][0]["source"],
+                "runtime.websocketUrl"
+            );
             assert_eq!(spec["maxAttempts"], 3);
         }
     }
@@ -231,10 +360,27 @@ mod tests {
     /// Invalid configuration MUST fail before resource persistence.
     #[test]
     fn rejects_invalid_manifests_and_untrusted_git_protocols() {
-        for document in [json!({}), json!({"kind":"SuntitleHost","spec":manifest()}), json!({"displayName":"Hello","adapter":{"inputType":"text","outputType":"text","execution":{"command":""}}}), json!({"displayName":"Hello","maxAttempts":0,"adapter":manifest()["adapter"]})] {
-            assert!(decode_manifest(&serde_json::to_vec(&document).unwrap(), ExtensionSourceType::Git, "https://example.com/repo.git").is_err());
+        for document in [
+            json!({}),
+            json!({"kind":"SuntitleHost","spec":manifest()}),
+            json!({"displayName":"Hello","adapter":{"inputType":"text","outputType":"text","execution":{"command":""}}}),
+            json!({"displayName":"Hello","maxAttempts":0,"adapter":manifest()["adapter"]}),
+        ] {
+            assert!(
+                decode_manifest(
+                    &serde_json::to_vec(&document).unwrap(),
+                    ExtensionSourceType::Git,
+                    "https://example.com/repo.git"
+                )
+                .is_err()
+            );
         }
-        for source in ["file:///etc", "ssh://example.com/repo", "https://user:secret@example.com/repo", "--upload-pack=example"] {
+        for source in [
+            "file:///etc",
+            "ssh://example.com/repo",
+            "https://user:secret@example.com/repo",
+            "--upload-pack=example",
+        ] {
             assert!(http_url(source).is_err());
         }
         assert!(bounded(vec![b' '; MANIFEST_LIMIT as usize + 1]).is_err());
@@ -246,12 +392,33 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().to_string_lossy().into_owned();
         assert!(read_directory(directory.path()).await.is_err());
-        tokio::fs::write(directory.path().join("manifest.json"), serde_json::to_vec(&manifest()).unwrap()).await.unwrap();
-        let resolved = ExtensionRegistration { source_type: ExtensionSourceType::Local, source: source.clone() }.resolve().await.unwrap();
+        tokio::fs::write(
+            directory.path().join("manifest.json"),
+            serde_json::to_vec(&manifest()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let resolved = ExtensionRegistration {
+            source_type: ExtensionSourceType::Local,
+            source: source.clone(),
+        }
+        .resolve()
+        .await
+        .unwrap();
         assert_eq!(resolved.spec.display_name, "Hello");
         assert_eq!(resolved.spec.source, source);
-        tokio::fs::write(directory.path().join("manifest.yaml"), "not: [valid").await.unwrap();
-        assert!(ExtensionRegistration { source_type: ExtensionSourceType::Local, source }.resolve().await.is_err());
+        tokio::fs::write(directory.path().join("manifest.yaml"), "not: [valid")
+            .await
+            .unwrap();
+        assert!(
+            ExtensionRegistration {
+                source_type: ExtensionSourceType::Local,
+                source
+            }
+            .resolve()
+            .await
+            .is_err()
+        );
         assert!(read_directory(Path::new("relative")).await.is_err());
     }
 
@@ -264,13 +431,26 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(warp::serve(route).incoming(listener).run());
         let source = format!("http://{address}/payload/hello.py");
-        let resolved = ExtensionRegistration { source_type: ExtensionSourceType::Http, source: source.clone() }.resolve().await.unwrap();
+        let resolved = ExtensionRegistration {
+            source_type: ExtensionSourceType::Http,
+            source: source.clone(),
+        }
+        .resolve()
+        .await
+        .unwrap();
         assert_eq!(resolved.spec.source, source);
         assert_eq!(resolved.spec.display_name, "Hello");
-        assert!(read_http(&format!("http://{address}/missing.py")).await.is_err());
+        assert!(
+            read_http(&format!("http://{address}/missing.py"))
+                .await
+                .is_err()
+        );
         server.abort();
     }
-    use std::{io::Write, process::{Command, Stdio}};
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
     use warp::Filter;
 
     /// Run the Git reference implementation only to prepare test inputs.
@@ -347,7 +527,6 @@ mod tests {
         )
     }
 
-
     /// Git discovery reads root manifests from real smart HTTP without a working checkout.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn discovers_git_manifest_over_http() {
@@ -355,15 +534,24 @@ mod tests {
         let work = root.path().join("repo");
         std::fs::create_dir(&work).unwrap();
         git_fixture(&work, &["init", "-b", "main"]);
-        std::fs::write(work.join("manifest.yaml"), serde_yaml::to_string(&manifest()).unwrap()).unwrap();
+        std::fs::write(
+            work.join("manifest.yaml"),
+            serde_yaml::to_string(&manifest()).unwrap(),
+        )
+        .unwrap();
         git_fixture(&work, &["add", "."]);
         git_fixture(&work, &["commit", "-m", "Add manifest"]);
         let (source, server) = git_http_server(root.path()).await;
-        let resolved = ExtensionRegistration { source_type: ExtensionSourceType::Git, source: source.clone() }.resolve().await.unwrap();
+        let resolved = ExtensionRegistration {
+            source_type: ExtensionSourceType::Git,
+            source: source.clone(),
+        }
+        .resolve()
+        .await
+        .unwrap();
         assert_eq!(resolved.spec.display_name, "Hello");
         assert_eq!(resolved.spec.source, source);
         assert_eq!(resolved.spec.source_type, ExtensionSourceType::Git);
         server.abort();
     }
-
 }

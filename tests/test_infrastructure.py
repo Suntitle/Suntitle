@@ -64,7 +64,7 @@ class InfrastructureTest(unittest.TestCase):
                          'proxy': 'example/proxy:v2', 'ui': 'example/ui:v2'})
         script = DEPLOYMENT.render_user_data(**arguments)
         subprocess.run(['bash', '-n'], input=script, text=True, check=True)
-        self.assertIn('export SUNTITLE_API_IMAGE=example/api:v2', script)
+        self.assertIn('export API_IMAGE=example/api:v2', script)
         self.assertIn('docker compose --env-file .env.local pull', script)
         self.assertIn('up --no-build', script)
         self.assertNotIn('docker compose --env-file .env.local build', script)
@@ -136,13 +136,13 @@ class InfrastructureTest(unittest.TestCase):
     def test_compose_release_overlay_uses_runtime_image(self):
         """Resolve deployment Compose without inheriting the Rust source Dockerfile."""
         environment = {key: value for key, value in os.environ.items()
-                       if key not in {'COMPOSE_FILE', 'SUNTITLE_API_IMAGE', 'SUNTITLE_PROXY_IMAGE', 'SUNTITLE_UI_IMAGE'}}
+                       if key not in {'COMPOSE_FILE', 'API_IMAGE', 'PROXY_IMAGE', 'UI_IMAGE'}}
         with tempfile.TemporaryDirectory() as temporary:
             dotenv = Path(temporary) / '.env.local'
             dotenv.write_text(f'COMPOSE_FILE={ROOT}/compose.yaml:{ROOT}/compose.release.yaml\n'
-                              'SUNTITLE_API_IMAGE=custom/api:v1\n'
-                              'SUNTITLE_PROXY_IMAGE=custom/proxy:v2\n'
-                              'SUNTITLE_UI_IMAGE=custom/ui:v3\n')
+                              'API_IMAGE=custom/api:v1\n'
+                              'PROXY_IMAGE=custom/proxy:v2\n'
+                              'UI_IMAGE=custom/ui:v3\n')
             output = subprocess.check_output([
                 'docker', 'compose', '--env-file', str(dotenv), 'config', '--format', 'json',
             ], cwd=ROOT, env=environment, text=True)

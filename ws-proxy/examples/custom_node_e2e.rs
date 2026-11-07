@@ -64,7 +64,10 @@ fn condition(resource: &Value, kind: &str, status: &str, reason: Option<&str>) -
             conditions.iter().any(|c| {
                 c["type"] == kind
                     && c["status"] == status
-                    && &c["observedGeneration"] == resource["metadata"].get("generation").unwrap_or(&resource["status"]["observedGeneration"])
+                    && &c["observedGeneration"]
+                        == resource["metadata"]
+                            .get("generation")
+                            .unwrap_or(&resource["status"]["observedGeneration"])
                     && reason.is_none_or(|reason| c["reason"] == reason)
             })
         })
@@ -79,9 +82,7 @@ async fn installed_then_running(
     adapter: &Value,
 ) -> Result<(), Box<dyn Error>> {
     let nodes = namespace.nodes();
-    let name = created["name"]
-        .as_str()
-        .ok_or("node name missing")?;
+    let name = created["name"].as_str().ok_or("node name missing")?;
     let stream = nodes
         .watch(
             &WatchParams::default().fields(&format!("metadata.name={name}")),
@@ -260,9 +261,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 publisher
                     .republish(
                         source,
-                        extension["source"]
-                            .as_str()
-                            .ok_or("OCI source missing")?,
+                        extension["source"].as_str().ok_or("OCI source missing")?,
                         &RegistryAuth::Anonymous,
                         &RegistryAuth::Anonymous,
                         &CancellationToken::new(),
@@ -316,7 +315,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .to_owned(),
         );
         let node = fixture(&data.join(format!("{name}-node.yaml")), &replacements)?;
-        let version = namespace.nodes().list(&Default::default()).await?.metadata.resource_version
+        let version = namespace
+            .nodes()
+            .list(&Default::default())
+            .await?
+            .metadata
+            .resource_version
             .ok_or("node collection resourceVersion missing")?;
         let created = client
             .request(
@@ -326,7 +330,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 201,
             )
             .await?;
-        installed_then_running(&namespace, &created, reference, &version, &extension["adapter"]).await?;
+        installed_then_running(
+            &namespace,
+            &created,
+            reference,
+            &version,
+            &extension["adapter"],
+        )
+        .await?;
         let report_path = run.path().join(format!("{name}.json"));
         let report = timeout(ACTION_TIMEOUT, async {
             loop {
@@ -340,7 +351,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .await
         .map_err(|_| format!("missing process evidence for {name}"))?;
-        let expectations = scenario["expectations"].as_str().unwrap_or("expectations.yaml");
+        let expectations = scenario["expectations"]
+            .as_str()
+            .unwrap_or("expectations.yaml");
         let mut expected = fixture(&data.join(expectations), &replacements)?;
         substitute(&mut expected, &[("${RUNTIME}", name)]);
         assert_eq!(report["args"], expected["arguments"]);

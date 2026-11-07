@@ -24,8 +24,8 @@ Start the Control API with its own certificate identity:
 cargo run -p control-api --bin control_api -- --kubeconfig pki/suntitle-api.kubeconfig
 ```
 
-`SUNTITLE_API_KUBECONFIG` also selects the credentials; `--namespace` or
-`SUNTITLE_KUBERNETES_NAMESPACE` selects the managed namespace (default `suntitle`).
+`API_KUBECONFIG` also selects the credentials; `--namespace` or
+`KUBERNETES_NAMESPACE` selects the managed namespace (default `suntitle`).
 The API does not initialize PostgreSQL. Startup and `GET /readyz` require all three
 CRDs to be established and all three resource collections to be readable. Bootstrap
 installs a ClusterRole allowing only GET on these three CRDs for readiness.

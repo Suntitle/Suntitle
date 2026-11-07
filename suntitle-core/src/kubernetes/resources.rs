@@ -503,10 +503,18 @@ mod schema_tests {
     fn documented_media_types_preserve_openapi_constraints() {
         let declared = serde_json::to_value(SuntitleExtensionSpec::schema()).unwrap();
         let resolved = serde_json::to_value(NodeStatus::schema()).unwrap();
-        for adapter in [&declared["properties"]["adapter"], &resolved["properties"]["resolvedAdapter"]] {
+        for adapter in [
+            &declared["properties"]["adapter"],
+            &resolved["properties"]["resolvedAdapter"],
+        ] {
             for field in ["inputType", "outputType"] {
                 let schema = &adapter["properties"][field];
-                assert!(!adapter["required"].as_array().unwrap().contains(&json!(field)));
+                assert!(
+                    !adapter["required"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!(field))
+                );
                 assert!(schema.get("anyOf").is_none());
                 let variants = schema["oneOf"].as_array().unwrap();
                 assert_eq!(variants.len(), 3);

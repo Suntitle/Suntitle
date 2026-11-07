@@ -7,7 +7,9 @@ use actix_web::{HttpResponse, get, post, web};
 use super::errors::{ApiError, ApiResult, ErrorEnvelope};
 use crate::extension_source::ExtensionRegistration;
 use crate::store::{ExtensionCreate, ResourceList, ResourceStore};
-use suntitle_core::kubernetes::resources::{ExtensionStatus, SuntitleExtension, SuntitleExtensionSpec};
+use suntitle_core::kubernetes::resources::{
+    ExtensionStatus, SuntitleExtension, SuntitleExtensionSpec,
+};
 
 /// Public extension configuration and publication state without Kubernetes envelopes.
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
@@ -91,10 +93,7 @@ pub async fn create_extension(
     let extension = store.create_extension(request).await?;
     let extension = Extension::from(extension);
     Ok(HttpResponse::Created()
-        .insert_header((
-            "Location",
-            format!("/api/v1/extensions/{}", extension.name),
-        ))
+        .insert_header(("Location", format!("/api/v1/extensions/{}", extension.name)))
         .json(extension))
 }
 

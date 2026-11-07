@@ -34,7 +34,10 @@ pub async fn watch_client_from_kubeconfig(path: &Path) -> Result<Client, Error> 
 }
 
 /// Keep credentials, connection deadlines, and mutation retry policy shared across clients.
-async fn config_from_kubeconfig(path: &Path, read_timeout: Option<Duration>) -> Result<Config, Error> {
+async fn config_from_kubeconfig(
+    path: &Path,
+    read_timeout: Option<Duration>,
+) -> Result<Config, Error> {
     let mut config =
         Config::from_custom_kubeconfig(Kubeconfig::read_from(path)?, &KubeConfigOptions::default())
             .await?;
@@ -130,16 +133,26 @@ mod client_tests {
             socket.flush().await.unwrap();
             tokio::time::sleep(Duration::from_secs(11)).await;
             let event = serde_json::json!({"type":"ADDED","object":{"apiVersion":"control.suntitle.io/v1alpha1","kind":"SuntitleHost","metadata":{"name":"quiet-host","resourceVersion":"2"},"spec":{"displayName":"Quiet host"}}}).to_string() + "\n";
-            socket.write_all(format!("{:x}\r\n{}\r\n0\r\n\r\n", event.len(), event).as_bytes()).await.unwrap();
+            socket
+                .write_all(format!("{:x}\r\n{}\r\n0\r\n\r\n", event.len(), event).as_bytes())
+                .await
+                .unwrap();
         });
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("kubeconfig.yaml");
         std::fs::write(&path, format!("apiVersion: v1\nkind: Config\nclusters:\n- name: test\n  cluster:\n    server: http://{address}\nusers:\n- name: test\n  user: {{}}\ncontexts:\n- name: test\n  context:\n    cluster: test\n    user: test\ncurrent-context: test\n")).unwrap();
         let client = watch_client_from_kubeconfig(&path).await.unwrap();
         let api = Api::<resources::SuntitleHost>::namespaced(client, "test");
-        let stream = api.watch(&WatchParams::default().timeout(30), "0").await.unwrap();
+        let stream = api
+            .watch(&WatchParams::default().timeout(30), "0")
+            .await
+            .unwrap();
         tokio::pin!(stream);
-        let event = tokio::time::timeout(Duration::from_secs(20), stream.try_next()).await.unwrap().unwrap().unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(20), stream.try_next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         match event {
             WatchEvent::Added(host) => assert_eq!(host.name_any(), "quiet-host"),
             other => panic!("expected host event after idle period, received {other:?}"),

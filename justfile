@@ -218,7 +218,7 @@ infra-select stack="dev":
 
 # Build and push the API, proxy, and UI images under a image repository and tag.
 [positional-arguments]
-images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default("IMAGE_TAG", "dev")) platform=(env_var_or_default("SUNTITLE_IMAGE_PLATFORM", "")):
+images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default("IMAGE_TAG", "dev")) platform=(env_var_or_default("IMAGE_PLATFORM", "linux/amd64")):
     #!/usr/bin/env bash
     set -euo pipefail
     image_repo="${1%/}"
@@ -247,9 +247,17 @@ infra-init stack="dev":
 infra-preview:
     pulumi -C infrastructure preview
 
-# Deploy the Pulumi stack.
-infra-up:
-    pulumi -C infrastructure up
+# Load default AWS credentials and optionally run a command with them.
+[positional-arguments]
+aws-login *command:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    credentials="$(aws configure export-credentials --profile default --format env)"
+    eval "$credentials"
+    exec "$@"
+
+# Deploy the Pulumi stack with default AWS credentials.
+infra-up: (aws-login "pulumi" "-C" "infrastructure" "up")
 
 # Set the Pulumi stack's AWS region.
 infra-region region:
@@ -293,7 +301,7 @@ ui: _ui-dependencies kubernetes-up
     }
     trap cleanup EXIT INT TERM
 
-    (cd ui && exec env SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js)
+    (cd ui && exec env API_PROXY_TARGET=http://127.0.0.1:3031 node node_modules/vite/bin/vite.js)
 
 # Start the UI and mock API together. Ctrl+C stops both processes.
 ui-mock: _ui-dependencies
@@ -321,7 +329,7 @@ ui-dev: _ui-dependencies
 
 # Start only the UI development server, proxied to the control API.
 ui-backend: _ui-dependencies
-    SUNTITLE_API_PROXY_TARGET=http://127.0.0.1:3031 npm --prefix ui run dev
+    API_PROXY_TARGET=http://127.0.0.1:3031 npm --prefix ui run dev
 
 # Create the UI's local environment file without overwriting an existing one.
 ui-env:

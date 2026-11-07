@@ -53,7 +53,16 @@ pub struct User {
 
 /// Built-in pipeline type or custom execution variant. Extension icons use a separate category.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    ToSchema,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRole {

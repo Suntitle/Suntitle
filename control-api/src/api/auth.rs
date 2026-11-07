@@ -56,7 +56,10 @@ impl AuthState {
             .connect(database_url)
             .await?;
         let state = Self::initialize(&pool, || {
-            Ok((std::env::var("ADMIN_USERNAME")?, std::env::var("ADMIN_PASSWORD")?))
+            Ok((
+                std::env::var("ADMIN_USERNAME")?,
+                std::env::var("ADMIN_PASSWORD")?,
+            ))
         })
         .await?;
         pool.close().await;
@@ -88,15 +91,19 @@ impl AuthState {
         if !exists {
             let (username, password) = credentials()?;
             if username.trim().is_empty() || password.is_empty() {
-                return Err("ADMIN_USERNAME and ADMIN_PASSWORD MUST be nonempty on first startup".into());
+                return Err(
+                    "ADMIN_USERNAME and ADMIN_PASSWORD MUST be nonempty on first startup".into(),
+                );
             }
             let hash = web::block(move || hash_password(&password)).await??;
-            sqlx::query("INSERT INTO suntitle_admin (id, username, password_hash) VALUES ($1, $2, $3)")
-                .bind(Uuid::new_v4().to_string())
-                .bind(username)
-                .bind(hash)
-                .execute(&mut *transaction)
-                .await?;
+            sqlx::query(
+                "INSERT INTO suntitle_admin (id, username, password_hash) VALUES ($1, $2, $3)",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(username)
+            .bind(hash)
+            .execute(&mut *transaction)
+            .await?;
         }
         let row = sqlx::query("SELECT id, username, password_hash FROM suntitle_admin")
             .fetch_one(&mut *transaction)
@@ -108,7 +115,8 @@ impl AuthState {
             },
             password_hash: row.try_get("password_hash")?,
         };
-        PasswordHash::new(&admin.password_hash).map_err(|_| "Invalid stored administrator password hash")?;
+        PasswordHash::new(&admin.password_hash)
+            .map_err(|_| "Invalid stored administrator password hash")?;
         transaction.commit().await?;
         Ok(Self {
             admin: Some(Arc::new(admin)),
@@ -120,7 +128,9 @@ impl AuthState {
     fn authenticate(&self, username: &str, password: &str) -> Option<User> {
         let admin = self.admin.as_ref()?;
         let hash = PasswordHash::new(&admin.password_hash).ok()?;
-        let valid = Scrypt::default().verify_password(password.as_bytes(), &hash).is_ok();
+        let valid = Scrypt::default()
+            .verify_password(password.as_bytes(), &hash)
+            .is_ok();
         (valid && username == admin.user.username).then(|| admin.user.clone())
     }
 
@@ -215,10 +225,11 @@ pub async fn login(
 ) -> ApiResult<LoginResponse> {
     let credentials = body.into_inner();
     let verifier = state.clone();
-    let user = web::block(move || verifier.authenticate(&credentials.username, &credentials.password))
-        .await
-        .map_err(|_| ApiError::unauthorized(request.path()))?
-        .ok_or_else(|| ApiError::unauthorized(request.path()))?;
+    let user =
+        web::block(move || verifier.authenticate(&credentials.username, &credentials.password))
+            .await
+            .map_err(|_| ApiError::unauthorized(request.path()))?
+            .ok_or_else(|| ApiError::unauthorized(request.path()))?;
     let (access_token, session) = state.create_session(user);
     Ok(web::Json(LoginResponse {
         access_token,
@@ -290,8 +301,16 @@ mod tests {
             "$scrypt$ln=16,r=8,p=1$aM15713r3Xsvxbi31lqr1Q$nFNh2CVHVjNldFVKDHDlm4CbdRSCdEBsjjJxD+iCs5E",
         )
         .unwrap();
-        assert!(Scrypt::default().verify_password(b"password", &hash).is_ok());
-        assert!(Scrypt::default().verify_password(b"incorrect", &hash).is_err());
+        assert!(
+            Scrypt::default()
+                .verify_password(b"password", &hash)
+                .is_ok()
+        );
+        assert!(
+            Scrypt::default()
+                .verify_password(b"incorrect", &hash)
+                .is_err()
+        );
     }
 
     /// Build an isolated administrator fixture.
@@ -318,29 +337,57 @@ mod tests {
         // The identifier contains only a fixed prefix and generated hexadecimal digits.
         let schema = format!("auth_test_{}", Uuid::new_v4().simple());
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&connection).await.unwrap();
-        let options = sqlx::postgres::PgConnectOptions::from_str(&url).unwrap()
+            .execute(&connection)
+            .await
+            .unwrap();
+        let options = sqlx::postgres::PgConnectOptions::from_str(&url)
+            .unwrap()
             .options([("search_path", schema.as_str())]);
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_with(options).await.unwrap();
-        assert!(AuthState::initialize(&pool, || Ok(("".into(), "".into()))).await.is_err());
-        let first = AuthState::initialize(&pool, || Ok(("admin".into(), "secret".into()))).await.unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .unwrap();
+        assert!(
+            AuthState::initialize(&pool, || Ok(("".into(), "".into())))
+                .await
+                .is_err()
+        );
+        let first = AuthState::initialize(&pool, || Ok(("admin".into(), "secret".into())))
+            .await
+            .unwrap();
         let user = first.authenticate("admin", "secret").unwrap();
-        let restarted = AuthState::initialize(&pool, || panic!("existing account MUST NOT read bootstrap credentials")).await.unwrap();
-        assert_eq!(restarted.authenticate("admin", "secret").unwrap().id, user.id);
+        let restarted = AuthState::initialize(&pool, || {
+            panic!("existing account MUST NOT read bootstrap credentials")
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            restarted.authenticate("admin", "secret").unwrap().id,
+            user.id
+        );
         assert!(restarted.authenticate("admin", "changed").is_none());
-        let hash: String = sqlx::query_scalar("SELECT password_hash FROM suntitle_admin").fetch_one(&pool).await.unwrap();
+        let hash: String = sqlx::query_scalar("SELECT password_hash FROM suntitle_admin")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert!(hash.starts_with("$scrypt$"));
         assert_ne!(hash, "secret");
         pool.close().await;
         sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
-            .execute(&connection).await.unwrap();
+            .execute(&connection)
+            .await
+            .unwrap();
         connection.close().await;
     }
 
     /// Missing bootstrap state MUST never permit a login.
     #[actix_web::test]
     async fn unconfigured_authentication_rejects_login() {
-        assert!(AuthState::default().authenticate("anyone", "anything").is_none());
+        assert!(
+            AuthState::default()
+                .authenticate("anyone", "anything")
+                .is_none()
+        );
     }
 
     /// Accept only valid credentials and preserve identity across independent sessions.
@@ -386,13 +433,15 @@ mod tests {
         for (username, password) in [("alice", "wrong"), ("other", "anything"), ("", "")] {
             let response = test::call_service(
                 &app,
-                test::TestRequest::post().uri("/auth/login")
+                test::TestRequest::post()
+                    .uri("/auth/login")
                     .set_json(&LoginRequest {
                         username: username.into(),
                         password: password.into(),
                     })
                     .to_request(),
-            ).await;
+            )
+            .await;
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
 

@@ -113,7 +113,12 @@ async fn controller_apply_recovery_acceptance() {
     hosts
         .create(
             &PostParams::default(),
-            &SuntitleHost::new(&name, SuntitleHostSpec { display_name: name.clone() }),
+            &SuntitleHost::new(
+                &name,
+                SuntitleHostSpec {
+                    display_name: name.clone(),
+                },
+            ),
         )
         .await
         .unwrap();

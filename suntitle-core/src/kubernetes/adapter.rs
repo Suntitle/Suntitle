@@ -22,11 +22,19 @@ pub enum ExtensionDataType {
 #[serde(bound(deserialize = "S: Deserialize<'de> + Default"))]
 pub struct Adapter<S: Default> {
     /// Optional input media type. Omission means no declared input, without selecting runtime behavior.
-    #[serde(default, deserialize_with = "declared_media_type", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "declared_media_type",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "ExtensionDataType")]
     pub input_type: Option<ExtensionDataType>,
     /// Optional output media type. Omission means no declared output, without selecting runtime behavior.
-    #[serde(default, deserialize_with = "declared_media_type", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "declared_media_type",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "ExtensionDataType")]
     pub output_type: Option<ExtensionDataType>,
     /// Typed execution contract, unchanged by plugin setting resolution.
@@ -40,7 +48,9 @@ pub struct Adapter<S: Default> {
 }
 
 /// A present media type MUST be a supported string. Only omission represents no declaration.
-fn declared_media_type<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<ExtensionDataType>, D::Error> {
+fn declared_media_type<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ExtensionDataType>, D::Error> {
     ExtensionDataType::deserialize(deserializer).map(Some)
 }
 
@@ -192,7 +202,9 @@ impl JsonSchema for SettingReference {
 
     /// Exclude runtime values and empty setting names from path references.
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        serde_json::json!({"type":"string","pattern":r"^settings\..+$"}).try_into().unwrap()
+        serde_json::json!({"type":"string","pattern":r"^settings\..+$"})
+            .try_into()
+            .unwrap()
     }
 }
 

@@ -10,7 +10,7 @@ This document is a plan only; the API sketch has not been compiled or validated.
 ## Existing integration
 
 The Rust package is in `ws-proxy/`. `src/bin/diamant.rs` currently accepts
-`--uv-bin` / `SUNTITLE_UV_BIN`, defaulting to `uv`. Node command construction and
+`--uv-bin` / `UV_BIN`, defaulting to `uv`. Node command construction and
 supervision live in `src/diamant/nodes.rs`; `examples/fake_uv.rs` supports testing.
 
 Add an early dispatch path for `diamant uv ...`, before normal Diamant argument
@@ -66,7 +66,7 @@ environments through safe `Command::env` calls.
 After CLI mode is validated, use `current_exe()` with an initial `uv` argument as
 the default node launcher. This spawns the same compiled binary in embedded uv
 mode and preserves process supervision while removing the external uv install
-requirement. Keep an explicit `--uv-bin` / `SUNTITLE_UV_BIN` override for external
+requirement. Keep an explicit `--uv-bin` / `UV_BIN` override for external
 executables and existing test fixtures; overrides must receive the original uv
 arguments without an extra `uv` prefix.
 

@@ -527,9 +527,15 @@ fn custom_command_spec(
                 .ok_or_else(|| io::Error::other(format!("missing argument setting: {key}")))?,
             ArgumentValue::Url(url) => {
                 let key = url.path.key();
-                let path = adapter.settings.get(key).and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| io::Error::other(format!("URL path setting MUST be a string: {key}")))?;
-                composed = serde_json::Value::String(websocket_url_with_path(data_plane_url, path)?);
+                let path = adapter
+                    .settings
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        io::Error::other(format!("URL path setting MUST be a string: {key}"))
+                    })?;
+                composed =
+                    serde_json::Value::String(websocket_url_with_path(data_plane_url, path)?);
                 &composed
             }
         };
@@ -577,13 +583,17 @@ fn websocket_url_with_path(base: &Url, path: &str) -> io::Result<String> {
         return Ok(base.as_str().to_owned());
     }
     if path.starts_with("//") || path.contains('\\') || Url::parse(path).is_ok() {
-        return Err(io::Error::other("URL endpoint MUST be a path, not an origin"));
+        return Err(io::Error::other(
+            "URL endpoint MUST be a path, not an origin",
+        ));
     }
     let prefix = format!("{}/", base.path().trim_end_matches('/'));
     let mut url = base.clone();
     url.set_path(&format!("{prefix}{}", path.trim_start_matches('/')));
     if !url.path().starts_with(&prefix) {
-        return Err(io::Error::other("URL endpoint MUST retain the configured path prefix"));
+        return Err(io::Error::other(
+            "URL endpoint MUST retain the configured path prefix",
+        ));
     }
     Ok(url.into())
 }
@@ -599,14 +609,15 @@ pub fn command_spec(
     args.extend(match &update.settings {
         NodeSettings::AudioSource(settings) => settings.command_args(data_plane_url.as_str()),
         NodeSettings::Transcriber(settings) => settings.command_args(
-            data_plane_url.join("transcribe").map_err(io::Error::other)?.as_str(),
+            data_plane_url
+                .join("transcribe")
+                .map_err(io::Error::other)?
+                .as_str(),
         ),
-        NodeSettings::Translator(settings) => settings.command_args(
-            &data_plane_url[url::Position::BeforeHost..url::Position::AfterPort],
-        ),
-        NodeSettings::Display(settings) => settings.command_args(
-            &data_plane_url[url::Position::BeforeHost..url::Position::AfterPort],
-        ),
+        NodeSettings::Translator(settings) => settings
+            .command_args(&data_plane_url[url::Position::BeforeHost..url::Position::AfterPort]),
+        NodeSettings::Display(settings) => settings
+            .command_args(&data_plane_url[url::Position::BeforeHost..url::Position::AfterPort]),
         NodeSettings::Custom(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -789,9 +800,12 @@ mod tests {
                 )
                 .await
                 .unwrap();
-                let command =
-                    custom_command_spec(Path::new("/embedded-diamant"), &data_plane_url, &installed)
-                        .unwrap();
+                let command = custom_command_spec(
+                    Path::new("/embedded-diamant"),
+                    &data_plane_url,
+                    &installed,
+                )
+                .unwrap();
                 assert_eq!(command.executable, Path::new("/embedded-diamant"));
                 assert_eq!(
                     command.current_dir,
@@ -825,8 +839,12 @@ mod tests {
                 ] {
                     installed.adapter.settings.insert("zero".into(), invalid);
                     assert!(
-                        custom_command_spec(Path::new("/embedded-diamant"), &data_plane_url, &installed)
-                            .is_err()
+                        custom_command_spec(
+                            Path::new("/embedded-diamant"),
+                            &data_plane_url,
+                            &installed
+                        )
+                        .is_err()
                     );
                 }
                 installed
@@ -838,10 +856,14 @@ mod tests {
                     .settings
                     .insert("enabled".into(), serde_json::json!(false));
                 assert!(
-                    !custom_command_spec(Path::new("/embedded-diamant"), &data_plane_url, &installed)
-                        .unwrap()
-                        .args
-                        .contains(&"--on".into())
+                    !custom_command_spec(
+                        Path::new("/embedded-diamant"),
+                        &data_plane_url,
+                        &installed
+                    )
+                    .unwrap()
+                    .args
+                    .contains(&"--on".into())
                 );
             }
         }
@@ -853,11 +875,31 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("plugin.py"), "pass").unwrap();
         for (base, path, expected) in [
-            ("ws://127.0.0.1:3030/", "transcribe", "ws://127.0.0.1:3030/transcribe"),
-            ("wss://example.test:9443/prefix/", "translate", "wss://example.test:9443/prefix/translate"),
-            ("wss://example.test:9443/prefix", "/translate", "wss://example.test:9443/prefix/translate"),
-            ("wss://example.test:9443/prefix/?token=x", "transcribe", "wss://example.test:9443/prefix/transcribe?token=x"),
-            ("wss://example.test:9443/prefix/", "", "wss://example.test:9443/prefix/"),
+            (
+                "ws://127.0.0.1:3030/",
+                "transcribe",
+                "ws://127.0.0.1:3030/transcribe",
+            ),
+            (
+                "wss://example.test:9443/prefix/",
+                "translate",
+                "wss://example.test:9443/prefix/translate",
+            ),
+            (
+                "wss://example.test:9443/prefix",
+                "/translate",
+                "wss://example.test:9443/prefix/translate",
+            ),
+            (
+                "wss://example.test:9443/prefix/?token=x",
+                "transcribe",
+                "wss://example.test:9443/prefix/transcribe?token=x",
+            ),
+            (
+                "wss://example.test:9443/prefix/",
+                "",
+                "wss://example.test:9443/prefix/",
+            ),
         ] {
             let adapter = serde_json::from_value(serde_json::json!({
                 "execution":{"runtime":"python","command":"./plugin.py"},
@@ -865,14 +907,45 @@ mod tests {
                 "arguments":[{"flag":"--server","url":{"base":"runtime.websocketUrl","path":"settings.endpoint"}},
                     {"source":"settings.message"}]
             })).unwrap();
-            let mut installed = PreparedExtension::prepare(test_identity(), "artifact".into(), root.path().into(), adapter).await.unwrap();
-            let command = custom_command_spec(Path::new("/embedded-diamant"), &Url::parse(base).unwrap(), &installed).unwrap();
-            assert_eq!(&command.args[command.args.len() - 3..], &[OsString::from("--server"), expected.into(), "$(runtime.websocketUrl)".into()]);
+            let mut installed = PreparedExtension::prepare(
+                test_identity(),
+                "artifact".into(),
+                root.path().into(),
+                adapter,
+            )
+            .await
+            .unwrap();
+            let command = custom_command_spec(
+                Path::new("/embedded-diamant"),
+                &Url::parse(base).unwrap(),
+                &installed,
+            )
+            .unwrap();
+            assert_eq!(
+                &command.args[command.args.len() - 3..],
+                &[
+                    OsString::from("--server"),
+                    expected.into(),
+                    "$(runtime.websocketUrl)".into()
+                ]
+            );
             assert_eq!(installed.adapter.settings["endpoint"], path);
-            for invalid in [serde_json::Value::Null, serde_json::json!(42), serde_json::json!("wss://other.test/"), serde_json::json!("//other.test/"), serde_json::json!("../escape")] {
-                installed.adapter.settings.insert("endpoint".into(), invalid);
+            for invalid in [
+                serde_json::Value::Null,
+                serde_json::json!(42),
+                serde_json::json!("wss://other.test/"),
+                serde_json::json!("//other.test/"),
+                serde_json::json!("../escape"),
+            ] {
+                installed
+                    .adapter
+                    .settings
+                    .insert("endpoint".into(), invalid);
                 let prefixed = Url::parse("wss://example.test/prefix/").unwrap();
-                assert!(custom_command_spec(Path::new("/embedded-diamant"), &prefixed, &installed).is_err());
+                assert!(
+                    custom_command_spec(Path::new("/embedded-diamant"), &prefixed, &installed)
+                        .is_err()
+                );
             }
         }
     }

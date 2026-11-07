@@ -32,9 +32,11 @@ fn adapter() -> ExtensionAdapter {
 fn media_types_round_trip_without_legacy_fields() {
     for input in ["image", "text", "audio"] {
         for output in ["image", "text", "audio"] {
-            let document = json!({"inputType":input,"outputType":output,"execution":{"command":"./run"}});
+            let document =
+                json!({"inputType":input,"outputType":output,"execution":{"command":"./run"}});
             let adapter: ExtensionAdapter = serde_json::from_value(document.clone()).unwrap();
-            let resolved = serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
+            let resolved =
+                serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
             assert_eq!(resolved["inputType"], input);
             assert_eq!(resolved["outputType"], output);
             assert!(resolved.get("nodeRole").is_none());
@@ -55,7 +57,12 @@ fn declared_media_types_reject_unsupported_values() {
         let mut missing = document.clone();
         missing.as_object_mut().unwrap().remove(field);
         assert!(serde_json::from_value::<ExtensionAdapter>(missing).is_ok());
-        for value in [json!("transcriber"), json!("custom"), json!(""), Value::Null] {
+        for value in [
+            json!("transcriber"),
+            json!("custom"),
+            json!(""),
+            Value::Null,
+        ] {
             let mut invalid = document.clone();
             invalid[field] = value;
             assert!(serde_json::from_value::<ExtensionAdapter>(invalid).is_err());
@@ -76,7 +83,8 @@ fn extensions_resolve_without_input_or_output_types() {
             }
             let adapter: ExtensionAdapter = serde_json::from_value(document).unwrap();
             let declared = serde_json::to_value(&adapter).unwrap();
-            let resolved = serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
+            let resolved =
+                serde_json::to_value(adapter.resolve(&Default::default()).unwrap()).unwrap();
             for (field, value) in [("inputType", &input), ("outputType", &output)] {
                 let expected = value.as_ref();
                 assert_eq!(declared.get(field), expected);
@@ -231,8 +239,16 @@ fn url_bindings_validate_wire_shape_and_crd_rules() {
     ] {
         assert!(serde_json::from_value::<ArgumentBinding>(invalid.clone()).is_err());
     }
-    assert!(serde_json::from_value::<ArgumentBinding>(json!({"source":"settings.enabled","mode":"switch","flag":"--enabled"})).is_err());
-    assert!(ArgumentBinding::validate_cel(&json!({"url":url,"mode":"flag","flag":"--server"}), None).is_err());
+    assert!(
+        serde_json::from_value::<ArgumentBinding>(
+            json!({"source":"settings.enabled","mode":"switch","flag":"--enabled"})
+        )
+        .is_err()
+    );
+    assert!(
+        ArgumentBinding::validate_cel(&json!({"url":url,"mode":"flag","flag":"--server"}), None)
+            .is_err()
+    );
     for invalid in [
         json!({"template":"$(runtime.websocketUrl)/$(settings.endpoint)"}),
         json!({"url":{"base":"settings.server","path":"settings.endpoint"}}),
@@ -250,13 +266,27 @@ fn url_bindings_resolve_endpoint_defaults_and_overrides() {
         "settings":{"endpoint":{"default":"transcribe"}},
         "arguments":[{"flag":"--server","url":{"base":"runtime.websocketUrl","path":"settings.endpoint"}}]});
     let mut adapter: ExtensionAdapter = serde_json::from_value(document.clone()).unwrap();
-    for (overrides, endpoint) in [(json!({}), "transcribe"), (json!({"endpoint":"translate"}), "translate")] {
-        let resolved = adapter.resolve(&serde_json::from_value(overrides).unwrap()).unwrap();
+    for (overrides, endpoint) in [
+        (json!({}), "transcribe"),
+        (json!({"endpoint":"translate"}), "translate"),
+    ] {
+        let resolved = adapter
+            .resolve(&serde_json::from_value(overrides).unwrap())
+            .unwrap();
         assert_eq!(resolved.settings["endpoint"], endpoint);
-        assert_eq!(serde_json::to_value(resolved).unwrap()["arguments"], document["arguments"]);
+        assert_eq!(
+            serde_json::to_value(resolved).unwrap()["arguments"],
+            document["arguments"]
+        );
     }
     adapter.settings.get_mut("endpoint").unwrap().default = None;
-    assert!(adapter.resolve(&Default::default()).unwrap().arguments.is_empty());
+    assert!(
+        adapter
+            .resolve(&Default::default())
+            .unwrap()
+            .arguments
+            .is_empty()
+    );
 }
 
 #[test]

@@ -141,7 +141,7 @@ services:
         condition: service_completed_successfully
     command: [control_api, --kubeconfig, /etc/kubernetes/pki/suntitle-api.compose.kubeconfig, --namespace, suntitle]
     environment:
-      SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP: "true"
+      EXTENSION_REGISTRY_PLAIN_HTTP: "true"
       DATABASE_URL: postgres://${POSTGRES_USER:-suntitle}:${POSTGRES_PASSWORD:-suntitle-local}@postgres:5432/${POSTGRES_DB:-suntitle}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
@@ -168,7 +168,7 @@ services:
       context: ./ui
     restart: unless-stopped
     environment:
-      SUNTITLE_API_PROXY_TARGET: http://api:3031
+      API_PROXY_TARGET: http://api:3031
     depends_on:
       api:
         condition: service_healthy
@@ -194,8 +194,8 @@ services:
     image: suntitle-ws-proxy:local
     restart: unless-stopped
     environment:
-      SUNTITLE_EXTENSION_REGISTRY: ${REGISTRY_HOST:-registry.localhost}/suntitle/extensions
-      SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP: "true"
+      EXTENSION_REGISTRY: ${REGISTRY_HOST:-registry.localhost}/suntitle/extensions
+      EXTENSION_REGISTRY_PLAIN_HTTP: "true"
     depends_on:
       kubernetes-bootstrap:
         condition: service_completed_successfully

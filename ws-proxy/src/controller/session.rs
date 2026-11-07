@@ -129,7 +129,12 @@ impl State {
                 self.hosts_api
                     .create(
                         &PostParams::default(),
-                        &SuntitleHost::new(&name, SuntitleHostSpec { display_name: name.clone() }),
+                        &SuntitleHost::new(
+                            &name,
+                            SuntitleHostSpec {
+                                display_name: name.clone(),
+                            },
+                        ),
                     )
                     .await?
             }

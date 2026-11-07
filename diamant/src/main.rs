@@ -47,7 +47,7 @@ struct Config {
     /// WebSocket registration endpoint exposed by VS Proxy.
     #[arg(
         long,
-        env = "SUNTITLE_PROXY_URL",
+        env = "PROXY_URL",
         default_value = DEFAULT_PROXY_URL,
         value_parser = NonEmptyStringValueParser::new()
     )]
@@ -56,43 +56,43 @@ struct Config {
     /// Name used to identify this host in Suntitle.
     #[arg(
         long,
-        env = "SUNTITLE_HOST_NAME",
+        env = "HOST_NAME",
         default_value_t = default_host_name(),
         value_parser = NonEmptyStringValueParser::new()
     )]
     host_name: String,
 
     /// Host IP reported to VS Proxy. By default, Diamant detects the routed IPv4 address.
-    #[arg(long, env = "SUNTITLE_HOST_IP")]
+    #[arg(long, env = "HOST_IP")]
     host_ip: Option<IpAddr>,
 
     /// Seconds between health OK reports.
     #[arg(
         long,
-        env = "SUNTITLE_HEALTH_INTERVAL_SECONDS",
+        env = "HEALTH_INTERVAL_SECONDS",
         default_value_t = DEFAULT_HEALTH_INTERVAL_SECONDS,
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     health_interval_seconds: u64,
 
     /// Repository directory containing pyproject.toml and the Python entry points.
-    #[arg(long, env = "SUNTITLE_PROJECT_DIR", default_value = ".")]
+    #[arg(long, env = "PROJECT_DIR", default_value = ".")]
     project_dir: PathBuf,
 
     /// Persistent directory for downloaded extension artifacts. Defaults to OS local data storage.
-    #[arg(long, env = "SUNTITLE_ARTIFACT_DIR")]
+    #[arg(long, env = "ARTIFACT_DIR")]
     artifact_dir: Option<PathBuf>,
 
     /// Use plain HTTP for artifact registry downloads.
-    #[arg(long, env = "SUNTITLE_ARTIFACT_PLAIN_HTTP")]
+    #[arg(long, env = "ARTIFACT_PLAIN_HTTP")]
     artifact_plain_http: bool,
 
     /// WebSocket data-plane base URL. Defaults to the registration URL without /register.
-    #[arg(long, env = "SUNTITLE_DATA_PLANE_URL")]
+    #[arg(long, env = "DATA_PLANE_URL")]
     data_plane_url: Option<Url>,
 
     /// Seconds allowed for children to exit after SIGTERM.
-    #[arg(long, env = "SUNTITLE_SHUTDOWN_GRACE_SECONDS", default_value_t = DEFAULT_SHUTDOWN_GRACE_SECONDS, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long, env = "SHUTDOWN_GRACE_SECONDS", default_value_t = DEFAULT_SHUTDOWN_GRACE_SECONDS, value_parser = clap::value_parser!(u64).range(1..))]
     shutdown_grace_seconds: u64,
 
     #[command(subcommand)]
