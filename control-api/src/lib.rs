@@ -4,3 +4,6 @@
 pub mod api;
 /// Kubernetes persistence used by the control API.
 pub mod store;
+
+/// Source manifest discovery for extension registration.
+pub mod extension_source;

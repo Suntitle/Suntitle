@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { extensionDefinition, extensionSettings } from "@/stores/extension-nodes"
 import { useStores } from "@/stores"
 import type {
   Host,
@@ -60,26 +61,35 @@ interface HostManagementDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+/** Install built-in or registered extension nodes through the existing type selector. */
 export const HostManagementDialog = observer(function HostManagementDialog({ host, open, onOpenChange }: HostManagementDialogProps) {
-  const { nodesStore } = useStores()
-  const [selectedType, setSelectedType] = useState<NodeType | null>(null)
+  const { nodesStore, extensionsStore } = useStores()
+  const [selectedType, setSelectedType] = useState<string | null>(null)
   const [nodeName, setNodeName] = useState("")
   const [inputNodeId, setInputNodeId] = useState<string | null>(null)
   const [settings, setSettings] = useState<Record<string, NodeSettingValue>>({})
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
-  const selectedDefinition = nodesStore.nodeTypes.find((definition) => definition.type === selectedType) ?? null
+  const choices = useMemo(() => [
+    ...nodesStore.nodeTypes.map((definition) => ({ key: definition.type, definition, extension: undefined as typeof extensionsStore.items[number] | undefined })),
+    ...extensionsStore.items.map((extension) => ({ key: `extension:${extension.metadata.name}`, definition: extensionDefinition(extension, nodesStore.nodeTypes.find((item) => item.type === extension.spec.adapter.type)), extension })),
+  ], [nodesStore.nodeTypes, extensionsStore.items])
+  const choiceLabels = useMemo(() => Object.fromEntries(choices.map((choice) => [choice.key, choice.definition.name])), [choices])
+  const selectedChoice = choices.find((choice) => choice.key === selectedType)
+  const selectedDefinition = selectedChoice?.definition ?? null
+  const selectedExtension = selectedChoice?.extension
   const allowedInputNodes = useMemo(() => {
     if (!selectedDefinition) return []
     return nodesStore.items.filter((node) => selectedDefinition.inputTypes.includes(node.type))
   }, [nodesStore.items, selectedDefinition])
-  const requiresInput = (selectedDefinition?.inputTypes.length ?? 0) > 0
+  const requiresInput = !selectedExtension && (selectedDefinition?.inputTypes.length ?? 0) > 0
   const canInstall = Boolean(selectedDefinition && nodeName.trim() && (!requiresInput || inputNodeId))
 
   const nodes = host ? nodesStore.nodesForHost(host.id) : []
 
-  const selectDefinition = useCallback((definition: NodeTypeDefinition) => {
-    setSelectedType(definition.type)
+  /** Reset instance values when selecting a distinct built-in type or extension. */
+  const selectDefinition = useCallback((definition: NodeTypeDefinition, key = definition.type as string) => {
+    setSelectedType(key)
     setNodeName(getDefaultNodeName(definition.type))
     setInputNodeId(null)
     setSettings(getDefaultSettings(definition))
@@ -97,10 +107,10 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
     setSuccessMessage(null)
     nodesStore.clearInstallError()
 
-    const requests = [nodesStore.loadNodes()]
+    const requests = [nodesStore.loadNodes(), extensionsStore.loadExtensions()]
     if (nodesStore.nodeTypes.length === 0) requests.push(nodesStore.loadNodeTypes())
     void Promise.all(requests).catch(() => undefined)
-  }, [host, nodesStore, open])
+  }, [host, nodesStore, extensionsStore, open])
 
   useEffect(() => {
     if (!open || selectedType !== null || nodesStore.nodeTypes.length === 0) return
@@ -122,23 +132,24 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
     nodesStore.clearInstallError()
   }
 
+  /** Serialize instance settings under their built-in variant or extension reference. */
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!host || !selectedDefinition) return
 
-    const create: NodeCreate = {
-      inputNodeId,
-      type: selectedDefinition.type,
-      name: nodeName,
-      enabled: true,
-      settings,
-    }
-
     try {
+      const create: NodeCreate = {
+        inputNodeId,
+        type: selectedDefinition.type,
+        name: nodeName,
+        enabled: true,
+        settings: selectedExtension ? extensionSettings(selectedExtension, settings) : settings,
+        ...(selectedExtension ? { extensionRef: selectedExtension.metadata.name } : {}),
+      }
       const node = await nodesStore.installNode(host.id, create)
       setSuccessMessage(`${node.name} installation was requested on ${host.name}.`)
-    } catch {
-      // NodesStore exposes the normalized API error to this observer.
+    } catch (error) {
+      nodesStore.setInstallError(error)
     }
   }
 
@@ -180,7 +191,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
                       <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-violet-100 text-violet-700"><Boxes className="size-4" aria-hidden="true" /></span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">{node.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">{nodesStore.nodeTypes.find((item) => item.type === node.type)?.name ?? node.type.replaceAll("_", " ")} · {host.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">{node.extensionName ?? nodesStore.nodeTypes.find((item) => item.type === node.type)?.name ?? node.type.replaceAll("_", " ")} · {host.name}</p>
                       </div>
                       <Badge variant="outline" className={cn("capitalize", nodeStatusStyles[node.enabled ? node.status : "disabled"])}>
                         {node.enabled ? node.status : "disabled"}
@@ -206,27 +217,30 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
                   ) : (
                     <Select
                       id="node-type"
-                      items={Object.fromEntries(nodesStore.nodeTypes.map((definition) => [definition.type, definition.name]))}
+                      items={choiceLabels}
                       value={selectedType}
                       onValueChange={(value) => {
-                        const definition = nodesStore.nodeTypes.find((item) => item.type === value)
-                        if (definition) selectDefinition(definition)
+                        const choice = choices.find((item) => item.key === value)
+                        if (choice) {
+                          selectDefinition(choice.definition, choice.key)
+                          if (choice.extension) setNodeName(choice.extension.metadata.name)
+                        }
                       }}
                     >
                       <SelectTrigger aria-label="Node type"><SelectValue placeholder="Select a node type" /></SelectTrigger>
                       <SelectContent>
-                        {nodesStore.nodeTypes.map((definition) => <SelectItem key={definition.type} value={definition.type}>{definition.name}</SelectItem>)}
+                        {choices.map((choice) => <SelectItem key={choice.key} value={choice.key}>{choice.definition.name}{choice.extension ? " · Extension" : ""}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   )}
                 </div>
 
-                {requiresInput && (
+                {(selectedDefinition?.inputTypes.length ?? 0) > 0 && (
                   <div className="grid gap-2">
-                    <Label htmlFor="node-input">Input</Label>
+                    <Label htmlFor="node-input">{selectedExtension ? "Input (optional)" : "Input"}</Label>
                     <Select
                       id="node-input"
-                      required
+                      required={requiresInput}
                       items={Object.fromEntries(allowedInputNodes.map((node) => [node.id, `${node.name} · ${node.host.name}`]))}
                       value={inputNodeId}
                       onValueChange={(value) => {
@@ -237,6 +251,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
                     >
                       <SelectTrigger aria-label="Input"><SelectValue placeholder="Select an input node" /></SelectTrigger>
                       <SelectContent>
+                        {selectedExtension && <SelectItem value="">No input</SelectItem>}
                         {allowedInputNodes.map((node) => <SelectItem key={node.id} value={node.id}>{node.name} · {node.host.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
@@ -263,6 +278,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
                   </div>
                 )}
 
+                {extensionsStore.error && <p role="alert" className="text-sm text-destructive">Unable to load extension types: {extensionsStore.error}</p>}
                 {nodesStore.installError && <p role="alert" className="text-sm text-destructive">{nodesStore.installError}</p>}
                 {successMessage && <p role="status" className="text-sm text-emerald-700">{successMessage}</p>}
               </section>

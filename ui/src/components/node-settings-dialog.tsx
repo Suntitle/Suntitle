@@ -17,8 +17,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { extensionDefinition, extensionFormValues, extensionSettings } from "@/stores/extension-nodes"
 import { useStores } from "@/stores"
 import type {
+  Extension,
   AudioSourceSettings,
   DisplaySettings,
   Node,
@@ -65,12 +67,19 @@ function formatNodeId(value: string) {
   return value.length > 13 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
 }
 
-function createNodeUpdate(node: Node, name: string, inputNodeId: string | null, settings: Record<string, NodeSettingValue>): NodeUpdate {
+/** Preserve custom extension identity and parse instance values before saving. */
+function createNodeUpdate(node: Node, name: string, inputNodeId: string | null, settings: Record<string, NodeSettingValue>, extension?: Extension): NodeUpdate {
   const base = {
     name,
     description: node.description ?? null,
     enabled: node.enabled,
     inputNodeId,
+  }
+
+  if (node.spec.extensionRef) {
+    if (!extension) throw new Error("The referenced extension is unavailable")
+    return { ...base, type: node.type, extensionRef: node.spec.extensionRef.name,
+      settings: { ...node.spec.settings.custom, ...extensionSettings(extension, settings) } }
   }
 
   switch (node.type) {
@@ -81,16 +90,19 @@ function createNodeUpdate(node: Node, name: string, inputNodeId: string | null, 
   }
 }
 
+/** Edit built-in and manifest-declared custom settings using the existing controls. */
 export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
-  const { nodesStore } = useStores()
+  const { nodesStore, extensionsStore } = useStores()
   const node = nodesStore.selectedNode
   const [nodeName, setNodeName] = useState("")
   const [inputNodeId, setInputNodeId] = useState<string | null>(null)
   const [settings, setSettings] = useState<Record<string, NodeSettingValue>>({})
 
-  const definition = node
-    ? nodesStore.nodeTypes.find((item) => item.type === node.type) ?? null
-    : null
+  const extension = extensionsStore.items.find((item) => item.metadata.name === node?.spec.extensionRef?.name)
+  const builtInDefinition = node ? nodesStore.nodeTypes.find((item) => item.type === node.type) : undefined
+  const definition = node?.spec.extensionRef
+    ? extension ? extensionDefinition(extension, builtInDefinition) : null
+    : builtInDefinition ?? null
 
   const allowedInputNodes = useMemo(() => {
     if (!node || !definition) return []
@@ -106,13 +118,13 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
 
     setNodeName(node.name)
     setInputNodeId(node.inputNodeId)
-    setSettings({ ...node.settings })
+    setSettings(extension ? extensionFormValues(extension, node.spec.settings.custom ?? {}) : { ...node.settings })
     nodesStore.clearSaveError()
 
     if (nodesStore.nodeTypes.length === 0) {
       void nodesStore.loadNodeTypes().catch(() => undefined)
     }
-  }, [node, nodesStore])
+  }, [node, nodesStore, extension])
 
   function updateSetting(key: string, value: NodeSettingValue) {
     setSettings((current) => ({ ...current, [key]: value }))
@@ -123,21 +135,22 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
     if (!open) nodesStore.selectNode(null)
   }
 
+  /** Save the matching settings variant without changing the extension reference. */
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!node || !definition) return
 
-    const update = createNodeUpdate(node, nodeName, inputNodeId, settings)
-
     try {
+      const update = createNodeUpdate(node, nodeName, inputNodeId, settings, extension)
       await nodesStore.updateNode(node.id, update)
       nodesStore.selectNode(null)
-    } catch {
-      // NodesStore exposes the normalized API error to this observer.
+    } catch (error) {
+      nodesStore.setSaveError(error)
     }
   }
 
-  const requiresInput = (definition?.inputTypes.length ?? 0) > 0
+  const showInput = (definition?.inputTypes.length ?? 0) > 0
+  const requiresInput = !node?.spec.extensionRef && showInput
   const canSave = Boolean(definition && nodeName.trim() && (!requiresInput || inputNodeId))
   const InputIcon = selectedInput ? nodeTypeIcons[selectedInput.type] : Mic
 
@@ -158,14 +171,14 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
                   <Badge variant="outline" className={cn("capitalize", statusStyles[node.status])}>{node.status}</Badge>
                 </div>
                 <dl className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <div><dt className="text-xs text-muted-foreground">Node type</dt><dd className="mt-1 font-mono text-xs font-medium">{nodeTypeLabels[node.type]}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Node type</dt><dd className="mt-1 font-mono text-xs font-medium">{node.extensionName ?? nodeTypeLabels[node.type]}</dd></div>
                   <div><dt className="text-xs text-muted-foreground">Host</dt><dd className="mt-1 font-mono text-xs font-medium">{node.host.name}</dd></div>
                   <div><dt className="text-xs text-muted-foreground">Node ID</dt><dd className="mt-1 font-mono text-xs font-medium">{formatNodeId(node.id)}</dd></div>
                   <div><dt className="text-xs text-muted-foreground">Updated</dt><dd className="mt-1 font-mono text-xs font-medium">{formatUpdatedAt(node.updatedAt)}</dd></div>
                 </dl>
               </section>
 
-              {requiresInput && (
+              {showInput && (
                 <section aria-labelledby="current-input-title" className="rounded-xl border">
                   <div className="flex items-center justify-between gap-4 px-4 py-3">
                     <h3 id="current-input-title" className="text-sm font-semibold">Current input</h3>
@@ -194,12 +207,12 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
                   <p className="mt-1 text-xs text-muted-foreground">Choose an allowed input, then update settings for this node.</p>
                 </div>
 
-                {requiresInput && (
+                {showInput && (
                   <div className="grid gap-2">
-                    <Label htmlFor="node-input">Input</Label>
+                    <Label htmlFor="node-input">{extension ? "Input (optional)" : "Input"}</Label>
                     <Select
                       id="node-input"
-                      required
+                      required={requiresInput}
                       items={Object.fromEntries(allowedInputNodes.map((item) => [item.id, `${item.name} · ${item.host.name}`]))}
                       value={inputNodeId}
                       onValueChange={(value) => {
@@ -209,6 +222,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
                     >
                       <SelectTrigger aria-label="Input"><SelectValue placeholder="Select an input node" /></SelectTrigger>
                       <SelectContent>
+                        {extension && <SelectItem value="">No input</SelectItem>}
                         {allowedInputNodes.map((item) => <SelectItem key={item.id} value={item.id}>{item.name} · {item.host.name}</SelectItem>)}
                       </SelectContent>
                     </Select>

@@ -111,13 +111,13 @@ paths:
       tags:
       - Extensions
       summary: Register an extension
-      description: Persist desired extension state. Success does not imply artifact publication or host installation.
+      description: Register from a source manifest or an explicit specification. Source registration reads manifest.yaml, manifest.yml, or manifest.json and overrides manifest source fields with the selected source. Publication and host installation remain asynchronous.
       operationId: createExtension
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ExtensionCreate'
+              $ref: '#/components/schemas/ExtensionCreateRequest'
         required: true
       responses:
         '201':
@@ -738,6 +738,36 @@ components:
         spec:
           $ref: '#/components/schemas/SuntitleExtensionSpec'
       additionalProperties: false
+    ExtensionCreateRequest:
+      oneOf:
+      - $ref: '#/components/schemas/ExtensionRegistration'
+        description: Resolve configuration from the selected source before persistence.
+      - $ref: '#/components/schemas/ExtensionCreate'
+        description: Preserve callers that already provide the complete specification.
+      description: Registration accepts a source manifest or an explicit extension specification.
+    ExtensionRegistration:
+      type: object
+      description: Registration location; all adapter fields come from the source manifest.
+      required:
+      - sourceType
+      - source
+      properties:
+        source:
+          type: string
+          description: Absolute server directory, HTTP(S) Git URL, OCI reference, or HTTP payload URL.
+          minLength: 1
+        sourceType:
+          $ref: '#/components/schemas/ExtensionSourceType'
+          description: Transport used to read and subsequently publish the extension.
+      additionalProperties: false
+    ExtensionSourceType:
+      type: string
+      description: Transport used to discover and publish extension payloads.
+      enum:
+      - local
+      - git
+      - oci
+      - http
     LanguageTag:
       type: string
       description: BCP 47 language tag.
@@ -1657,9 +1687,9 @@ components:
                     type: string
                     description: type of condition in CamelCase or in foo.example.com/CamelCase.
               description: Host health observations keyed by condition type.
-              x-kubernetes-list-type: map
               x-kubernetes-list-map-keys:
               - type
+              x-kubernetes-list-type: map
             ip:
               type:
               - string

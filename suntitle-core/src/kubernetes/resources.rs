@@ -90,13 +90,32 @@ fn publication_attempts_default() -> u32 {
     3
 }
 
-#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+/// Transport used to discover and publish extension payloads.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtensionSourceType {
+    /// Directory accessible to the server and publication worker.
     Local,
+    /// HTTP(S) Git repository.
     Git,
+    /// OCI artifact reference.
     Oci,
+    /// HTTP(S) payload with a sibling manifest.
     Http,
+}
+
+impl JsonSchema for ExtensionSourceType {
+    /// Preserve the established schema identity across resource and API schemas.
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ExtensionSourceType".into()
+    }
+
+    /// Keep enum constraints flat; variant descriptions MUST NOT create overlapping branches.
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        serde_json::json!({"type": "string", "enum": [Self::Local, Self::Git, Self::Oci, Self::Http]})
+            .try_into()
+            .unwrap()
+    }
 }
 
 /// Publication progress and terminal outcome reported by Apalis for the observed revision.

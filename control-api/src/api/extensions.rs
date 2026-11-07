@@ -1,8 +1,19 @@
 use actix_web::{HttpResponse, get, post, web};
 
 use super::errors::{ApiError, ApiResult, ErrorEnvelope};
+use crate::extension_source::ExtensionRegistration;
 use crate::store::{ExtensionCreate, ResourceList, ResourceStore};
 use suntitle_core::kubernetes::resources::SuntitleExtension;
+
+/// Registration accepts a source manifest or an explicit extension specification.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum ExtensionCreateRequest {
+    /// Resolve configuration from the selected source before persistence.
+    Source(ExtensionRegistration),
+    /// Preserve callers that already provide the complete specification.
+    Specification(ExtensionCreate),
+}
 
 #[utoipa::path(get, path = "/extensions", tag = "Extensions", operation_id = "listExtensions",
     summary = "List registered extensions",
@@ -27,17 +38,21 @@ pub async fn get_extension(
 
 #[utoipa::path(post, path = "/extensions", tag = "Extensions", operation_id = "createExtension",
     summary = "Register an extension",
-    description = "Persist desired extension state. Success does not imply artifact publication or host installation.",
-    request_body = ExtensionCreate,
+    description = "Register from a source manifest or an explicit specification. Source registration reads manifest.yaml, manifest.yml, or manifest.json and overrides manifest source fields with the selected source. Publication and host installation remain asynchronous.",
+    request_body = ExtensionCreateRequest,
     responses((status = 201, body = SuntitleExtension, headers(("Location" = String, description = "Created extension URL"))),
         (status = 400, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
         (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)))]
 #[post("/extensions")]
 pub async fn create_extension(
     store: web::Data<ResourceStore>,
-    body: web::Json<ExtensionCreate>,
+    body: web::Json<ExtensionCreateRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let extension = store.create_extension(body.into_inner()).await?;
+    let request = match body.into_inner() {
+        ExtensionCreateRequest::Source(source) => source.resolve().await?,
+        ExtensionCreateRequest::Specification(specification) => specification,
+    };
+    let extension = store.create_extension(request).await?;
     use kube::ResourceExt;
     Ok(HttpResponse::Created()
         .insert_header((

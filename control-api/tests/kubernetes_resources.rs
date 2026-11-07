@@ -291,6 +291,10 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
     use utoipa::OpenApi;
     let api = serde_json::to_value(control_api::api::ApiDoc::openapi()).unwrap();
     assert_eq!(
+        api["components"]["schemas"]["SuntitleExtensionSpec"]["properties"]["sourceType"]["enum"],
+        json!(["local", "git", "oci", "http"])
+    );
+    assert_eq!(
         api["components"]["schemas"]["SuntitleExtensionSpec"]["properties"]["adapter"]["properties"]
             ["execution"]["properties"]["runtime"]["enum"],
         json!(["executable", "python", "pythonModule"])

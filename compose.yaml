@@ -15,6 +15,8 @@ services:
         condition: service_healthy
     security_opt:
       - no-new-privileges:true
+      # Traefik MUST access the host Docker socket for service discovery.
+      - label:disable
     networks:
       control-plane:
         aliases:
@@ -34,7 +36,7 @@ services:
       OTEL_TRACES_EXPORTER: none
     volumes:
       - registry-data:/var/lib/registry
-      - ./docker/distribution/config.yml:/etc/distribution/config.yml:ro
+      - ./docker/distribution/config.yml:/etc/distribution/config.yml:ro,z
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.distribution.rule=Host(`${REGISTRY_HOST:-registry.localhost}`)"
@@ -101,7 +103,7 @@ services:
       - --enable-bootstrap-token-auth=true
       - --endpoint-reconciler-type=none
     volumes:
-      - ./pki:/etc/kubernetes/pki:ro
+      - ./pki:/etc/kubernetes/pki:ro,z
     networks:
       - control-plane
 
@@ -115,7 +117,7 @@ services:
       kube-apiserver:
         condition: service_started
     volumes:
-      - ./pki:/etc/kubernetes/pki:ro
+      - ./pki:/etc/kubernetes/pki:ro,z
     command:
       - /bin/bash
       - -ec
@@ -138,8 +140,12 @@ services:
       kubernetes-bootstrap:
         condition: service_completed_successfully
     command: [control_api, --kubeconfig, /etc/kubernetes/pki/suntitle-api.compose.kubeconfig, --namespace, suntitle]
+    environment:
+      SUNTITLE_EXTENSION_REGISTRY_PLAIN_HTTP: "true"
     volumes:
-      - ./pki:/etc/kubernetes/pki:ro
+      - ./pki:/etc/kubernetes/pki:ro,z
+      - ${LOCAL_EXTENSIONS_DIR:-./extensions}:/opt/suntitle/extensions:ro,z
+      - ./ws-proxy/examples/custom_node_e2e/extensions:/opt/suntitle/example-extensions:ro,z
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=PathPrefix(`/api`)"
@@ -192,11 +198,11 @@ services:
         condition: service_completed_successfully
     command: [ws-proxy, --kubeconfig, /etc/kubernetes/pki/suntitle-proxy.compose.kubeconfig, --namespace, suntitle]
     volumes:
-      - ./pki:/etc/kubernetes/pki:ro
+      - ./pki:/etc/kubernetes/pki:ro,z
       # Developers' local extension sources. Override the host directory in .env.local.
-      - ${LOCAL_EXTENSIONS_DIR:-./extensions}:/opt/suntitle/extensions:ro
+      - ${LOCAL_EXTENSIONS_DIR:-./extensions}:/opt/suntitle/extensions:ro,z
       # Bundled E2E fixtures, also available for manual development testing.
-      - ./ws-proxy/examples/custom_node_e2e/extensions:/opt/suntitle/example-extensions:ro
+      - ./ws-proxy/examples/custom_node_e2e/extensions:/opt/suntitle/example-extensions:ro,z
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ws-proxy.rule=Path(`/register`) || Path(`/transcribe`) || Path(`/translate`) || Path(`/display`) || (Path(`/`) && Header(`Upgrade`, `websocket`) && !Header(`Sec-WebSocket-Protocol`, `vite-hmr`))"

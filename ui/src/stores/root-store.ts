@@ -10,6 +10,7 @@ export class RootStore {
   readonly hostsStore: HostsStore
   readonly nodesStore: NodesStore
 
+  /** Share authentication and extension definitions across resource stores. */
   constructor(baseUrl?: string) {
     let authStore: AuthStore
     const api = new ApiClient(() => authStore.accessToken, baseUrl)
@@ -18,6 +19,6 @@ export class RootStore {
     this.authStore = authStore
     this.extensionsStore = new ExtensionsStore(api)
     this.hostsStore = new HostsStore(api)
-    this.nodesStore = new NodesStore(api)
+    this.nodesStore = new NodesStore(api, this.extensionsStore)
   }
 }

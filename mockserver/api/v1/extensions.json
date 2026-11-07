@@ -1,16 +1,73 @@
-[
-  {
-    "name": "obs-captions",
-    "version": "1.4.2",
-    "description": "Publishes live subtitles to OBS Studio.",
-    "source": "https://github.com/suntitle/extensions/obs-captions.git",
-    "sourceType": "git"
-  },
-  {
-    "name": "archive-export",
-    "version": "0.8.0",
-    "description": "Exports completed subtitle sessions as WebVTT files.",
-    "source": "/opt/suntitle/extensions/archive-export",
-    "sourceType": "local"
-  }
-]
+{
+  "items": [
+    {
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleExtension",
+      "metadata": {
+        "name": "obs-captions",
+        "generation": 1
+      },
+      "spec": {
+        "name": "obs-captions",
+        "source": "https://github.com/suntitle/extensions/obs-captions.git",
+        "sourceType": "git",
+        "adapter": {
+          "type": "display",
+          "execution": {
+            "command": "./bin/extension",
+            "runtime": "executable"
+          }
+        }
+      },
+      "status": {
+        "observedGeneration": 1,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "ArtifactPublished",
+            "message": "Artifact published.",
+            "lastTransitionTime": "2026-11-06T12:00:00Z",
+            "observedGeneration": 1
+          }
+        ],
+        "artifactReference": "registry.example.com/obs-captions@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "apiVersion": "control.suntitle.io/v1alpha1",
+      "kind": "SuntitleExtension",
+      "metadata": {
+        "name": "archive-export",
+        "generation": 1
+      },
+      "spec": {
+        "name": "archive-export",
+        "source": "/opt/suntitle/extensions/archive-export",
+        "sourceType": "local",
+        "adapter": {
+          "type": "display",
+          "execution": {
+            "command": "./bin/extension",
+            "runtime": "executable"
+          }
+        }
+      },
+      "status": {
+        "observedGeneration": 1,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "ArtifactPublished",
+            "message": "Artifact published.",
+            "lastTransitionTime": "2026-11-06T12:00:00Z",
+            "observedGeneration": 1
+          }
+        ],
+        "artifactReference": "registry.example.com/archive-export@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ],
+  "resourceVersion": "10"
+}

@@ -69,7 +69,7 @@ type Displays = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 async fn main() -> std::io::Result<()> {
     pretty_env_logger::init();
     let args = Args::parse();
-    let client = suntitle_core::kubernetes::client_from_kubeconfig(&args.kubeconfig)
+    let client = suntitle_core::kubernetes::watch_client_from_kubeconfig(&args.kubeconfig)
         .await
         .map_err(std::io::Error::other)?;
     let credentials: std::collections::BTreeMap<String, ws_proxy::controller::RegistryCredential> =

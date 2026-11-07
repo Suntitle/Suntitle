@@ -123,7 +123,7 @@ local-stack:
 
     just _local-infra-up
     cargo build -p diamant --bin diamant
-    target/debug/diamant --cli --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
+    target/debug/diamant --cli --artifact-plain-http --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
     pids+=("$!")
 
     while true; do
