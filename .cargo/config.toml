@@ -1,2 +1,6 @@
+[env]
+# SQLx macros MUST use bundled query metadata, not the API's runtime DATABASE_URL.
+SQLX_OFFLINE = "true"
+
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]

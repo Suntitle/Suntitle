@@ -25,6 +25,10 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
       COMPOSE_FILE: compose.yaml:compose.ci.yaml
+      DATABASE_URL: postgres://suntitle:suntitle-local@127.0.0.1:15432/suntitle
+      TEST_DATABASE_URL: postgres://suntitle:suntitle-local@127.0.0.1:15432/suntitle
+      ADMIN_USERNAME: ci-admin
+      ADMIN_PASSWORD: ci-admin-password
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -62,6 +66,9 @@ jobs:
         run: |
           bash scripts/generate-certs.sh
           bash scripts/generate-kubeconfigs.sh
+
+      - name: Start PostgreSQL for authentication tests
+        run: docker compose up -d --wait --wait-timeout 90 postgres
 
       - name: Start Kubernetes dependencies
         run: |

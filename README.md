@@ -37,6 +37,7 @@ WebSocket proxy/controller, Distribution OCI registry, and the UI development se
 Diamant runs on the host.
 
 ```bash
+cp .env.example .env.local  # once; set ADMIN_USERNAME and ADMIN_PASSWORD in this file
 just generate-certs  # once before the first launch; requires mkcert and OpenSSL
 just local-stack
 ```
@@ -46,8 +47,8 @@ kubeconfigs, builds the backend and UI images, and starts Compose. A bootstrap c
 waits for Kubernetes readiness and installs the namespace, CRDs, and RBAC.
 The API and proxy start with their separate container kubeconfigs. The command
 waits for the API, proxy, and UI to be healthy before starting Diamant.
-PostgreSQL is Kine's backing database; legacy application database migrations
-are not needed.
+PostgreSQL stores Kine's state and the administrator account. The API creates
+its administrator table automatically; legacy application migrations are not needed.
 
 Open http://localhost. Traefik routes `/api` to the control API and
 `/register`, `/transcribe`, `/translate`, and `/display` to the WebSocket proxy.
@@ -192,6 +193,24 @@ Compose starts PostgreSQL, waits for its health check, then starts Kine and the
 API server. Kine exposes port `2379`; the HTTPS Kubernetes API exposes `6443`.
 The `pki/` directory is mounted read-only and excluded from Git. This standalone
 setup does not run a controller-manager, scheduler, or worker nodes.
+
+Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env.local` before the first
+API startup. Set `ADMIN_PASSWORD` to the plaintext password; do not encrypt or
+hash it yourself. The API creates a singleton administrator in PostgreSQL and
+hashes the password with a random salt using scrypt before storing it. The
+plaintext password is not stored in the database. Empty bootstrap credentials prevent startup when
+no administrator exists. Login accepts only the persisted administrator's credentials.
+Later starts preserve the account and its ID; changing these environment variables
+does not reset the password. Removing the database volume removes the account too.
+Bearer sessions last 24 hours and are revoked by logout or an API restart.
+
+For an API process running outside Compose, export `DATABASE_URL` pointing to the
+same PostgreSQL database, plus the two bootstrap variables on first startup.
+PostgreSQL must be reachable from that process; Compose does not publish its port
+by default. `generate-crds` and `bootstrap-kubernetes` do not require these variables.
+The PostgreSQL bootstrap test runs against a disposable schema:
+`TEST_DATABASE_URL=postgres://... cargo test -p control-api database_bootstrap_preserves_credentials -- --ignored`.
+The test database user must be allowed to create schemas.
 
 Compose defaults match the existing local database credentials. It reads
 `.env.local` only when passed `--env-file .env.local`. PostgreSQL initialization variables do not change
@@ -357,17 +376,24 @@ starts a temporary `diamant` agent,
 and checks that the host is returned by the control API:
 
 ```bash
+# Publish PostgreSQL and Kubernetes locally for the host-run API.
+export COMPOSE_FILE=compose.yaml:compose.ci.yaml
+export DATABASE_URL=postgres://suntitle:suntitle-local@127.0.0.1:15432/suntitle
+export TEST_DATABASE_URL="$DATABASE_URL"
+# Use the persisted administrator credentials if the volume already has an account.
+export ADMIN_USERNAME=e2e-admin ADMIN_PASSWORD=e2e-admin-password
 just host-e2e
 ```
 
 The example stops its application children and removes its isolated Kubernetes
 namespace when it finishes. Kubernetes remains running.
-Both E2Es require ports 3030 and 3031 to be free.
+Both E2Es require ports 3030 and 3031 to be free, and inherit the database
+and bootstrap variables shown above. CI sets these variables explicitly.
 The recipes depend on `just e2e-build` to prepare applications and examples before
 startup. Direct example execution requires this preparation too; harnesses share
 process guards, service waits, and API polling under `ws-proxy/examples/support`.
 
-To verify node lifecycle handling end to end, run:
+To verify node lifecycle handling end to end, use the same environment and run:
 
 ```bash
 just node-e2e
@@ -381,7 +407,8 @@ themselves before Diamant disconnects; this test does not cover child
 cancellation. The check currently requires Unix and `/usr/bin/python3`.
 
 To verify local and OCI extension registration through actual native, Python
-script, and Python module execution, run `just custom-node-e2e`. The YAML requests
+script, and Python module execution, run `just custom-node-e2e`. This recipe uses
+an isolated database on port 15433 and supplies its own test admin credentials. The YAML requests
 and retained development sources are in
 [`ws-proxy/examples/custom_node_e2e`](ws-proxy/examples/custom_node_e2e/README.md).
 Compose mounts those fixtures into HUB at `/opt/suntitle/example-extensions`.
