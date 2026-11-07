@@ -82,10 +82,16 @@ async fn main() -> std::io::Result<()> {
         .map_err(std::io::Error::other)?;
     let store = control_api::store::ResourceStore::new(client, &args.namespace);
     store.ready().await.map_err(std::io::Error::other)?;
+    let database_url = std::env::var("DATABASE_URL").map_err(std::io::Error::other)?;
+    let auth = control_api::api::auth::AuthState::from_database(&database_url)
+        .await
+        .map_err(std::io::Error::other)?;
+    let auth = actix_web::web::Data::new(auth);
     eprintln!("Suntitle REST API listening on 0.0.0.0:3031");
     HttpServer::new(move || {
         let store = store.clone();
         App::new()
+            .app_data(auth.clone())
             .into_utoipa_app()
             .configure(move |c| control_api::api::configure_with_store(c, store))
             .into_app()

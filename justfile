@@ -196,13 +196,15 @@ custom-node-e2e: custom-node-fixtures
     }
     trap cleanup EXIT
     "${compose[@]}" up -d --wait --wait-timeout 90 kube-apiserver distribution traefik
-    target/debug/examples/custom_node_e2e
+    DATABASE_URL=postgres://suntitle:suntitle-local@127.0.0.1:15433/suntitle \
+      ADMIN_USERNAME=e2e-admin ADMIN_PASSWORD=e2e-admin-password \
+      target/debug/examples/custom_node_e2e
 
 # Run Rust tests that do not require a Kubernetes server.
 test-rust:
     cargo test --locked --workspace --exclude diamant-ui
 
-# Run ignored integration tests against bootstrapped Kubernetes.
+# Run ignored integration tests against bootstrapped Kubernetes and PostgreSQL.
 test-rust-live:
     cargo test --locked -p ws-proxy -p control-api -p diamant -p suntitle-core -- --ignored --test-threads=1
 

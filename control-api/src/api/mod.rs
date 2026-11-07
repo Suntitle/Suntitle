@@ -135,7 +135,6 @@ pub fn configure_with_store(
     config: &mut utoipa_actix_web::service_config::ServiceConfig,
     store: ResourceStore,
 ) {
-    config.app_data(actix_web::web::Data::new(auth::AuthState::default()));
     config.app_data(actix_web::web::Data::new(store));
     config.app_data(actix_web::web::JsonConfig::default().error_handler(|_, _| {
         errors::ApiError::problem(

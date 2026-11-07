@@ -1,5 +1,8 @@
 # Isolated storage and registry. Application processes run in the Rust E2E harness.
 services:
+  postgres:
+    ports:
+      - "127.0.0.1:15433:5432"
   kube-apiserver:
     ports: !override
       - "127.0.0.1:16443:6443"

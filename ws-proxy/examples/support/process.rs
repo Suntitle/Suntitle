@@ -113,9 +113,9 @@ pub fn binary_path(directory: &Path, name: &str) -> PathBuf {
     directory.join(format!("{name}{}", env::consts::EXE_SUFFIX))
 }
 
-/// Wait for both services while checking all required application children.
+/// Wait for both services, including first-start password hashing, while checking children.
 pub async fn wait_for_services(processes: &mut [&mut ChildProcess]) -> io::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         for process in processes.iter_mut() {
             process.ensure_running()?;

@@ -28,6 +28,9 @@ reqwest.workspace = true
 tempfile.workspace = true
 oci-artifact.workspace = true
 
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres"] }
+scrypt = { version = "0.11", features = ["simple"] }
+
 [dev-dependencies]
 futures-util.workspace = true
 warp.workspace = true
