@@ -60,11 +60,12 @@ class InfrastructureTest(unittest.TestCase):
         """Render selected images safely and require pulls without instance-side builds."""
         arguments = dict(bucket='source-bucket', key='digest.tar.gz', region='eu-north-1',
                          volume_id='vol-123', registry_host='registry.example.com',
-                         compose_version='v5.6.0', images={'api': 'example/api:v2',
+                         compose_version='v5.6.0', admin_password='A1' * 32, images={'api': 'example/api:v2',
                          'proxy': 'example/proxy:v2', 'ui': 'example/ui:v2'})
         script = DEPLOYMENT.render_user_data(**arguments)
         subprocess.run(['bash', '-n'], input=script, text=True, check=True)
         self.assertIn('export API_IMAGE=example/api:v2', script)
+        self.assertIn('export ADMIN_PASSWORD=' + 'A1' * 32, script)
         self.assertIn('docker compose --env-file .env.local pull', script)
         self.assertIn('up --no-build', script)
         self.assertNotIn('docker compose --env-file .env.local build', script)
@@ -97,7 +98,7 @@ class InfrastructureTest(unittest.TestCase):
                         self.assertIn('up --no-build', commands[1])
 
     def test_bootstrap_preserves_admin_credentials(self):
-        """Fresh deployments MUST receive private admin credentials retained on reruns."""
+        """Provisioning MUST install Pulumi's password and preserve it on reruns."""
         bootstrap = (ROOT / 'infrastructure/bootstrap.sh').read_text()
         script = bootstrap[bootstrap.index('if [[ ! -s /srv/suntitle/postgres-password'):]
         script = script[:script.index('\nbash infrastructure/generate-pki.sh')]
@@ -107,16 +108,14 @@ class InfrastructureTest(unittest.TestCase):
             environment = os.environ | {'REGISTRY_HOST': 'registry.example.com',
                                         'API_IMAGE': 'example/api:v1',
                                         'PROXY_IMAGE': 'example/proxy:v1',
-                                        'UI_IMAGE': 'example/ui:v1'}
+                                        'UI_IMAGE': 'example/ui:v1',
+                                        'ADMIN_PASSWORD': 'A1' * 32}
             previous = None
             for _ in range(2):
                 subprocess.run(['bash', '-c', script], cwd=root, env=environment, check=True)
                 dotenv = dict(line.split('=', 1) for line in (root / '.env.local').read_text().splitlines())
-                password = (root / 'admin-password').read_text().strip()
                 self.assertEqual(dotenv['ADMIN_USERNAME'], 'admin')
-                self.assertRegex(password, r'^[0-9a-f]{64}$')
-                self.assertEqual(dotenv['ADMIN_PASSWORD'], password)
-                self.assertEqual((root / 'admin-password').stat().st_mode & 0o777, 0o600)
+                self.assertEqual(dotenv['ADMIN_PASSWORD'], environment['ADMIN_PASSWORD'])
                 self.assertEqual((root / '.env.local').stat().st_mode & 0o777, 0o600)
                 if previous is not None:
                     self.assertEqual(dotenv, previous)

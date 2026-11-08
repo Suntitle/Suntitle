@@ -76,12 +76,18 @@ digest to trigger an instance replacement.
 
 The checkout's Compose configuration and certificate setup are uploaded to private
 S3. Rust/UI source, binary installers, local `.env` files, certificates, and
-extension payloads are excluded. The instance creates its own credentials.
+extension payloads are excluded. Pulumi supplies the administrator password;
+the instance creates its database credentials.
 Startup continues after Pulumi finishes; inspect cloud-init for readiness.
 
-On first startup, provisioning creates the `admin` account with a random password.
-The password is retained on the persistent data volume across instance replacements.
-Retrieve it through `just infra-ssh` with `sudo cat /srv/suntitle/admin-password`.
+Pulumi generates a 64-character administrator password using the
+`suntitle-admin-password` RandomPassword resource. It retains the value in secret
+state across updates and instance replacements, supplies it through secret
+user data, and exports it as the secret `adminPassword` stack output.
+On first startup, provisioning initializes the `admin` account with this password.
+After deployment, `just infra-up` prints the admin password from
+Pulumi outputs. Run `just infra-password` to print the password again directly
+from Pulumi state. Credential retrieval requires no connection to the instance.
 The API uses these credentials only when initializing an empty administrator table;
 later startups retain the account stored in PostgreSQL.
 

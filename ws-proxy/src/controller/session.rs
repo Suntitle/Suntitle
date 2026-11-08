@@ -113,6 +113,7 @@ impl State {
     }
 
     /// Create or reuse a host using a lowercase DNS name and replace its connection.
+    /// Resource names MUST omit non-alphanumeric edge characters.
     /// The display name MUST retain the agent's original hostname.
     pub(super) async fn register(
         &mut self,
@@ -125,14 +126,18 @@ impl State {
             return Err("host name and agent version are required".into());
         }
         let resource_name = name.to_ascii_lowercase();
-        let mut host = match self.hosts_api.get_opt(&resource_name).await? {
+        let resource_name = resource_name.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        if resource_name.is_empty() {
+            return Err("host name must contain an ASCII alphanumeric character".into());
+        }
+        let mut host = match self.hosts_api.get_opt(resource_name).await? {
             Some(host) => host,
             None => {
                 self.hosts_api
                     .create(
                         &PostParams::default(),
                         &SuntitleHost::new(
-                            &resource_name,
+                            resource_name,
                             SuntitleHostSpec {
                                 display_name: name.clone(),
                             },

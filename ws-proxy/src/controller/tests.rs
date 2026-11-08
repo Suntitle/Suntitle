@@ -215,17 +215,23 @@ async fn registration_uses_created_host_uid_and_reuses_it_on_reconnect() {
     ))
     .unwrap();
     state.hosts_api = Api::namespaced(client, "test");
+    let hostname = "Studio-Laptop-14-Inch-2024-";
     let first = state
-        .register("host".into(), "test".into(), Default::default(), None)
+        .register(hostname.into(), "test".into(), Default::default(), None)
         .await
         .unwrap();
     assert_eq!(first.host.uid, "api-assigned-uid");
+    assert_eq!(first.host.name, "studio-laptop-14-inch-2024");
+    assert_eq!(
+        resource.lock().unwrap().as_ref().unwrap().spec.display_name,
+        hostname
+    );
     assert_ne!(first.session_id, first.host.uid);
     state
         .connections
         .mark_dispatched(&first.host.uid, "node".into(), "operation".into());
     let replacement = state
-        .register("host".into(), "test".into(), Default::default(), None)
+        .register(hostname.into(), "test".into(), Default::default(), None)
         .await
         .unwrap();
     assert_ne!(replacement.session_id, first.session_id);

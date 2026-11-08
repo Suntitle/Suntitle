@@ -276,8 +276,14 @@ aws-login *command:
     eval "$credentials"
     exec "$@"
 
-# Deploy the Pulumi stack with default AWS credentials.
+# Deploy the Pulumi stack and print its administrator password from stack outputs.
 infra-up: (aws-login "pulumi" "-C" "infrastructure" "up")
+    @printf 'Admin password: '
+    @just infra-password
+
+# Print the administrator password directly from Pulumi state.
+infra-password:
+    @pulumi -C infrastructure stack output adminPassword --show-secrets
 
 # Set the Pulumi stack's AWS region.
 infra-region region: (aws-login "pulumi" "-C" "infrastructure" "config" "set" "aws:region" region)

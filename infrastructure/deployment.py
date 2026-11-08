@@ -1,7 +1,8 @@
 """Package deployment inputs and render first-boot provisioning.
 
 Pulumi uploads deployment inputs before EC2 starts. Cloud-init waits for the data
-attachment, mounts persistent Docker storage, prepares credentials, pulls selected
+attachment, mounts persistent Docker storage, installs the Pulumi-managed admin
+password, prepares database credentials, pulls selected
 container images, then starts Compose.
 Container restart policies own subsequent boot recovery. Provisioning failure
 remains visible in cloud-init logs; Pulumi resource creation is not an application
@@ -50,14 +51,16 @@ def build_source_archive(root: Path, destination: Path) -> str:
 
 
 def render_user_data(bucket: str, key: str, region: str, volume_id: str,
-                     registry_host: str, compose_version: str, images: dict[str, str]) -> str:
-    """Render shell-safe cloud-init inputs without embedding local credentials."""
+                     registry_host: str, compose_version: str, images: dict[str, str],
+                     admin_password: str) -> str:
+    """Render shell-safe inputs. Pulumi MUST retain the resulting user data as a secret."""
     for component in ('api', 'proxy', 'ui'):
         validate_image(images[component])
     values = {
         'SOURCE_BUCKET': bucket, 'SOURCE_KEY': key, 'AWS_DEFAULT_REGION': region,
         'DATA_VOLUME_ID': volume_id, 'REGISTRY_HOST': registry_host,
         'COMPOSE_VERSION': compose_version,
+        'ADMIN_PASSWORD': admin_password,
         'API_IMAGE': images['api'],
         'PROXY_IMAGE': images['proxy'],
         'UI_IMAGE': images['ui'],
