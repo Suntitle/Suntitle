@@ -327,7 +327,8 @@ just node-e2e
 This starts the proxy/API and Diamant locally, registers audio-source and display
 nodes, verifies listing and concurrent launches, and checks service restart
 replay. Real embedded uv runs a dependency-free Python fixture, so the test
-does not use audio hardware, models, or a graphical session. Fixtures exit
+serves the fixture from a local OCI endpoint and downloads it into Diamant's
+artifact cache. It does not use audio hardware, models, or a graphical session. Fixtures exit
 themselves before Diamant disconnects; this test does not cover child
 cancellation. The check currently requires Unix and `/usr/bin/python3`.
 

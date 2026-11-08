@@ -3,6 +3,38 @@
 See [contracts](contracts.md) for the resource and adapter definitions, and
 [architecture](architecture.md) for component responsibilities.
 
+## Default extensions
+
+The audio source, Whisper transcriber, translator, and subtitle display live in
+[`default-extensions/`](../default-extensions/README.md), with their Python project
+and lockfile. They retain their typed node settings and use the same OCI download,
+preparation, and supervised launch lifecycle as custom extensions. Diamant does
+not require a repository checkout or Python entry points in its host workspace.
+
+Releases publish the package with ORAS to
+`ghcr.io/suntitle/suntitle/default-extensions:<release-tag>` before building the
+server. The server embeds the published digest reference. Stable releases also
+update `latest`; prereleases only publish their release tag. The GHCR package MUST
+be public for Diamant's anonymous downloads.
+
+Set `DEFAULT_EXTENSIONS_REFERENCE` on the proxy to override the embedded reference
+with a mirror or a development artifact. Source builds default to
+`ghcr.io/suntitle/suntitle/default-extensions:latest`. Prefer a digest reference
+because Diamant caches completed payloads by reference. Configuration changes reuse
+installed files; a changed artifact reference triggers preparation again.
+
+Publish a development payload with ORAS:
+
+```bash
+oras push --plain-http registry.localhost/suntitle/default-extensions:dev \
+  --artifact-type application/vnd.suntitle.extension.v1 \
+  default-extensions:application/vnd.oci.image.layer.v1.tar+gzip
+```
+
+Then set the proxy's `DEFAULT_EXTENSIONS_REFERENCE` to that reference and enable
+`--artifact-plain-http` on Diamant. ORAS archives the complete
+`default-extensions/` directory directly. The downloaded directory is a runnable Python project.
+
 ## Extension artifact registry
 
 For your own local extensions, put each payload in `extensions/<name>/` and register

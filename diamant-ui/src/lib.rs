@@ -44,8 +44,6 @@ pub struct AgentConfig {
     pub host_ip: Option<IpAddr>,
     /// Delay between health reports in seconds.
     pub health_interval_seconds: u64,
-    /// Project directory containing local Python entry points.
-    pub project_dir: PathBuf,
     /// Optional explicit WebSocket data-plane endpoint.
     pub data_plane_url: Option<Url>,
     /// Grace period for child-process shutdown in seconds.
@@ -63,8 +61,6 @@ struct GuiSettings {
     host_ip: String,
     /// Health-report interval in seconds.
     health_interval: u64,
-    /// Project directory used by built-in adapters.
-    project_dir: String,
     /// Optional explicit data-plane URL.
     data_plane_url: String,
     /// Child-process shutdown grace period in seconds.
@@ -81,7 +77,6 @@ impl From<&AgentConfig> for GuiSettings {
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
             health_interval: config.health_interval_seconds,
-            project_dir: config.project_dir.to_string_lossy().into_owned(),
             data_plane_url: config
                 .data_plane_url
                 .as_ref()
@@ -95,11 +90,8 @@ impl From<&AgentConfig> for GuiSettings {
 impl GuiSettings {
     /// Validates editable strings and produces the strongly typed agent configuration.
     fn to_config(&self) -> Result<AgentConfig, String> {
-        if self.proxy_url.trim().is_empty()
-            || self.host_name.trim().is_empty()
-            || self.project_dir.trim().is_empty()
-        {
-            return Err("Proxy URL, host name, and project directory are required.".into());
+        if self.proxy_url.trim().is_empty() || self.host_name.trim().is_empty() {
+            return Err("Proxy URL and host name are required.".into());
         }
         let host_ip = if self.host_ip.trim().is_empty() {
             None
@@ -124,7 +116,6 @@ impl GuiSettings {
             host_name: self.host_name.trim().to_owned(),
             host_ip,
             health_interval_seconds: self.health_interval.max(1),
-            project_dir: PathBuf::from(self.project_dir.trim()),
             data_plane_url,
             shutdown_grace_seconds: self.shutdown_grace.max(1),
         })
@@ -508,29 +499,20 @@ impl DiamantApp {
                 .show(ui, |ui| {
                     field(
                         ui,
-                        "Project directory",
-                        &mut self.settings.project_dir,
-                        "",
-                        true,
-                        long_width,
-                    );
-                    next_grid_cell(ui, 1, columns);
-                    field(
-                        ui,
                         "Data-plane URL",
                         &mut self.settings.data_plane_url,
                         "Derived from proxy URL",
                         true,
                         long_width,
                     );
-                    next_grid_cell(ui, 2, columns);
+                    next_grid_cell(ui, 1, columns);
                     number_field(
                         ui,
                         "Health interval",
                         &mut self.settings.health_interval,
                         short_width,
                     );
-                    next_grid_cell(ui, 3, columns);
+                    next_grid_cell(ui, 2, columns);
                     number_field(
                         ui,
                         "Shutdown grace",
@@ -974,7 +956,6 @@ mod tests {
             host_name: "test-host".to_owned(),
             host_ip: String::new(),
             health_interval: 30,
-            project_dir: ".".to_owned(),
             data_plane_url: String::new(),
             shutdown_grace: 5,
         }

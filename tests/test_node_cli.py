@@ -5,7 +5,7 @@ import sys
 import unittest
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[1] / "default-extensions"
 
 
 def load_script(name):

@@ -15,6 +15,42 @@ env:
   RUST_TOOLCHAIN: stable
 
 jobs:
+  default-extensions:
+    name: Publish default extension OCI payload
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      reference: ${{ steps.publish.outputs.reference }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: oras-project/setup-oras@v1
+        with:
+          version: 1.3.0
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish default extensions
+        id: publish
+        run: |
+          repository="ghcr.io/suntitle/suntitle/default-extensions"
+          oras push "$repository:$RELEASE_TAG" \
+            --artifact-type application/vnd.suntitle.extension.v1 \
+            --annotation org.opencontainers.image.source=https://github.com/Suntitle/Suntitle \
+            --annotation "org.opencontainers.image.version=$RELEASE_TAG" \
+            default-extensions:application/vnd.oci.image.layer.v1.tar+gzip
+          digest="$(oras resolve "$repository:$RELEASE_TAG")"
+          printf 'reference=%s@%s\n' "$repository" "$digest" >> "$GITHUB_OUTPUT"
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            oras tag "$repository@$digest" latest
+          fi
+
   build-diamant:
     name: Diamant release (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -74,6 +110,7 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
 
   build-server-release-linux:
+    needs: default-extensions
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -101,6 +138,7 @@ jobs:
           fi
           docker build --platform linux/amd64 --file docker/ws-proxy/Dockerfile \
             --build-arg RUST_IMAGE="$rust_image" \
+            --build-arg DEFAULT_EXTENSIONS_REFERENCE="${{ needs.default-extensions.outputs.reference }}" \
             --target release-artifacts --output type=local,dest=release-binaries .
 
       - name: Build component images from release binaries

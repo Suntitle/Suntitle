@@ -31,10 +31,13 @@ pub(super) async fn run(
         let nodes = nodes.clone();
         let extensions = extensions.clone();
         async move {
-            if node.metadata.deletion_timestamp.is_some() || node.spec.extension_ref.is_none() {
+            if node.metadata.deletion_timestamp.is_some() {
                 return Ok(Action::await_change());
             }
-            let extension = extensions.get_opt(&node.spec.extension_ref.as_ref().unwrap().name).await.map_err(|e| ReconcileError::Failed(e.into()))?;
+            let extension = match &node.spec.extension_ref {
+                Some(reference) => extensions.get_opt(&reference.name).await.map_err(|e| ReconcileError::Failed(e.into()))?,
+                None => None,
+            };
             let previous = node.status.clone();
             let mut desired = (*node).clone();
             resolve(&mut desired, extension.as_ref());
@@ -64,18 +67,31 @@ pub(super) async fn run(
 fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
     let status = node.status.get_or_insert_default();
     let outcome = (|| {
+        if node.spec.extension_ref.is_none() {
+            return default_extension(&node.spec.settings)
+                .map(|(adapter, reference)| (Some(adapter), reference))
+                .ok_or((
+                    "ExtensionUnavailable",
+                    "Custom nodes MUST reference an extension.".into(),
+                ));
+        }
         let extension = extension
             .filter(|e| e.metadata.deletion_timestamp.is_none())
             .ok_or((
                 "ExtensionUnavailable",
                 "Referenced extension is missing or being deleted.".to_string(),
             ))?;
-        let configuration = extension.status.as_ref()
+        let configuration = extension
+            .status
+            .as_ref()
             .filter(|status| status.observed_generation == extension.metadata.generation)
             .and_then(|status| status.resolved_spec.as_ref())
             .unwrap_or(&extension.spec);
         if configuration.adapter.is_none() {
-            return Err(("ExtensionNotReady", "Waiting for extension manifest resolution.".to_string()));
+            return Err((
+                "ExtensionNotReady",
+                "Waiting for extension manifest resolution.".to_string(),
+            ));
         }
         let resolved = node
             .spec
@@ -165,10 +181,97 @@ fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
     }
 }
 
+/// Resolve default Python entry points to the release payload without changing typed settings.
+/// Runtime configuration overrides the build-time release reference for mirrors and development.
+fn default_extension(
+    settings: &NodeSettings,
+) -> Option<(suntitle_core::kubernetes::adapter::ResolvedAdapter, String)> {
+    use suntitle_core::kubernetes::{
+        adapter::ResolvedAdapter,
+        execution::{ExecutionCommand, ExecutionSpec},
+    };
+    let script = match settings {
+        NodeSettings::AudioSource(_) => "suntitle-listener.py",
+        NodeSettings::Transcriber(_) => "whisper_online_client.py",
+        NodeSettings::Translator(_) => "suntitle-translator.py",
+        NodeSettings::Display(_) => "suntitle.py",
+        NodeSettings::Custom(_) => return None,
+    };
+    let reference = std::env::var("DEFAULT_EXTENSIONS_REFERENCE").unwrap_or_else(|_| {
+        option_env!("DEFAULT_EXTENSIONS_REFERENCE")
+            .unwrap_or("ghcr.io/suntitle/suntitle/default-extensions:latest")
+            .to_owned()
+    });
+    Some((
+        ResolvedAdapter {
+            input_type: None,
+            output_type: None,
+            execution: ExecutionSpec {
+                command: ExecutionCommand::Python(script.into()),
+                working_directory: None,
+            },
+            settings: Default::default(),
+            arguments: Vec::new(),
+        },
+        reference,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Defaults MUST prepare through OCI and retain installation across settings changes.
+    #[test]
+    fn defaults_download_before_apply_and_reuse_the_installed_payload() {
+        use super::super::plan::Plan;
+        for (settings, script) in [
+            (
+                json!({"audio_source":{"sampleRateHz":16000,"channels":1,"encoding":"pcm_s16le"}}),
+                "suntitle-listener.py",
+            ),
+            (
+                json!({"transcriber":{"model":"small","language":"en"}}),
+                "whisper_online_client.py",
+            ),
+            (
+                json!({"translator":{"sourceLanguage":"en","targetLanguage":"cs","provider":"huggingface"}}),
+                "suntitle-translator.py",
+            ),
+            (
+                json!({"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}),
+                "suntitle.py",
+            ),
+        ] {
+            let mut node = super::super::tests::node();
+            node.spec.settings = serde_json::from_value(settings).unwrap();
+            assert!(Plan::for_node(&node).is_none());
+            resolve(&mut node, None);
+            let Some(Plan::Download { reference, adapter }) = Plan::for_node(&node) else {
+                panic!("default MUST download before launch");
+            };
+            assert!(!reference.is_empty());
+            assert_eq!(
+                adapter.execution.command,
+                suntitle_core::kubernetes::execution::ExecutionCommand::Python(script.into())
+            );
+            let status = node.status.as_mut().unwrap();
+            status
+                .conditions
+                .iter_mut()
+                .find(|c| c.type_ == "Installed")
+                .unwrap()
+                .status = "True".into();
+            node.metadata.generation = Some(2);
+            resolve(&mut node, None);
+            assert!(matches!(Plan::for_node(&node), Some(Plan::Apply { .. })));
+            node.status.as_mut().unwrap().artifact_reference =
+                Some("registry/old@sha256:old".into());
+            resolve(&mut node, None);
+            assert!(matches!(Plan::for_node(&node), Some(Plan::Download { .. })));
+        }
+    }
 
     fn node() -> SuntitleNode {
         serde_json::from_value(json!({"metadata":{"name":"node","generation":2},"spec":{
@@ -269,14 +372,14 @@ mod tests {
         resolve(&mut node, Some(&extension));
         assert!(matches!(
             super::super::plan::Plan::for_node(&node),
-            Some(super::super::plan::Plan::CustomApply { .. })
+            Some(super::super::plan::Plan::Apply { .. })
         ));
         extension.spec.adapter.as_mut().unwrap().execution =
             serde_json::from_value(json!({"command":"./other"})).unwrap();
         resolve(&mut node, Some(&extension));
         assert!(matches!(
             super::super::plan::Plan::for_node(&node),
-            Some(super::super::plan::Plan::CustomApply { .. })
+            Some(super::super::plan::Plan::Apply { .. })
         ));
         extension.metadata.generation = Some(4);
         resolve(&mut node, Some(&extension));
@@ -286,7 +389,7 @@ mod tests {
         resolve(&mut node, Some(&extension));
         assert!(matches!(
             super::super::plan::Plan::for_node(&node),
-            Some(super::super::plan::Plan::CustomApply { .. })
+            Some(super::super::plan::Plan::Apply { .. })
         ));
         extension.status.as_mut().unwrap().artifact_reference =
             Some("registry/extensions@sha256:new".into());
@@ -331,7 +434,13 @@ mod tests {
         assert!(node.status.as_ref().unwrap().resolved_adapter.is_some());
         extension.metadata.generation = Some(99);
         resolve(&mut node, Some(&extension));
-        assert!(node.status.as_ref().unwrap().conditions.iter().any(|condition| condition.reason == "ExtensionNotReady"));
+        assert!(
+            node.status
+                .as_ref()
+                .unwrap()
+                .conditions
+                .iter()
+                .any(|condition| condition.reason == "ExtensionNotReady")
+        );
     }
-
 }

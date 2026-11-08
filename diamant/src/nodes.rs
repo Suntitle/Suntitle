@@ -180,11 +180,9 @@ struct ManagedNode {
     command: Option<CommandSpec>,
 }
 
-/// Own running node processes and prepared custom installations for one host session.
+/// Own running node processes and prepared installations for one host session.
 #[derive(Debug)]
 pub struct NodeProcessManager {
-    /// Working directory used by built-in implementations.
-    project_dir: PathBuf,
     /// Diamant executable providing the embedded Python launcher.
     uv_bin: PathBuf,
     /// Validated data-plane base URL shared by built-in and extension commands.
@@ -193,29 +191,21 @@ pub struct NodeProcessManager {
     shutdown_grace: Duration,
     /// Current built-in or launched node processes by namespace and name.
     nodes: HashMap<String, ManagedNode>,
-    /// Prepared custom payloads waiting for argument construction and launch.
+    /// Prepared payloads waiting for argument construction and launch.
     prepared_extensions: HashMap<String, PreparedExtension>,
 }
 impl NodeProcessManager {
     /// Validate and normalize the base URL without starting processes or preparing extensions.
     pub fn new(
-        project_dir: PathBuf,
         uv_bin: PathBuf,
         data_plane_url: Url,
         shutdown_grace: Duration,
     ) -> Result<Self, String> {
-        if !project_dir.is_dir() {
-            return Err(format!(
-                "project directory does not exist: {}",
-                project_dir.display()
-            ));
-        }
         validate_data_plane_url(&data_plane_url)?;
         let data_plane_url = data_plane_url
             .join("")
             .map_err(|error| format!("invalid data-plane base URL: {error}"))?;
         Ok(Self {
-            project_dir,
             uv_bin,
             data_plane_url,
             shutdown_grace,
@@ -224,7 +214,7 @@ impl NodeProcessManager {
         })
     }
 
-    /// Associate downloaded files with their custom node without starting a process.
+    /// Associate downloaded files with their node without starting a process.
     pub fn prepare_extension(&mut self, installation: PreparedExtension) {
         let identity = &installation.identity;
         let key = format!("{}/{}", identity.target.namespace, identity.target.name);
@@ -241,7 +231,7 @@ impl NodeProcessManager {
 
     /// Apply built-in or custom execution through one supervisor.
     /// Duplicate and stale operations MUST NOT reconfigure prepared installations.
-    /// Custom execution context MUST accompany only custom node settings.
+    /// Every node MUST supply its prepared OCI execution context.
     pub async fn apply(
         &mut self,
         identity: ApplyIdentity,
@@ -260,9 +250,9 @@ impl NodeProcessManager {
             }
         }
         let command = if let Some(custom) = custom {
-            self.prepare_custom_command(&identity, custom).await
+            self.prepare_command(&identity, &spec, custom).await
         } else {
-            command_spec(&self.uv_bin, &self.project_dir, &self.data_plane_url, &spec)
+            Err(io::Error::other("nodes require prepared execution context"))
         };
         if let Some(node) = self.nodes.get_mut(&key) {
             if node.identity.target.uid == identity.target.uid
@@ -311,10 +301,11 @@ impl NodeProcessManager {
         vec![event]
     }
 
-    /// Build the current custom command from installed files without downloading again.
-    async fn prepare_custom_command(
+    /// Build the current command from installed files without downloading again.
+    async fn prepare_command(
         &mut self,
         identity: &ApplyIdentity,
+        spec: &SuntitleNodeSpec,
         custom: CustomExecution,
     ) -> io::Result<CommandSpec> {
         let installation = self
@@ -328,7 +319,11 @@ impl NodeProcessManager {
             custom.adapter,
         )
         .await?;
-        let command = custom_command_spec(&self.uv_bin, &self.data_plane_url, &installation)?;
+        let command = if matches!(spec.settings, NodeSettings::Custom(_)) {
+            custom_command_spec(&self.uv_bin, &self.data_plane_url, &installation)?
+        } else {
+            command_spec(&self.uv_bin, &installation.root, &self.data_plane_url, spec)?
+        };
         self.prepare_extension(installation);
         Ok(command)
     }
@@ -598,10 +593,10 @@ fn websocket_url_with_path(base: &Url, path: &str) -> io::Result<String> {
     Ok(url.into())
 }
 
-/// Build a built-in command, deriving its client-specific address from the base URL.
+/// Build a built-in command in its installed payload, deriving its address from the base URL.
 pub fn command_spec(
     uv_bin: &Path,
-    project_dir: &Path,
+    installation_root: &Path,
     data_plane_url: &Url,
     update: &SuntitleNodeSpec,
 ) -> io::Result<CommandSpec> {
@@ -628,7 +623,7 @@ pub fn command_spec(
     Ok(CommandSpec {
         executable: uv_bin.to_path_buf(),
         args,
-        current_dir: project_dir.to_path_buf(),
+        current_dir: installation_root.to_path_buf(),
     })
 }
 
@@ -674,7 +669,6 @@ mod tests {
     #[tokio::test]
     async fn custom_apply_without_execution_context_fails_without_spawning() {
         let mut manager = NodeProcessManager::new(
-            std::env::current_dir().unwrap(),
             PathBuf::from("/does-not-exist"),
             Url::parse("ws://localhost/").unwrap(),
             Duration::from_millis(10),
@@ -692,7 +686,7 @@ mod tests {
                 .message
                 .as_deref()
                 .unwrap()
-                .contains("custom nodes require prepared execution context")
+                .contains("nodes require prepared execution context")
         );
         let snapshots = manager.snapshots();
         assert_eq!(snapshots[0].node_type, "Custom");
@@ -708,7 +702,6 @@ mod tests {
         std::fs::write(&binary, "#!/bin/sh\nexec sleep 60\n").unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut manager = NodeProcessManager::new(
-            root.path().into(),
             "/missing-uv".into(),
             Url::parse("ws://localhost/").unwrap(),
             Duration::from_millis(100),
@@ -1075,7 +1068,6 @@ mod tests {
         std::fs::set_permissions(&executable, permissions).unwrap();
 
         let mut manager = NodeProcessManager::new(
-            directory.clone(),
             executable,
             Url::parse("ws://localhost:3030/").unwrap(),
             Duration::from_secs(2),
@@ -1087,7 +1079,27 @@ mod tests {
         }));
         let identity = test_identity();
 
-        let started = manager.apply(identity.clone(), update.clone(), None).await;
+        std::fs::write(directory.join("suntitle.py"), "").unwrap();
+        let custom = CustomExecution {
+            reference: "registry/default-extensions@sha256:fixture".into(),
+            adapter: serde_json::from_value(serde_json::json!({
+                "execution":{"runtime":"python","command":"suntitle.py"}
+            }))
+            .unwrap(),
+        };
+        manager.prepare_extension(
+            PreparedExtension::prepare(
+                identity.clone(),
+                custom.reference.clone(),
+                directory.clone(),
+                custom.adapter.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let started = manager
+            .apply(identity.clone(), update.clone(), Some(custom.clone()))
+            .await;
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].status, NodeRuntimeStatus::Running, "{started:?}");
         let snapshots = manager.snapshots();
@@ -1105,7 +1117,7 @@ mod tests {
         }
         assert_eq!(
             manager
-                .apply(identity.clone(), update.clone(), None)
+                .apply(identity.clone(), update.clone(), Some(custom.clone()))
                 .await
                 .len(),
             1
@@ -1126,7 +1138,10 @@ mod tests {
         pipeline_identity.generation += 1;
         pipeline_identity.operation_id = "pipeline-change".into();
         assert_eq!(
-            manager.apply(pipeline_identity, pipeline_spec, None).await[0].status,
+            manager
+                .apply(pipeline_identity, pipeline_spec, Some(custom.clone()))
+                .await[0]
+                .status,
             NodeRuntimeStatus::Running
         );
         assert_eq!(
@@ -1142,13 +1157,20 @@ mod tests {
         restarted_spec.restart_token = restart.restart_token.clone();
         assert_eq!(
             manager
-                .apply(restart.clone(), restarted_spec.clone(), None)
+                .apply(
+                    restart.clone(),
+                    restarted_spec.clone(),
+                    Some(custom.clone())
+                )
                 .await[0]
                 .status,
             NodeRuntimeStatus::Running
         );
         assert_eq!(
-            manager.apply(restart.clone(), restarted_spec, None).await[0].status,
+            manager
+                .apply(restart.clone(), restarted_spec, Some(custom.clone()))
+                .await[0]
+                .status,
             NodeRuntimeStatus::Running
         );
         for _ in 0..40 {

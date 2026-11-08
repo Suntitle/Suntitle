@@ -48,6 +48,9 @@ async fn registry(corrupt: bool, delay: Duration) -> (String, tokio::task::JoinH
     archive
         .append_data(&mut header, "payload/run", &b"payload"[..])
         .unwrap();
+    archive
+        .append_data(&mut header, "payload/suntitle.py", &b"payload"[..])
+        .unwrap();
     let tar = archive.into_inner().unwrap();
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     std::io::Write::write_all(&mut encoder, &tar).unwrap();
@@ -86,6 +89,88 @@ async fn registry(corrupt: bool, delay: Duration) -> (String, tokio::task::JoinH
         format!("{address}/extensions:fixture"),
         tokio::spawn(warp::serve(route).incoming(listener).run()),
     )
+}
+
+/// Defaults MUST launch from downloaded files even when the host workspace has no Python project.
+#[cfg(unix)]
+#[tokio::test]
+async fn default_node_downloads_then_launches_from_the_oci_payload() {
+    use diamant::nodes::{NodeProcessManager, NodeRuntimeStatus};
+    use std::os::unix::fs::PermissionsExt;
+    let workspace = tempfile::tempdir().unwrap();
+    let artifacts = tempfile::tempdir().unwrap();
+    let launcher = workspace.path().join("launcher");
+    std::fs::write(
+        &launcher,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > launched-args\npwd > launched-from\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut manager = NodeProcessManager::new(
+        launcher,
+        "ws://localhost:3030/".parse().unwrap(),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let mut downloads = ArtifactDownloads::new(ArtifactOptions {
+        directory: Some(artifacts.path().into()),
+        plain_http: true,
+    })
+    .unwrap();
+    let (reference, registry) = registry(false, Duration::ZERO).await;
+    let adapter: ResolvedAdapter =
+        serde_json::from_value(json!({"execution":{"runtime":"python","command":"suntitle.py"}}))
+            .unwrap();
+    let id = identity();
+    downloads.start(id.clone(), reference.clone(), adapter.clone());
+    let report = tokio::time::timeout(Duration::from_secs(10), downloads.next_report())
+        .await
+        .unwrap();
+    assert!(matches!(
+        report,
+        RegistrationClientMessage::Acknowledgement {
+            operation: Operation::Download,
+            success: true,
+            ..
+        }
+    ));
+    let installation = downloads.take_prepared(&id).unwrap();
+    let root = installation.root.clone();
+    assert!(root.starts_with(artifacts.path().canonicalize().unwrap()));
+    manager.prepare_extension(installation);
+    registry.abort();
+    let spec = serde_json::from_value(json!({
+        "displayName":"Default display", "hostRef":{"name":"host"}, "enabled":true,
+        "settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}
+    }))
+    .unwrap();
+    let events = manager
+        .apply(
+            id.clone(),
+            spec,
+            Some(CustomExecution { reference, adapter }),
+        )
+        .await;
+    assert_eq!(events[0].status, NodeRuntimeStatus::Running);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !root.join("launched-from").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("launched-from"))
+            .unwrap()
+            .trim(),
+        root.to_str().unwrap()
+    );
+    let arguments = std::fs::read_to_string(root.join("launched-args")).unwrap();
+    assert!(arguments.starts_with("uv\nrun\npython\nsuntitle.py\n"));
+    assert!(arguments.contains("--max-lines=3"));
+    assert!(!workspace.path().join("suntitle.py").exists());
+    manager.remove(&id).await.unwrap();
+    downloads.shutdown().await;
 }
 
 /// Reuse one client across transfers without publishing failed downloads.
@@ -132,7 +217,6 @@ async fn downloads_publish_complete_trees_and_report_failures_without_partial_ou
             assert_eq!(installation.working_directory, installation.root);
             assert!(downloads.take_prepared(&id).is_none());
             let mut manager = diamant::nodes::NodeProcessManager::new(
-                root.path().into(),
                 std::env::current_exe().unwrap(),
                 "ws://localhost/".parse().unwrap(),
                 Duration::from_secs(1),
@@ -252,8 +336,6 @@ async fn host_keeps_heartbeats_running_and_reports_download_without_launching() 
             &proxy_url,
             "--host-name",
             "artifact-download-test",
-            "--project-dir",
-            root.path().to_str().unwrap(),
             "--artifact-dir",
             root.path().join("artifacts").to_str().unwrap(),
             "--artifact-plain-http",

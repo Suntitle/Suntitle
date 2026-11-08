@@ -49,13 +49,14 @@ log = pathlib.Path(os.environ['FAKE_NODE_LOG'])
 with log.open('a') as f:
     f.write(f'START\t{os.getpid()}\t{json.dumps(sys.argv)}\n')
 deadline = time.monotonic() + 45
-while not pathlib.Path('finish').exists() and time.monotonic() < deadline:
+while not pathlib.Path(os.environ['FINISH_FILE']).exists() and time.monotonic() < deadline:
     time.sleep(.05)
 with log.open('a') as f:
     f.write(f'STOP\t{os.getpid()}\n')
 "#;
         fs::write(project.join("suntitle-listener.py"), fixture)?;
         fs::write(project.join("suntitle.py"), fixture)?;
+        let (reference, _registry) = registry(&project).await?;
         let host_name = format!("node-e2e-{}", Uuid::new_v4().simple());
 
         let mut api = ChildProcess::spawn(
@@ -64,7 +65,9 @@ with log.open('a') as f:
         )?;
         let mut proxy = ChildProcess::spawn(
             "ws-proxy",
-            &mut namespace.command(binary_path(&binary_directory, "ws-proxy"), "proxy"),
+            namespace
+                .command(binary_path(&binary_directory, "ws-proxy"), "proxy")
+                .env("DEFAULT_EXTENSIONS_REFERENCE", &reference),
         )?;
         wait_for_services(&mut [&mut api, &mut proxy]).await?;
 
@@ -79,12 +82,14 @@ with log.open('a') as f:
             .arg("192.0.2.20")
             .arg("--health-interval-seconds")
             .arg("1")
-            .arg("--project-dir")
-            .arg(&project)
             .env("UV_PYTHON", fixture_python()?)
             .env("UV_OFFLINE", "true")
             .env("UV_PYTHON_DOWNLOADS", "never")
-            .env("FAKE_NODE_LOG", &process_log);
+            .env("FAKE_NODE_LOG", &process_log)
+            .env("FINISH_FILE", project.join("finish"))
+            .arg("--artifact-plain-http")
+            .arg("--artifact-dir")
+            .arg(temporary_directory.path().join("artifacts"));
         let mut diamant = ChildProcess::spawn("diamant", &mut diamant_command)?;
 
         let host_id =
@@ -151,7 +156,9 @@ with log.open('a') as f:
         )?;
         proxy = ChildProcess::spawn(
             "ws-proxy",
-            &mut namespace.command(binary_path(&binary_directory, "ws-proxy"), "proxy"),
+            namespace
+                .command(binary_path(&binary_directory, "ws-proxy"), "proxy")
+                .env("DEFAULT_EXTENSIONS_REFERENCE", &reference),
         )?;
         wait_for_services(&mut [&mut api, &mut proxy]).await?;
         api.ensure_running()?;
@@ -174,6 +181,50 @@ with log.open('a') as f:
             "PASS: embedded uv node create/list/add, fixture completion, and service restart replay completed for host {host_id}"
         );
         Ok(())
+    }
+
+    /// Serve a default Python payload through the OCI API, independently of the host workspace.
+    async fn registry(
+        project: &Path,
+    ) -> Result<(String, tokio::task::JoinHandle<()>), Box<dyn Error>> {
+        use oci_artifact::constants::{
+            ANNOTATION_UNPACK, IMAGE_LAYER_GZIP_MEDIA_TYPE, OCI_IMAGE_MEDIA_TYPE,
+            ORG_OPENCONTAINERS_IMAGE_TITLE,
+        };
+        use sha2::{Digest, Sha256};
+        use warp::Filter;
+        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        archive.append_dir_all("payload", project)?;
+        let blob = archive.into_inner()?.finish()?;
+        let digest = |bytes: &[u8]| format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
+        let manifest = serde_json::to_vec(&json!({
+            "schemaVersion":2,"mediaType":OCI_IMAGE_MEDIA_TYPE,
+            "config":{"mediaType":"application/vnd.oci.empty.v1+json","digest":digest(b"{}"),"size":2},
+            "layers":[{"mediaType":IMAGE_LAYER_GZIP_MEDIA_TYPE,"digest":digest(&blob),"size":blob.len(),
+                "annotations":{(ORG_OPENCONTAINERS_IMAGE_TITLE):"payload",(ANNOTATION_UNPACK):"true"}}]
+        }))?;
+        let route = warp::path::full().map(move |path: warp::path::FullPath| {
+            let (body, media) = if path.as_str().contains("/manifests/") {
+                (manifest.clone(), OCI_IMAGE_MEDIA_TYPE)
+            } else if path.as_str().contains("/blobs/") {
+                (blob.clone(), "application/octet-stream")
+            } else {
+                (b"{}".to_vec(), "application/json")
+            };
+            warp::http::Response::builder()
+                .header("Content-Type", media)
+                .body(body)
+                .unwrap()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let reference = format!("{}/default-extensions:fixture", listener.local_addr()?);
+        Ok((
+            reference,
+            tokio::spawn(warp::serve(route).incoming(listener).run()),
+        ))
     }
 
     fn node_body(host: &str, name: &str, settings: Value) -> Value {

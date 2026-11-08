@@ -6,7 +6,7 @@ default:
 
 # Install the Python dependencies.
 setup:
-    uv sync
+    uv sync --project default-extensions
 
 # Start the WebSocket proxy in release mode.
 proxy-release:
@@ -38,35 +38,35 @@ api:
 
 # Start the subtitle window.
 subtitle host="localhost:3030":
-    uv run python suntitle.py --host "{{ host }}"
+    uv run --project default-extensions python default-extensions/suntitle.py --host "{{ host }}"
 
 # Start the Ukrainian-to-Czech translator.
 translator host="localhost:3030":
-    uv run python suntitle-translator.py --host "{{ host }}"
+    uv run --project default-extensions python default-extensions/suntitle-translator.py --host "{{ host }}"
 
 # Start the Whisper transcriber.
 transcriber host="localhost:3030" model="small" language="auto":
-    uv run python whisper_online_client.py --uri "ws://{{ host }}/transcribe" --model "{{ model }}" --language "{{ language }}"
+    uv run --project default-extensions python default-extensions/whisper_online_client.py --uri "ws://{{ host }}/transcribe" --model "{{ model }}" --language "{{ language }}"
 
 # Show the Whisper transcriber options.
 transcriber-help:
-    uv run python whisper_online_client.py --help
+    uv run --project default-extensions python default-extensions/whisper_online_client.py --help
 
 # Stream the default microphone to the proxy.
 listener host="localhost:3030":
-    uv run python suntitle-listener.py "ws://{{ host }}"
+    uv run --project default-extensions python default-extensions/suntitle-listener.py "ws://{{ host }}"
 
 # List available microphone input devices.
 listener-devices:
-    uv run python suntitle-listener.py --list-devices
+    uv run --project default-extensions python default-extensions/suntitle-listener.py --list-devices
 
 # Stream a selected microphone to the proxy.
 listener-device device host="localhost:3030":
-    uv run python suntitle-listener.py "ws://{{ host }}" --device "{{ device }}"
+    uv run --project default-extensions python default-extensions/suntitle-listener.py "ws://{{ host }}" --device "{{ device }}"
 
 # Start the local Diamant host as local-host.
 diamant-local:
-    cargo run -p diamant --bin diamant -- --cli --host-name local-host --project-dir "{{ justfile_directory() }}"
+    cargo run -p diamant --bin diamant -- --cli --host-name local-host
 
 # Run kubectl against the local Compose API server, forwarding all arguments.
 [positional-arguments]
@@ -123,7 +123,7 @@ local-stack:
 
     just _local-infra-up
     cargo build -p diamant --bin diamant
-    target/debug/diamant --cli --artifact-plain-http --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
+    target/debug/diamant --cli --artifact-plain-http --proxy-url ws://localhost/register --host-name local-host &
     pids+=("$!")
 
     while true; do
