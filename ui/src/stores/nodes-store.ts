@@ -159,7 +159,7 @@ export class NodesStore {
       const node = mapNode(await this.api.post<NodeResource>(`/hosts/${encodeURIComponent(hostId)}/nodes`, {
         ...fields, displayName: name, hostRef: { name: host.name },
         inputRef: inputNodeId ? { name: inputNodeId } : null,
-        ...(extensionRef ? { extensionRef: { name: extensionRef } } : {}), settings: { [extensionRef ? "custom" : type]: settings },
+        ...(extensionRef ? { extensionRef: { name: extensionRef } } : {}), settings: { [extensionRef ? "custom" : type]: extensionRef ? settings : this.settingsForInput(type, settings, inputNodeId) },
       }), this.hosts, this.extensions.items)
       runInAction(() => {
         this.upsertNode(node)
@@ -228,7 +228,14 @@ export class NodesStore {
     const { inputNodeId, type, settings, name, ...fields } = update
     const { extensionRef: _extensionRef, ...editable } = fields as typeof fields & { extensionRef?: string }
     return { ...node.spec, ...editable, displayName: name,
-      inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [node.spec.extensionRef ? "custom" : type]: settings } }
+      inputRef: inputNodeId ? { name: inputNodeId } : null, settings: { [node.spec.extensionRef ? "custom" : type]: node.spec.extensionRef ? settings : this.settingsForInput(type, settings, inputNodeId) } }
+  }
+
+  /** Select the display's broadcast endpoint from the existing input control. */
+  private settingsForInput(type: NodeRole, settings: NodeUpdate["settings"], inputNodeId: string | null): NodeUpdate["settings"] {
+    if (type !== "display") return settings
+    const input = inputNodeId ? this.nodeById.get(inputNodeId) : undefined
+    return { ...settings, inputStream: input?.type === "transcriber" ? "transcription" : "translation" }
   }
 
   private upsertNode(node: Node): void {

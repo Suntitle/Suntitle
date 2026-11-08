@@ -7,6 +7,7 @@ from typing import Optional
 def parse_args(argv: Optional[list[str]] = None):
     parser = argparse.ArgumentParser(description="Websocket subtitle display.")
     parser.add_argument("--host", default="localhost:3030", help="Websocket server authority")
+    parser.add_argument("--input-stream", choices=["transcription", "translation"], default="translation")
     parser.add_argument("--max-lines", type=int, choices=range(1, 11), default=4)
     parser.add_argument("--font-scale", type=float, default=1.0)
     parser.add_argument("--show-original", action="store_true")
@@ -15,6 +16,12 @@ def parse_args(argv: Optional[list[str]] = None):
     if not 0.5 <= args.font_scale <= 4.0:
         parser.error("--font-scale must be between 0.5 and 4.0")
     return args
+
+
+def websocket_url(args) -> str:
+    """Select a broadcast stage. The display MUST only receive from this socket."""
+    endpoint = "translate" if args.input_stream == "transcription" else "display"
+    return f"ws://{args.host}/{endpoint}"
 
 
 def display_text(message: str, show_original: bool) -> str:
@@ -78,7 +85,7 @@ def main(argv: Optional[list[str]] = None):
             self.label.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             self.label.setStyleSheet(f"color: {foreground}; font-size: {font_size}px;")
             self.old_pos = None
-            self.ws_thread = WebSocketClientThread(f"ws://{args.host}/display")
+            self.ws_thread = WebSocketClientThread(websocket_url(args))
             self.ws_thread.message_received.connect(
                 lambda message: self.label.setText(display_text(message, args.show_original))
             )

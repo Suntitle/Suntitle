@@ -6,6 +6,35 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::{Validate, ValidationError};
 
+/// Broadcast stream consumed by the display. Translation is the legacy default.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    ToSchema,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayInputStream {
+    /// Raw text broadcast to clients connected to `/translate`.
+    Transcription,
+    /// Translated text broadcast to clients connected to `/display`.
+    #[default]
+    Translation,
+}
+
+impl DisplayInputStream {
+    /// Omit the legacy default from serialized settings for compatibility.
+    fn is_translation(&self) -> bool {
+        *self == Self::Translation
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -29,6 +58,12 @@ pub enum DisplayTheme {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, Validate, kube::KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisplaySettings {
+    /// Stream selected by the UI from the upstream node's role.
+    /// This selects a broadcast stage; it MUST NOT imply isolation by node identity.
+    #[serde(default, skip_serializing_if = "DisplayInputStream::is_translation")]
+    #[schema(default = "translation")]
+    #[x_kube(validation = kube::core::Rule::new("self in ['transcription', 'translation']").message("unsupported display input stream"))]
+    pub input_stream: DisplayInputStream,
     /// Maximum number of subtitle lines displayed at once.
     #[schema(minimum = 1, maximum = 10)]
     #[validate(range(min = 1, max = 10))]
@@ -83,6 +118,39 @@ impl DisplaySettings {
         let cmd = args.as_command();
         std::iter::once(cmd.get_program().to_os_string())
             .chain(cmd.get_args().map(OsString::from))
+            .chain(
+                (self.input_stream == DisplayInputStream::Transcription)
+                    .then(|| OsString::from("--input-stream=transcription")),
+            )
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Legacy settings retain their command; transcription adds only the stream selector.
+    #[test]
+    fn stream_selection_preserves_legacy_defaults() {
+        let mut settings: DisplaySettings = serde_json::from_value(serde_json::json!({
+            "maxLines":3, "fontScale":1.0, "showOriginal":false,
+        }))
+        .unwrap();
+        assert_eq!(settings.input_stream, DisplayInputStream::Translation);
+        assert!(
+            serde_json::to_value(&settings)
+                .unwrap()
+                .get("inputStream")
+                .is_none()
+        );
+        let mut expected = settings.command_args("localhost:3030");
+        expected.push("--input-stream=transcription".into());
+        settings.input_stream = DisplayInputStream::Transcription;
+        assert_eq!(settings.command_args("localhost:3030"), expected);
+        assert_eq!(
+            serde_json::to_value(&settings).unwrap()["inputStream"],
+            "transcription"
+        );
     }
 }

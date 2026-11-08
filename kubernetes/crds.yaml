@@ -258,6 +258,17 @@ spec:
                         x-kubernetes-validations:
                         - message: fontScale must be between 0.5 and 4.0
                           rule: self >= 0.5 && self <= 4.0
+                      inputStream:
+                        description: |-
+                          Stream selected by the UI from the upstream node's role.
+                          This selects a broadcast stage; it MUST NOT imply isolation by node identity.
+                        enum:
+                        - transcription
+                        - translation
+                        type: string
+                        x-kubernetes-validations:
+                        - message: unsupported display input stream
+                          rule: self in ['transcription', 'translation']
                       maxLines:
                         description: Maximum number of subtitle lines displayed at once.
                         format: uint8

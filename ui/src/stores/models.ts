@@ -241,6 +241,8 @@ export interface TranslatorSettings {
 }
 
 export interface DisplaySettings {
+  /** Broadcast stage derived from the selected input; omission means translation. */
+  inputStream?: "transcription" | "translation"
   maxLines: number
   fontScale: number
   showOriginal: boolean
