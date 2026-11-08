@@ -38,12 +38,12 @@ function openHost(item: Extension) {
 }
 
 describe("Extension node types", () => {
-  it("keeps unresolved manifests out of the node type selector", () => {
+  it("keeps unresolved and removing extensions out of the node type selector", () => {
     const pending = { ...extension(), adapter: undefined }
     cy.intercept("GET", "**/api/v1/auth/me", { fixture: "api/v1/auth/me.json" })
     cy.intercept("GET", "**/api/v1/hosts", { fixture: "api/v1/hosts.json" }).as("hosts")
     cy.intercept("GET", "**/api/v1/node-types", { fixture: "api/v1/node-types.json" })
-    cy.intercept("GET", "**/api/v1/extensions", { body: { items: [pending], resourceVersion: "1" } }).as("extensions")
+    cy.intercept("GET", "**/api/v1/extensions", { body: { items: [pending, { ...extension(), name: "terminating-hello", deleting: true }], resourceVersion: "1" } }).as("extensions")
     cy.intercept("GET", "**/api/v1/nodes", { body: { items: [], resourceVersion: "1" } })
     cy.visit("/hosts", { onBeforeLoad(window) { window.localStorage.setItem("suntitle.accessToken", "mock-token") } })
     cy.wait("@hosts")

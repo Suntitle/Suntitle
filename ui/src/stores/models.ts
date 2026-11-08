@@ -83,6 +83,8 @@ export interface ExtensionSpec {
 
 /** Registered extension with resource status passed through by the API. */
 export interface Extension extends ExtensionSpec {
+  /** Controller-owned removal is pending, possibly waiting for offline hosts. */
+  deleting?: boolean
   /** Stable identity used in API URLs and node extension references. */
   name: string
   /** Asynchronous publication result; never proves host installation. */

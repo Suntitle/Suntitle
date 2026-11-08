@@ -4,5 +4,6 @@
   "sourceType": "oci",
   "source": "registry.example.com/hello:latest",
   "manifest": "displayName: Hello\nadapter:\n  execution:\n    command: ./hello",
-  "status": null
+  "status": null,
+  "deleting": false
 }

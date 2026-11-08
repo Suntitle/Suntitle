@@ -32,7 +32,10 @@ impl Sources {
                 .connect_timeout(Duration::from_secs(10))
                 .read_timeout(Duration::from_secs(60))
                 .build()?,
-            registry: Publisher::new(config.transport.clone())?,
+            registry: Publisher::new_for_registry(
+                config.transport.clone(),
+                config.repository.split('/').next().unwrap_or_default(),
+            )?,
             config: Arc::new(config),
             cancellation,
         })

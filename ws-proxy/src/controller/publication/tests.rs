@@ -174,6 +174,50 @@ async fn status_writes_include_uid_and_resource_version_and_preserve_other_condi
     server.abort();
 }
 
+/// Conflicts defer guarded writes; infrastructure failures MUST remain observable.
+#[tokio::test]
+async fn status_conflicts_requeue_without_retrying_stale_versions() {
+    use warp::Filter;
+    for code in [409, 403, 500] {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let route = warp::patch()
+            .and(warp::body::bytes().map(|body: actix_web::web::Bytes| {
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap()
+            }))
+            .map(move |body: serde_json::Value| {
+                tx.send(body).unwrap();
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "apiVersion": "v1", "kind": "Status", "status": "Failure",
+                        "code": code, "reason": "Conflict", "message": "fixture rejection"
+                    })),
+                    warp::http::StatusCode::from_u16(code).unwrap(),
+                )
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+        let client = kube::Client::try_from(kube::Config::new(
+            format!("http://{address}").parse().unwrap(),
+        )).unwrap();
+        let api = Api::namespaced(client, "test");
+        let resource = extension();
+        let action = write_status(
+            &api, &resource, &identity::task_id(&resource, &config()).unwrap(), &None,
+        ).await;
+        if code == 409 {
+            assert_eq!(action.unwrap(), Action::requeue(Duration::from_secs(1)));
+        } else {
+            assert!(action.is_err());
+        }
+        let patch = rx.recv().await.unwrap();
+        assert_eq!(patch["metadata"]["uid"], "uid-1");
+        assert_eq!(patch["metadata"]["resourceVersion"], "1");
+        assert!(rx.try_recv().is_err(), "MUST NOT retry the obsolete snapshot");
+        server.abort();
+    }
+}
+
 /// A blocked transfer MUST NOT block native storage calls or exceed worker concurrency.
 /// Shutdown joins active cancellation; queued work is reconstructed after process restart.
 #[tokio::test]

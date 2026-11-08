@@ -31,6 +31,7 @@ const DESCRIPTION: &str = "Resource-oriented control API. Successful writes pers
         extensions::get_extension,
         extensions::create_extension,
         extensions::refresh_extension,
+        extensions::delete_extension,
         hosts::list_hosts,
         hosts::install_node_on_host,
         node_types::list_node_types,
@@ -160,6 +161,7 @@ pub fn configure_with_store(
             .service(extensions::get_extension)
             .service(extensions::create_extension)
             .service(extensions::refresh_extension)
+            .service(extensions::delete_extension)
             .service(hosts::list_hosts)
             .service(hosts::install_node_on_host)
             .service(node_types::list_node_types)

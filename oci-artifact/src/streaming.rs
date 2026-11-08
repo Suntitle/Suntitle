@@ -48,6 +48,13 @@ impl Publisher {
         })
     }
 
+    /// Keep upstream HTTPS while permitting explicit HTTP for the destination authority.
+    pub fn new_for_registry(options: TransportOptions, registry: &str) -> Result<Self, Error> {
+        Ok(Self {
+            client: Client::try_from(options.build_config_for_registry(registry)?)?,
+        })
+    }
+
     /// Reject destination prefixes that cannot form immutable per-extension tags.
     pub fn validate_repository(repository: &str) -> Result<(), Error> {
         let reference: Reference =

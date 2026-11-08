@@ -200,6 +200,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      tags:
+      - Extensions
+      summary: Request removal; the controller retains terminating resources until dependent nodes finish cleanup.
+      description: Request asynchronous removal of the extension and its dependent nodes. Terminating extensions remain visible until cleanup completes, including while a host is offline.
+      operationId: deleteExtension
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Removal requested
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /extensions/{name}/refresh:
     post:
       tags:
@@ -699,6 +741,9 @@ components:
         required:
         - name
         properties:
+          deleting:
+            type: boolean
+            description: True while controller-owned dependent-node cleanup is pending.
           name:
             type: string
             description: Stable URL identity, independent of the display name.
@@ -807,9 +852,9 @@ components:
                 type: string
                 description: type of condition in CamelCase or in foo.example.com/CamelCase.
           description: Preparing, published, or terminal failure state; retries are owned by Apalis.
-          x-kubernetes-list-type: map
           x-kubernetes-list-map-keys:
           - type
+          x-kubernetes-list-type: map
         observedGeneration:
           type:
           - integer
@@ -1042,9 +1087,9 @@ components:
                 type: string
                 description: type of condition in CamelCase or in foo.example.com/CamelCase.
           description: Host health observations keyed by condition type.
-          x-kubernetes-list-type: map
           x-kubernetes-list-map-keys:
           - type
+          x-kubernetes-list-type: map
         ip:
           type:
           - string

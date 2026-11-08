@@ -1,8 +1,10 @@
 //! Extension writes persist desired state before asynchronous publication begins.
 //! Responses expose flat configuration and pass through resource status unchanged.
 //! Refresh changes the spec without waiting for publication to complete.
+//! Removal is accepted before dependent-node cleanup; terminating resources remain
+//! visible until finalizers complete, including when offline hosts defer cleanup.
 
-use actix_web::{HttpResponse, get, post, web};
+use actix_web::{HttpResponse, delete, get, post, web};
 
 use super::errors::{ApiError, ApiResult, ErrorEnvelope};
 use crate::extension_source::ExtensionRegistration;
@@ -17,6 +19,9 @@ use suntitle_core::kubernetes::resources::{
 pub struct Extension {
     /// Stable URL identity, independent of the display name.
     pub name: String,
+    /// True while controller-owned dependent-node cleanup is pending.
+    #[serde(default)]
+    pub deleting: bool,
     /// Desired source and adapter fields exposed at the response's top level.
     #[serde(flatten)]
     pub spec: SuntitleExtensionSpec,
@@ -30,6 +35,7 @@ impl From<SuntitleExtension> for Extension {
         use kube::ResourceExt;
         Self {
             name: resource.name_any(),
+            deleting: resource.metadata.deletion_timestamp.is_some(),
             spec: resource.status.as_ref()
                 .filter(|status| status.observed_generation == resource.metadata.generation)
                 .and_then(|status| status.resolved_spec.clone())
@@ -114,4 +120,18 @@ pub async fn refresh_extension(
     name: web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
     Ok(HttpResponse::Accepted().json(Extension::from(store.refresh_extension(&name).await?)))
+}
+
+/// Request removal; the controller retains terminating resources until dependent nodes finish cleanup.
+#[utoipa::path(delete, path = "/extensions/{name}", tag = "Extensions", operation_id = "deleteExtension",
+    description = "Request asynchronous removal of the extension and its dependent nodes. Terminating extensions remain visible until cleanup completes, including while a host is offline.",
+    params(("name" = String, Path)),
+    responses((status = 202, description = "Removal requested"), (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)))]
+#[delete("/extensions/{name}")]
+pub async fn delete_extension(
+    store: web::Data<ResourceStore>,
+    name: web::Path<String>,
+) -> Result<HttpResponse, ApiError> {
+    store.delete_extension(&name).await?;
+    Ok(HttpResponse::Accepted().finish())
 }

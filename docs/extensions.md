@@ -40,6 +40,8 @@ independently of Kubernetes. Traefik routes `registry.localhost` to its private
 port 5000. Set `REGISTRY_HOST` in `.env.local` to override the hostname. Clients
 MUST use that reachable authority in artifact references, for example
 `registry.localhost/suntitle/extensions/example:smoke`.
+The publication HTTP setting applies only to the destination registry authority.
+External OCI sources such as `ghcr.io` continue to use HTTPS.
 
 Traefik depends on the registry, API, proxy, and UI being healthy. Starting it
 also starts those services and their dependencies. After completing the [local setup](local-development.md#compose-stack),
@@ -150,3 +152,10 @@ resolution are deferred. The application does not invoke external Git or SSH too
 See the [OCI client guide](../oci-artifact/README.md) and
 [custom-node E2E fixtures](../ws-proxy/examples/custom_node_e2e/README.md) for
 implementation details and runnable extension examples.
+
+## Remove an extension
+
+Choose **Remove extension** from the extension's actions menu and confirm. This
+requests deletion of the extension and all nodes referencing it. The row remains
+**Removing** until the controller finishes node cleanup; offline hosts can defer
+completion. Removing an extension does not delete registry blobs.
