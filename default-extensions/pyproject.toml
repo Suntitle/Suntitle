@@ -1,7 +1,7 @@
 [project]
-name = "suntitle"
+name = "suntitle-default-extensions"
 version = "0.1.0"
-description = "Add your description here"
+description = "Default audio, transcription, translation, and display extensions for Suntitle"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

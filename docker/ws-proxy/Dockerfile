@@ -17,6 +17,8 @@ COPY specs ./specs
 COPY docker/ws-proxy/check-static.sh /usr/local/bin/check-static
 
 FROM sources AS release
+ARG DEFAULT_EXTENSIONS_REFERENCE=ghcr.io/suntitle/suntitle/default-extensions:latest
+ENV DEFAULT_EXTENSIONS_REFERENCE=${DEFAULT_EXTENSIONS_REFERENCE}
 RUN cargo build --locked --release -p control-api -p ws-proxy --bin control_api --bin ws-proxy \
     && sh /usr/local/bin/check-static target/release/control_api target/release/ws-proxy
 

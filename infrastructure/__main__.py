@@ -6,10 +6,13 @@ from pathlib import Path
 
 import pulumi
 import pulumi_aws as aws
+import pulumi_random as random
 
 from deployment import build_source_archive, render_user_data, resolve_images
 
 config = pulumi.Config()
+# The resource MUST retain its value across updates and instance replacements.
+admin_password = random.RandomPassword('suntitle-admin-password', length=64, special=False)
 images = resolve_images(
     api_image=config.get('apiImage'), proxy_image=config.get('proxyImage'),
     ui_image=config.get('uiImage'),
@@ -83,10 +86,10 @@ data_volume = aws.ebs.Volume(
     tags={'Name': 'suntitle-data'},
 )
 user_data = pulumi.Output.all(
-    source_bucket.id, source_object.key, data_volume.id, registry_host,
+    source_bucket.id, source_object.key, data_volume.id, registry_host, admin_password.result,
 ).apply(lambda values: render_user_data(
     bucket=values[0], key=values[1], region=region, volume_id=values[2],
-    registry_host=values[3], compose_version='v5.6.0', images=images,
+    registry_host=values[3], compose_version='v5.6.0', images=images, admin_password=values[4],
 ))
 
 instance = aws.ec2.Instance(
@@ -125,3 +128,4 @@ pulumi.export('instanceId', instance.id)
 pulumi.export('dataVolumeId', data_volume.id)
 pulumi.export('sourceDigest', source_digest)
 pulumi.export('images', images)
+pulumi.export('adminPassword', pulumi.Output.secret(admin_password.result))

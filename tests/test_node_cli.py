@@ -5,7 +5,7 @@ import sys
 import unittest
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[1] / "default-extensions"
 
 
 def load_script(name):
@@ -33,6 +33,12 @@ class NodeCliTests(unittest.TestCase):
         self.assertEqual(display.display_text(message, False), "Ahoj")
         self.assertEqual(display.display_text(message, True), "Hello\nAhoj")
         self.assertEqual(display.display_text("plain subtitle", True), "plain subtitle")
+
+    def test_display_selects_existing_broadcast_endpoints(self):
+        display = load_script("suntitle.py")
+        self.assertEqual(display.websocket_url(display.parse_args([])), "ws://localhost:3030/display")
+        args = display.parse_args(["--host", "example.test:3030", "--input-stream", "transcription"])
+        self.assertEqual(display.websocket_url(args), "ws://example.test:3030/translate")
 
     def test_translator_model_and_formatting_options(self):
         translator = load_script("suntitle-translator.py")

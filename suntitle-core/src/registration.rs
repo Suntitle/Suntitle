@@ -66,7 +66,7 @@ pub enum Operation {
     Remove,
 }
 
-/// Published payload and current command configuration selected for a custom apply.
+/// Published payload and current command configuration selected for a node apply.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CustomExecution {
@@ -92,11 +92,11 @@ pub enum RegistrationServerMessage {
         #[serde(flatten)]
         identity: ApplyIdentity,
         spec: Box<SuntitleNodeSpec>,
-        /// Custom execution context; built-in commands MUST omit it.
+        /// Prepared execution context for default and custom nodes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         custom: Option<Box<CustomExecution>>,
     },
-    /// Download and prepare a custom extension without starting its process.
+    /// Download and prepare an extension without starting its process.
     DownloadArtifact {
         /// Node revision, dispatch operation, and host session selecting this installation.
         #[serde(flatten)]

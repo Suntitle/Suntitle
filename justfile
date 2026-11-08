@@ -6,7 +6,7 @@ default:
 
 # Install the Python dependencies.
 setup:
-    uv sync
+    uv sync --project default-extensions
 
 # Start the WebSocket proxy in release mode.
 proxy-release:
@@ -38,35 +38,35 @@ api:
 
 # Start the subtitle window.
 subtitle host="localhost:3030":
-    uv run python suntitle.py --host "{{ host }}"
+    uv run --project default-extensions python default-extensions/suntitle.py --host "{{ host }}"
 
 # Start the Ukrainian-to-Czech translator.
 translator host="localhost:3030":
-    uv run python suntitle-translator.py --host "{{ host }}"
+    uv run --project default-extensions python default-extensions/suntitle-translator.py --host "{{ host }}"
 
 # Start the Whisper transcriber.
 transcriber host="localhost:3030" model="small" language="auto":
-    uv run python whisper_online_client.py --uri "ws://{{ host }}/transcribe" --model "{{ model }}" --language "{{ language }}"
+    uv run --project default-extensions python default-extensions/whisper_online_client.py --uri "ws://{{ host }}/transcribe" --model "{{ model }}" --language "{{ language }}"
 
 # Show the Whisper transcriber options.
 transcriber-help:
-    uv run python whisper_online_client.py --help
+    uv run --project default-extensions python default-extensions/whisper_online_client.py --help
 
 # Stream the default microphone to the proxy.
 listener host="localhost:3030":
-    uv run python suntitle-listener.py "ws://{{ host }}"
+    uv run --project default-extensions python default-extensions/suntitle-listener.py "ws://{{ host }}"
 
 # List available microphone input devices.
 listener-devices:
-    uv run python suntitle-listener.py --list-devices
+    uv run --project default-extensions python default-extensions/suntitle-listener.py --list-devices
 
 # Stream a selected microphone to the proxy.
 listener-device device host="localhost:3030":
-    uv run python suntitle-listener.py "ws://{{ host }}" --device "{{ device }}"
+    uv run --project default-extensions python default-extensions/suntitle-listener.py "ws://{{ host }}" --device "{{ device }}"
 
 # Start the local Diamant host as local-host.
 diamant-local:
-    cargo run -p diamant --bin diamant -- --cli --host-name local-host --project-dir "{{ justfile_directory() }}"
+    cargo run -p diamant --bin diamant -- --cli --host-name local-host
 
 # Run kubectl against the local Compose API server, forwarding all arguments.
 [positional-arguments]
@@ -84,6 +84,21 @@ _local-infra-up: db-env
         fi
     done
     bash scripts/generate-kubeconfigs.sh
+    command -v oras >/dev/null
+    docker compose --env-file .env.local up -d --no-deps --wait --wait-timeout 90 distribution traefik
+    repository="$(docker compose --env-file .env.local config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["ws-proxy"]["environment"]["EXTENSION_REGISTRY"].removesuffix("/extensions") + "/default-extensions")')"
+    registry="${repository%%/*}"
+    for attempt in {1..30}; do
+        if curl -fsS --max-time 2 "http://$registry/v2/" >/dev/null; then break; fi
+        if (( attempt == 30 )); then exit 1; fi
+        sleep 1
+    done
+    oras push --plain-http "$repository:dev" \
+        --annotation "org.opencontainers.image.created=$(git log -1 --format=%cI -- default-extensions)" \
+        --artifact-type application/vnd.suntitle.extension.v1 \
+        default-extensions:application/vnd.oci.image.layer.v1.tar+gzip
+    DEFAULT_EXTENSIONS_REFERENCE="$(oras resolve --plain-http --full-reference "$repository:dev")"
+    export DEFAULT_EXTENSIONS_REFERENCE
     docker compose --env-file .env.local build kubernetes-bootstrap ws-proxy ui
     docker compose --env-file .env.local up -d --wait --wait-timeout 180
 
@@ -123,7 +138,7 @@ local-stack:
 
     just _local-infra-up
     cargo build -p diamant --bin diamant
-    target/debug/diamant --cli --artifact-plain-http --proxy-url ws://localhost/register --host-name local-host --project-dir "{{ justfile_directory() }}" &
+    target/debug/diamant --cli --artifact-plain-http --proxy-url ws://localhost/register --host-name local-host &
     pids+=("$!")
 
     while true; do
@@ -215,7 +230,7 @@ test-python python="python3":
 # Select an existing Pulumi stack.
 infra-select stack="dev": (aws-login "pulumi" "-C" "infrastructure" "stack" "select" stack)
 
-# Build and push the API, proxy, and UI images under a image repository and tag.
+# Publish default extensions and build and push API, proxy, and UI images pinned to that payload.
 [positional-arguments]
 images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default("IMAGE_TAG", "dev")) platform=(env_var_or_default("IMAGE_PLATFORM", "linux/amd64")):
     #!/usr/bin/env bash
@@ -230,9 +245,17 @@ images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default(
     if [[ -n "$3" ]]; then
         platform_args=(--platform "$3")
     fi
+    oras push "$image_repo/default-extensions:$image_tag" \
+        --artifact-type application/vnd.suntitle.extension.v1 \
+        --annotation org.opencontainers.image.source=https://github.com/Suntitle/Suntitle \
+        --annotation "org.opencontainers.image.version=$image_tag" \
+        --annotation "org.opencontainers.image.created=$(git log -1 --format=%cI -- default-extensions)" \
+        default-extensions:application/vnd.oci.image.layer.v1.tar+gzip
+    extension_reference="$(oras resolve --full-reference "$image_repo/default-extensions:$image_tag")"
     for component in control-api ws-proxy; do
         docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
             --file docker/ws-proxy/Dockerfile --target "$component" \
+            --build-arg DEFAULT_EXTENSIONS_REFERENCE="$extension_reference" \
             --tag "$image_repo/$component:$image_tag" --push .
     done
     docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
@@ -253,8 +276,14 @@ aws-login *command:
     eval "$credentials"
     exec "$@"
 
-# Deploy the Pulumi stack with default AWS credentials.
+# Deploy the Pulumi stack and print its administrator password from stack outputs.
 infra-up: (aws-login "pulumi" "-C" "infrastructure" "up")
+    @printf 'Admin password: '
+    @just infra-password
+
+# Print the administrator password directly from Pulumi state.
+infra-password:
+    @pulumi -C infrastructure stack output adminPassword --show-secrets
 
 # Set the Pulumi stack's AWS region.
 infra-region region: (aws-login "pulumi" "-C" "infrastructure" "config" "set" "aws:region" region)

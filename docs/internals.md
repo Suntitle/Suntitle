@@ -16,7 +16,7 @@ Read [architecture](architecture.md) for the system overview and
 | Agent connection and command handling | [`diamant/src/main.rs`](../diamant/src/main.rs) |
 | Artifact download and preparation | [`diamant/src/artifacts.rs`](../diamant/src/artifacts.rs), [`installation.rs`](../diamant/src/installation.rs) |
 | Process ownership and argument construction | [`diamant/src/nodes.rs`](../diamant/src/nodes.rs) |
-| Python processing nodes | [`suntitle-listener.py`](../suntitle-listener.py), [`whisper_online_client.py`](../whisper_online_client.py), [`suntitle-translator.py`](../suntitle-translator.py), [`suntitle.py`](../suntitle.py) |
+| Python processing nodes | [`suntitle-listener.py`](../default-extensions/suntitle-listener.py), [`whisper_online_client.py`](../default-extensions/whisper_online_client.py), [`suntitle-translator.py`](../default-extensions/suntitle-translator.py), [`suntitle.py`](../default-extensions/suntitle.py) |
 
 ## Reconciliation and lifecycle
 

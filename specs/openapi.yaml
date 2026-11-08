@@ -682,6 +682,12 @@ components:
           - 44100
           - 48000
       additionalProperties: false
+    DisplayInputStream:
+      type: string
+      description: Broadcast stream consumed by the display. Translation is the legacy default.
+      enum:
+      - transcription
+      - translation
     DisplaySettings:
       type: object
       required:
@@ -695,6 +701,12 @@ components:
           description: Multiplier applied to the default subtitle font size.
           maximum: 4
           minimum: 0.5
+        inputStream:
+          $ref: '#/components/schemas/DisplayInputStream'
+          default: translation
+          description: |-
+            Stream selected by the UI from the upstream node's role.
+            This selects a broadcast stage; it MUST NOT imply isolation by node identity.
         maxLines:
           type: integer
           format: int32
@@ -2002,6 +2014,22 @@ components:
                     x-kubernetes-validations:
                     - message: fontScale must be between 0.5 and 4.0
                       rule: self >= 0.5 && self <= 4.0
+                  inputStream:
+                    oneOf:
+                    - type: string
+                      description: Raw text broadcast to clients connected to `/translate`.
+                      enum:
+                      - transcription
+                    - type: string
+                      description: Translated text broadcast to clients connected to `/display`.
+                      enum:
+                      - translation
+                    description: |-
+                      Stream selected by the UI from the upstream node's role.
+                      This selects a broadcast stage; it MUST NOT imply isolation by node identity.
+                    x-kubernetes-validations:
+                    - message: unsupported display input stream
+                      rule: self in ['transcription', 'translation']
                   maxLines:
                     type: integer
                     format: uint8

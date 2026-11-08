@@ -1521,7 +1521,7 @@ wheels = [
 ]
 
 [[package]]
-name = "suntitle"
+name = "suntitle-default-extensions"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

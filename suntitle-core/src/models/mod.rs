@@ -8,7 +8,7 @@ mod translator;
 pub use translator::TranslatorSettings;
 
 mod display;
-pub use display::{DisplaySettings, DisplayTheme};
+pub use display::{DisplayInputStream, DisplaySettings, DisplayTheme};
 
 mod language;
 pub use language::LanguageTag;

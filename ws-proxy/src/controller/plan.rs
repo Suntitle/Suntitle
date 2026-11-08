@@ -1,6 +1,6 @@
 //! Select one dispatch plan from the current node revision.
 //!
-//! Deletion selects removal. Built-in nodes select apply. Extension nodes wait
+//! Deletion selects removal. All nodes wait
 //! for a current publication, then download and apply. Artifact changes invalidate installation; configuration
 //! changes invalidate only apply. Both reconciliation loops
 //! and acknowledgement validation MUST use this selection.
@@ -22,14 +22,12 @@ pub(super) enum Plan {
         adapter: Box<ResolvedAdapter>,
     },
     /// Launch a prepared artifact using the current resolved command configuration.
-    CustomApply {
+    Apply {
         /// Published payload that MUST already be installed.
         reference: String,
         /// Current command and settings, independent of payload installation.
         adapter: Box<ResolvedAdapter>,
     },
-    /// Apply a built-in runtime specification.
-    BuiltinApply,
     /// Clean up host work before releasing the node finalizer.
     Remove,
 }
@@ -39,9 +37,6 @@ impl Plan {
     pub(super) fn for_node(node: &SuntitleNode) -> Option<Self> {
         if node.metadata.deletion_timestamp.is_some() {
             return Some(Self::Remove);
-        }
-        if node.spec.extension_ref.is_none() {
-            return Some(Self::BuiltinApply);
         }
         let status = node.status.as_ref()?;
         status
@@ -63,7 +58,7 @@ impl Plan {
                 .as_ref()
                 .is_none_or(|d| d.artifact_reference.as_ref() == Some(reference))
         {
-            Some(Self::CustomApply {
+            Some(Self::Apply {
                 reference: reference.clone(),
                 adapter,
             })
@@ -79,17 +74,15 @@ impl Plan {
     pub(super) fn operation(&self) -> Operation {
         match self {
             Self::Download { .. } => Operation::Download,
-            Self::BuiltinApply | Self::CustomApply { .. } => Operation::Apply,
+            Self::Apply { .. } => Operation::Apply,
             Self::Remove => Operation::Remove,
         }
     }
 
-    /// Return the payload identity required for custom preparation and execution.
+    /// Return the payload identity required for node preparation and execution.
     pub(super) fn artifact_reference(&self) -> Option<&str> {
         match self {
-            Self::Download { reference, .. } | Self::CustomApply { reference, .. } => {
-                Some(reference)
-            }
+            Self::Download { reference, .. } | Self::Apply { reference, .. } => Some(reference),
             _ => None,
         }
     }
@@ -134,12 +127,7 @@ impl Plan {
                 reference,
                 adapter,
             },
-            Self::BuiltinApply => RegistrationServerMessage::Apply {
-                identity,
-                spec: Box::new(spec),
-                custom: None,
-            },
-            Self::CustomApply { reference, adapter } => RegistrationServerMessage::Apply {
+            Self::Apply { reference, adapter } => RegistrationServerMessage::Apply {
                 identity,
                 spec: Box::new(spec),
                 custom: Some(Box::new(suntitle_core::registration::CustomExecution {

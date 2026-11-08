@@ -75,10 +75,6 @@ struct Config {
     )]
     health_interval_seconds: u64,
 
-    /// Repository directory containing pyproject.toml and the Python entry points.
-    #[arg(long, env = "PROJECT_DIR", default_value = ".")]
-    project_dir: PathBuf,
-
     /// Persistent directory for downloaded extension artifacts. Defaults to OS local data storage.
     #[arg(long, env = "ARTIFACT_DIR")]
     artifact_dir: Option<PathBuf>,
@@ -107,7 +103,6 @@ impl Config {
             host_name: self.host_name.clone(),
             host_ip: self.host_ip,
             health_interval_seconds: self.health_interval_seconds,
-            project_dir: self.project_dir.clone(),
             data_plane_url: self.data_plane_url.clone(),
             shutdown_grace_seconds: self.shutdown_grace_seconds,
         }
@@ -186,7 +181,6 @@ fn run_gui_agent(
         host_name: config.host_name,
         host_ip: config.host_ip,
         health_interval_seconds: config.health_interval_seconds,
-        project_dir: config.project_dir,
         data_plane_url: config.data_plane_url,
         shutdown_grace_seconds: config.shutdown_grace_seconds,
         command: None,
@@ -296,7 +290,6 @@ async fn register(
         })?,
     };
     let mut manager = NodeProcessManager::new(
-        config.project_dir.clone(),
         std::env::current_exe().context("unknown path for diamant command")?,
         data_plane_url,
         Duration::from_secs(config.shutdown_grace_seconds),

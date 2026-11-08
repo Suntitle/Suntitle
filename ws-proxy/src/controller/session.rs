@@ -113,6 +113,7 @@ impl State {
     }
 
     /// Create or reuse a host using a lowercase DNS name and replace its connection.
+    /// Resource names MUST omit non-alphanumeric edge characters.
     /// The display name MUST retain the agent's original hostname.
     pub(super) async fn register(
         &mut self,
@@ -125,14 +126,18 @@ impl State {
             return Err("host name and agent version are required".into());
         }
         let resource_name = name.to_ascii_lowercase();
-        let mut host = match self.hosts_api.get_opt(&resource_name).await? {
+        let resource_name = resource_name.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        if resource_name.is_empty() {
+            return Err("host name must contain an ASCII alphanumeric character".into());
+        }
+        let mut host = match self.hosts_api.get_opt(resource_name).await? {
             Some(host) => host,
             None => {
                 self.hosts_api
                     .create(
                         &PostParams::default(),
                         &SuntitleHost::new(
-                            &resource_name,
+                            resource_name,
                             SuntitleHostSpec {
                                 display_name: name.clone(),
                             },
@@ -210,6 +215,7 @@ impl State {
     }
 
     /// Persist changed node status with merged conditions.
+    /// Removal MUST clear the previous dispatch's artifact identity in the merge patch.
     pub(super) async fn node_status(
         &self,
         node: &mut SuntitleNode,
@@ -231,6 +237,11 @@ impl State {
                 if value.get(field).is_none() {
                     value[field] = Value::Null;
                 }
+            }
+            if let Some(dispatch) = value.get_mut("dispatch")
+                && dispatch.get("artifactReference").is_none()
+            {
+                dispatch["artifactReference"] = Value::Null;
             }
             *node = self.nodes_api.patch_status(&node.name_any(), &PatchParams::default(), &Patch::Merge(json!({"metadata":{"resourceVersion":node.resource_version(),"uid":node.uid()},"status":value}))).await?;
         }

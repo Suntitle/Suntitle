@@ -102,7 +102,7 @@ impl State {
             return self.node_status(&mut node, &previous).await;
         };
         let status = node.status.as_mut().unwrap();
-        if matches!(plan, Plan::CustomApply { .. })
+        if matches!(plan, Plan::Apply { .. })
             && status.reporting_session.as_deref() != Some(&session)
         {
             for condition in &mut status.conditions {

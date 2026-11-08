@@ -51,15 +51,12 @@ ln -sfn /srv/suntitle/extensions extensions
 if [[ ! -s /srv/suntitle/postgres-password ]]; then
     openssl rand -hex 32 > /srv/suntitle/postgres-password
 fi
-if [[ ! -s /srv/suntitle/admin-password ]]; then
-    openssl rand -hex 32 > /srv/suntitle/admin-password
-fi
 cat > .env.local <<CONFIG
 POSTGRES_DB=suntitle
 POSTGRES_USER=suntitle
 POSTGRES_PASSWORD=$(cat /srv/suntitle/postgres-password)
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=$(cat /srv/suntitle/admin-password)
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
 REGISTRY_HOST=${REGISTRY_HOST}
 COMPOSE_FILE=compose.yaml:compose.release.yaml
 API_IMAGE=${API_IMAGE}
