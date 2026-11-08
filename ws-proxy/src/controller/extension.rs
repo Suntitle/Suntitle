@@ -197,11 +197,15 @@ fn default_extension(
         NodeSettings::Display(_) => "suntitle.py",
         NodeSettings::Custom(_) => return None,
     };
-    let reference = std::env::var("DEFAULT_EXTENSIONS_REFERENCE").unwrap_or_else(|_| {
-        option_env!("DEFAULT_EXTENSIONS_REFERENCE")
-            .unwrap_or("ghcr.io/suntitle/suntitle/default-extensions:latest")
-            .to_owned()
-    });
+    let reference = std::env::var("DEFAULT_EXTENSIONS_REFERENCE")
+        .ok()
+        .filter(|reference| !reference.is_empty())
+        .unwrap_or_else(|| {
+            option_env!("DEFAULT_EXTENSIONS_REFERENCE")
+                .filter(|reference| !reference.is_empty())
+                .unwrap_or("ghcr.io/suntitle/suntitle/default-extensions:latest")
+                .to_owned()
+        });
     Some((
         ResolvedAdapter {
             input_type: None,

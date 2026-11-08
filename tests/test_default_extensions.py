@@ -19,15 +19,22 @@ class DefaultExtensionTests(unittest.TestCase):
         """The complete source directory MUST survive an unmodified ORAS push and pull."""
         with tempfile.TemporaryDirectory() as directory:
             layout = str(Path(directory) / "layout")
-            subprocess.run([
+            publish = [
                 "oras", "push", "--oci-layout", layout + ":test",
                 "--artifact-type", "application/vnd.suntitle.extension.v1",
+                "--annotation", "org.opencontainers.image.created=2026-01-01T00:00:00Z",
                 "default-extensions:application/vnd.oci.image.layer.v1.tar+gzip",
-            ], cwd=ROOT, check=True, capture_output=True)
+            ]
+            subprocess.run(publish, cwd=ROOT, check=True, capture_output=True)
+            resolve = ["oras", "resolve", "--oci-layout", layout + ":test"]
+            digest = subprocess.check_output(resolve)
+            subprocess.run(publish, cwd=ROOT, check=True, capture_output=True)
+            self.assertEqual(subprocess.check_output(resolve), digest)
             manifest = json.loads(subprocess.check_output([
                 "oras", "manifest", "fetch", "--oci-layout", layout + ":test",
             ]))
             layer, = manifest["layers"]
+            self.assertEqual(manifest["annotations"]["org.opencontainers.image.created"], "2026-01-01T00:00:00Z")
             self.assertEqual(layer["mediaType"], "application/vnd.oci.image.layer.v1.tar+gzip")
             self.assertEqual(layer["annotations"]["io.deis.oras.content.unpack"], "true")
             self.assertEqual(layer["annotations"]["org.opencontainers.image.title"], "default-extensions")

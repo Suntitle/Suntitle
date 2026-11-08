@@ -47,6 +47,8 @@ just images-push
 just infra-up
 ```
 
+`images-push` requires ORAS and Docker registry credentials.
+
 For other custom image sources, set any of:
 
 ```bash

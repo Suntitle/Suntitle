@@ -44,6 +44,7 @@ jobs:
             --artifact-type application/vnd.suntitle.extension.v1 \
             --annotation org.opencontainers.image.source=https://github.com/Suntitle/Suntitle \
             --annotation "org.opencontainers.image.version=$RELEASE_TAG" \
+            --annotation "org.opencontainers.image.created=$(git log -1 --format=%cI -- default-extensions)" \
             default-extensions:application/vnd.oci.image.layer.v1.tar+gzip
           digest="$(oras resolve "$repository:$RELEASE_TAG")"
           printf 'reference=%s@%s\n' "$repository" "$digest" >> "$GITHUB_OUTPUT"

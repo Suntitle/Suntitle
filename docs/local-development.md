@@ -29,8 +29,11 @@ just generate-certs  # once before the first launch; requires mkcert and OpenSSL
 just local-stack
 ```
 
-`just local-stack` creates `.env.local` if missing, generates local client
-kubeconfigs, builds the backend and UI images, and starts Compose. A bootstrap container
+Install ORAS 1.3 or newer on the host before starting the stack.
+`just local-stack` creates `.env.local` if missing and generates local client
+kubeconfigs. It starts Distribution and Traefik, publishes the complete
+`default-extensions/` checkout with ORAS, and pins the proxy to the local artifact's
+digest before building and starting the backend and UI images. A bootstrap container
 waits for Kubernetes readiness and installs the namespace, CRDs, and RBAC.
 The API and proxy start with their separate container kubeconfigs. The command
 waits for the API, proxy, and UI to be healthy before starting Diamant.
@@ -65,9 +68,7 @@ for service discovery. The socket keeps its host label and permissions;
 After generating certificates and kubeconfigs, the container stack can also run on its own:
 
 ```bash
-just generate-kubeconfigs
-docker compose --env-file .env.local build kubernetes-bootstrap ws-proxy ui
-docker compose --env-file .env.local up -d --wait
+just _local-infra-up
 ```
 
 Standalone clients can use `localhost:80` instead of `localhost:3030` for

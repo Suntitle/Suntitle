@@ -188,11 +188,14 @@ services:
       context: .
       dockerfile: docker/ws-proxy/Dockerfile
       target: ws-proxy
+      args:
+        DEFAULT_EXTENSIONS_REFERENCE: ${DEFAULT_EXTENSIONS_REFERENCE:-ghcr.io/suntitle/suntitle/default-extensions:latest}
     image: suntitle-ws-proxy:local
     restart: unless-stopped
     environment:
       EXTENSION_REGISTRY: ${REGISTRY_HOST:-registry.localhost}/suntitle/extensions
       EXTENSION_REGISTRY_PLAIN_HTTP: "true"
+      DEFAULT_EXTENSIONS_REFERENCE: ${DEFAULT_EXTENSIONS_REFERENCE:-}
     depends_on:
       kubernetes-bootstrap:
         condition: service_completed_successfully

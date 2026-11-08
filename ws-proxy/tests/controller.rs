@@ -30,17 +30,47 @@ async fn connect(controller: &Controller, name: &str) -> Connection {
         .unwrap()
 }
 
-async fn apply(connection: &mut Connection) -> ApplyIdentity {
-    let message = tokio::time::timeout(Duration::from_secs(15), connection.outbound.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    let RegistrationServerMessage::Apply { identity, .. } = wire(message) else {
-        panic!("expected apply")
-    };
-    identity
+/// A simulated host MUST acknowledge OCI preparation before the controller dispatches apply.
+async fn apply(controller: &Controller, connection: &mut Connection) -> ApplyIdentity {
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(15), connection.outbound.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match wire(message) {
+            RegistrationServerMessage::DownloadArtifact {
+                identity,
+                reference,
+                ..
+            } => {
+                assert!(!reference.is_empty());
+                controller
+                    .report(
+                        connection,
+                        wire(RegistrationClientMessage::Acknowledgement {
+                            identity,
+                            operation: Operation::Download,
+                            success: true,
+                            message: None,
+                        }),
+                    )
+                    .await;
+            }
+            RegistrationServerMessage::Apply {
+                identity, custom, ..
+            } => {
+                assert!(
+                    custom.is_some(),
+                    "every apply MUST reference a prepared artifact"
+                );
+                return identity;
+            }
+            other => panic!("expected download or apply, got {other:?}"),
+        }
+    }
 }
 
+/// Wait for the acknowledged apply phase; stale reports MUST leave the current operation unchanged.
 async fn ack(
     nodes: &Api<SuntitleNode>,
     controller: &Controller,
@@ -81,7 +111,8 @@ async fn ack(
             if (!success && matches!(status.phase, Some(NodePhase::Failed)))
                 || (success
                     && status.observed_generation == Some(identity.generation)
-                    && status.reporting_session.as_deref() == Some(&identity.session_id))
+                    && status.reporting_session.as_deref() == Some(&identity.session_id)
+                    && matches!(status.phase, Some(NodePhase::Running | NodePhase::Disabled)))
             {
                 break;
             }
@@ -100,13 +131,24 @@ async fn quiet(connection: &mut Connection) {
     );
 }
 
+/// Select explicit isolated test credentials or the normal bootstrapped proxy credentials.
+async fn test_client() -> kube::Client {
+    let path = std::env::var_os("TEST_PROXY_KUBECONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("pki/suntitle-proxy.kubeconfig")
+        });
+    client_from_kubeconfig(&path).await.unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires bootstrapped local Kine-backed Kubernetes and proxy kubeconfig"]
+/// Verify preparation, apply replay, stale reports, restarts, and host-session recovery.
 async fn controller_apply_recovery_acceptance() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let client = client_from_kubeconfig(&root.join("pki/suntitle-proxy.kubeconfig"))
-        .await
-        .unwrap();
+    let client = test_client().await;
     let hosts: Api<SuntitleHost> = Api::namespaced(client.clone(), "suntitle");
     let nodes: Api<SuntitleNode> = Api::namespaced(client.clone(), "suntitle");
     let name = format!("controller-test-{}", uuid::Uuid::new_v4());
@@ -142,7 +184,7 @@ async fn controller_apply_recovery_acceptance() {
                 .as_deref(),
             Some(connection.session_id.as_str())
         );
-        let first = apply(&mut connection).await;
+        let first = apply(&controller, &mut connection).await;
         controller
             .report(
                 &connection,
@@ -202,16 +244,10 @@ async fn controller_apply_recovery_acceptance() {
             },
         ] {
             ack(&nodes, &controller, &connection, stale, true).await;
-            assert!(
-                nodes
-                    .get(&name)
-                    .await
-                    .unwrap()
-                    .status
-                    .unwrap()
-                    .observed_generation
-                    .is_none()
-            );
+            let status = nodes.get(&name).await.unwrap().status.unwrap();
+            assert_eq!(status.observed_generation, Some(first.generation));
+            assert_eq!(status.dispatch.unwrap().success, None);
+            assert!(matches!(status.phase, Some(NodePhase::Pending)));
         }
         ack(&nodes, &controller, &connection, first.clone(), true).await;
         let applied = nodes.get(&name).await.unwrap();
@@ -243,7 +279,7 @@ async fn controller_apply_recovery_acceptance() {
             )
             .await
             .unwrap();
-        let restarted = apply(&mut connection).await;
+        let restarted = apply(&controller, &mut connection).await;
         assert_eq!(restarted.restart_token.as_deref(), Some("latest-restart"));
         assert!(restarted.generation > first.generation);
         ack(&nodes, &controller, &connection, first.clone(), true).await;
@@ -267,7 +303,7 @@ async fn controller_apply_recovery_acceptance() {
             )
             .await
             .unwrap();
-        let retry = apply(&mut connection).await;
+        let retry = apply(&controller, &mut connection).await;
         assert_ne!(retry.operation_id, restarted.operation_id);
         ack(&nodes, &controller, &connection, retry.clone(), true).await;
         quiet(&mut connection).await;
@@ -287,7 +323,7 @@ async fn controller_apply_recovery_acceptance() {
             .to_request();
         let response = actix_web::test::call_service(&app, request).await;
         assert!(response.status().is_success());
-        let disabled_identity = apply(&mut connection).await;
+        let disabled_identity = apply(&controller, &mut connection).await;
         ack(
             &nodes,
             &controller,
@@ -309,7 +345,7 @@ async fn controller_apply_recovery_acceptance() {
             !*replacement.closed.borrow(),
             "an old disconnect MUST preserve the replacement socket"
         );
-        let resent = apply(&mut replacement).await;
+        let resent = apply(&controller, &mut replacement).await;
         assert_eq!(resent.session_id, replacement.session_id);
         assert_ne!(resent.session_id, retry.session_id);
         assert_ne!(resent.operation_id, retry.operation_id);
@@ -325,7 +361,7 @@ async fn controller_apply_recovery_acceptance() {
         controller = new_controller;
         task = new_task;
         let mut fresh = connect(&controller, &name).await;
-        let identity = apply(&mut fresh).await;
+        let identity = apply(&controller, &mut fresh).await;
         ack(&nodes, &controller, &fresh, identity, true).await;
         quiet(&mut fresh).await;
 
@@ -356,7 +392,7 @@ async fn controller_apply_recovery_acceptance() {
         .await
         .unwrap();
         let mut renewed = connect(&controller, &name).await;
-        let identity = apply(&mut renewed).await;
+        let identity = apply(&controller, &mut renewed).await;
         let heartbeat = hosts
             .get(&name)
             .await
@@ -432,10 +468,11 @@ async fn controller_apply_recovery_acceptance() {
     }
 }
 
-async fn remove(connection: &mut Connection) -> ApplyIdentity {
+/// Wait for the named removal stage so timeouts identify the lifecycle transition.
+async fn remove(connection: &mut Connection, stage: &str) -> ApplyIdentity {
     let message = tokio::time::timeout(Duration::from_secs(15), connection.outbound.recv())
         .await
-        .unwrap()
+        .expect(stage)
         .unwrap();
     let RegistrationServerMessage::Remove { identity } = wire(message) else {
         panic!("expected remove")
@@ -485,11 +522,9 @@ async fn cleanup_ack(
 
 #[tokio::test]
 #[ignore = "requires bootstrapped local Kine-backed Kubernetes and proxy kubeconfig"]
+/// Verify artifact-backed node deletion, reconnect retries, and deferred offline host cleanup.
 async fn controller_deletion_acceptance() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let client = client_from_kubeconfig(&root.join("pki/suntitle-proxy.kubeconfig"))
-        .await
-        .unwrap();
+    let client = test_client().await;
     let hosts: Api<SuntitleHost> = Api::namespaced(client.clone(), "suntitle");
     let nodes: Api<SuntitleNode> = Api::namespaced(client.clone(), "suntitle");
     let name = format!("cleanup-test-{}", uuid::Uuid::new_v4());
@@ -499,7 +534,7 @@ async fn controller_deletion_acceptance() {
         let mut connection = connect(&controller, &name).await;
         let spec: SuntitleNodeSpec = serde_json::from_value(json!({"hostRef":{"name":name},"displayName":"Screen","settings":{"display":{"maxLines":3,"fontScale":1.0,"showOriginal":false}}})).unwrap();
         nodes.create(&PostParams::default(), &SuntitleNode::new(&node_names[0], spec.clone())).await.unwrap();
-        let applied = apply(&mut connection).await;
+        let applied = apply(&controller, &mut connection).await;
         ack(&nodes, &controller, &connection, applied.clone(), true).await;
         let store = control_api::store::ResourceStore::new(client.clone(), "suntitle");
         let app = actix_web::test::init_service(actix_web::App::new()
@@ -509,7 +544,8 @@ async fn controller_deletion_acceptance() {
         let response = actix_web::test::call_service(&app, actix_web::test::TestRequest::delete()
             .uri(&format!("/nodes/{}", node_names[0])).to_request()).await;
         assert_eq!(response.status(), actix_web::http::StatusCode::ACCEPTED);
-        let first = remove(&mut connection).await;
+        let first = remove(&mut connection, "initial node removal").await;
+        assert!(nodes.get(&node_names[0]).await.unwrap().status.unwrap().dispatch.unwrap().artifact_reference.is_none());
         quiet(&mut connection).await;
         ack(&nodes, &controller, &connection, first.clone(), true).await;
         cleanup_ack(&nodes, &controller, &connection, ApplyIdentity { operation_id: "wrong".into(), ..first.clone() }, true).await;
@@ -518,7 +554,7 @@ async fn controller_deletion_acceptance() {
         assert!(nodes.get_opt(&node_names[0]).await.unwrap().is_some());
         quiet(&mut connection).await;
         connection = connect(&controller, &name).await;
-        let retry = remove(&mut connection).await;
+        let retry = remove(&mut connection, "removal after reconnect").await;
         assert_ne!(retry.operation_id, first.operation_id);
         cleanup_ack(&nodes, &controller, &connection, retry.clone(), true).await;
         cleanup_ack(&nodes, &controller, &connection, retry, true).await;
@@ -527,7 +563,7 @@ async fn controller_deletion_acceptance() {
         assert!(nodes.get_opt(&node_names[0]).await.unwrap().is_none());
 
         nodes.create(&PostParams::default(), &SuntitleNode::new(&node_names[1], spec)).await.unwrap();
-        let applied = apply(&mut connection).await;
+        let applied = apply(&controller, &mut connection).await;
         ack(&nodes, &controller, &connection, applied, true).await;
         controller.disconnect(&connection).await;
         hosts.delete(&name, &DeleteParams::default()).await.unwrap();
@@ -545,7 +581,7 @@ async fn controller_deletion_acceptance() {
         controller = replacement;
         task = replacement_task;
         let mut cleanup = connect(&controller, &name).await;
-        let removal = remove(&mut cleanup).await;
+        let removal = remove(&mut cleanup, "offline host cleanup after reconnect").await;
         assert_eq!(removal.host_uid, connection.host.uid);
         cleanup_ack(&nodes, &controller, &cleanup, removal, true).await;
         tokio::time::timeout(Duration::from_secs(10), async {

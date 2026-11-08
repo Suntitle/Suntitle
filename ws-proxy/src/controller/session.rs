@@ -210,6 +210,7 @@ impl State {
     }
 
     /// Persist changed node status with merged conditions.
+    /// Removal MUST clear the previous dispatch's artifact identity in the merge patch.
     pub(super) async fn node_status(
         &self,
         node: &mut SuntitleNode,
@@ -231,6 +232,11 @@ impl State {
                 if value.get(field).is_none() {
                     value[field] = Value::Null;
                 }
+            }
+            if let Some(dispatch) = value.get_mut("dispatch")
+                && dispatch.get("artifactReference").is_none()
+            {
+                dispatch["artifactReference"] = Value::Null;
             }
             *node = self.nodes_api.patch_status(&node.name_any(), &PatchParams::default(), &Patch::Merge(json!({"metadata":{"resourceVersion":node.resource_version(),"uid":node.uid()},"status":value}))).await?;
         }

@@ -84,6 +84,21 @@ _local-infra-up: db-env
         fi
     done
     bash scripts/generate-kubeconfigs.sh
+    command -v oras >/dev/null
+    docker compose --env-file .env.local up -d --no-deps --wait --wait-timeout 90 distribution traefik
+    repository="$(docker compose --env-file .env.local config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["ws-proxy"]["environment"]["EXTENSION_REGISTRY"].removesuffix("/extensions") + "/default-extensions")')"
+    registry="${repository%%/*}"
+    for attempt in {1..30}; do
+        if curl -fsS --max-time 2 "http://$registry/v2/" >/dev/null; then break; fi
+        if (( attempt == 30 )); then exit 1; fi
+        sleep 1
+    done
+    oras push --plain-http "$repository:dev" \
+        --annotation "org.opencontainers.image.created=$(git log -1 --format=%cI -- default-extensions)" \
+        --artifact-type application/vnd.suntitle.extension.v1 \
+        default-extensions:application/vnd.oci.image.layer.v1.tar+gzip
+    DEFAULT_EXTENSIONS_REFERENCE="$(oras resolve --plain-http --full-reference "$repository:dev")"
+    export DEFAULT_EXTENSIONS_REFERENCE
     docker compose --env-file .env.local build kubernetes-bootstrap ws-proxy ui
     docker compose --env-file .env.local up -d --wait --wait-timeout 180
 
@@ -215,7 +230,7 @@ test-python python="python3":
 # Select an existing Pulumi stack.
 infra-select stack="dev": (aws-login "pulumi" "-C" "infrastructure" "stack" "select" stack)
 
-# Build and push the API, proxy, and UI images under a image repository and tag.
+# Publish default extensions and build and push API, proxy, and UI images pinned to that payload.
 [positional-arguments]
 images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default("IMAGE_TAG", "dev")) platform=(env_var_or_default("IMAGE_PLATFORM", "linux/amd64")):
     #!/usr/bin/env bash
@@ -230,9 +245,17 @@ images-push repo=(env_var_or_default("IMAGE_REPO", "")) tag=(env_var_or_default(
     if [[ -n "$3" ]]; then
         platform_args=(--platform "$3")
     fi
+    oras push "$image_repo/default-extensions:$image_tag" \
+        --artifact-type application/vnd.suntitle.extension.v1 \
+        --annotation org.opencontainers.image.source=https://github.com/Suntitle/Suntitle \
+        --annotation "org.opencontainers.image.version=$image_tag" \
+        --annotation "org.opencontainers.image.created=$(git log -1 --format=%cI -- default-extensions)" \
+        default-extensions:application/vnd.oci.image.layer.v1.tar+gzip
+    extension_reference="$(oras resolve --full-reference "$image_repo/default-extensions:$image_tag")"
     for component in control-api ws-proxy; do
         docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
             --file docker/ws-proxy/Dockerfile --target "$component" \
+            --build-arg DEFAULT_EXTENSIONS_REFERENCE="$extension_reference" \
             --tag "$image_repo/$component:$image_tag" --push .
     done
     docker buildx build ${platform_args[@]+"${platform_args[@]}"} \
