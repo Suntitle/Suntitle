@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { extensionDefinition, extensionSettings } from "@/stores/extension-nodes"
+import { acceptsInput } from "@/stores/node-inputs"
 import { useStores } from "@/stores"
 import type {
   Host,
@@ -72,7 +73,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
 
   const choices = useMemo(() => [
     ...nodesStore.nodeTypes.map((definition) => ({ key: definition.type, definition, extension: undefined as typeof extensionsStore.items[number] | undefined })),
-    ...extensionsStore.items.map((extension) => ({ key: `extension:${extension.name}`, definition: extensionDefinition(extension), extension })),
+    ...extensionsStore.items.filter((extension) => extension.adapter && !extension.deleting).map((extension) => ({ key: `extension:${extension.name}`, definition: extensionDefinition(extension), extension })),
   ], [nodesStore.nodeTypes, extensionsStore.items])
   const choiceLabels = useMemo(() => Object.fromEntries(choices.map((choice) => [choice.key, choice.definition.name])), [choices])
   const selectedChoice = choices.find((choice) => choice.key === selectedType)
@@ -80,7 +81,7 @@ export const HostManagementDialog = observer(function HostManagementDialog({ hos
   const selectedExtension = selectedChoice?.extension
   const allowedInputNodes = useMemo(() => {
     if (!selectedDefinition) return []
-    return nodesStore.items.filter((node) => selectedDefinition.inputTypes.includes(node.type))
+    return nodesStore.items.filter((node) => acceptsInput(selectedDefinition, node))
   }, [nodesStore.items, selectedDefinition])
   const requiresInput = !selectedExtension && (selectedDefinition?.inputTypes.length ?? 0) > 0
   const canInstall = Boolean(selectedDefinition && nodeName.trim() && (!requiresInput || inputNodeId))

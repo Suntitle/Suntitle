@@ -26,7 +26,8 @@
         "artifactReference": "registry.example.com/obs-captions@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "displayName": "obs-captions",
-      "name": "obs-captions"
+      "name": "obs-captions",
+      "deleting": false
     },
     {
       "source": "/opt/suntitle/extensions/archive-export",
@@ -54,7 +55,8 @@
         "artifactReference": "registry.example.com/archive-export@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "displayName": "archive-export",
-      "name": "archive-export"
+      "name": "archive-export",
+      "deleting": false
     }
   ],
   "resourceVersion": "10"

@@ -620,6 +620,7 @@ async fn extension_api_preserves_kubernetes_errors_and_rejects_malformed_request
             (Method::GET, "/api/v1/extensions/plugin", None),
             (Method::POST, "/api/v1/extensions", Some(body.clone())),
             (Method::POST, "/api/v1/extensions/plugin/refresh", None),
+            (Method::DELETE, "/api/v1/extensions/plugin", None),
         ]
         .into_iter()
         .enumerate()
@@ -665,7 +666,7 @@ async fn extension_api_preserves_kubernetes_errors_and_rejects_malformed_request
             )
             .await;
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(calls.load(Ordering::SeqCst), 5);
         server.abort();
     }
 }
@@ -726,13 +727,10 @@ async fn readiness_requires_extension_crd_and_readable_collection() {
     }
 }
 
-/// Source registration MUST read manifest configuration and persist only the resolved resource.
+/// Registration MUST persist source intent without fetching or parsing manifest contents.
 #[actix_web::test]
-async fn source_registration_resolves_manifest_before_kubernetes_write() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
+async fn source_registration_persists_without_accessing_source() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
     use warp::Filter;
 
     let calls = Arc::new(AtomicUsize::new(0));
@@ -746,53 +744,64 @@ async fn source_registration_resolves_manifest_before_kubernetes_write() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
-    let store = ResourceStore::new(
-        Client::try_from(kube::Config::new(
-            format!("http://{address}").parse().unwrap(),
-        ))
-        .unwrap(),
-        "test",
-    );
-    let directory = tempfile::tempdir().unwrap();
-    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"displayName":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"inputType":"text","outputType":"text","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
-    std::fs::write(
-        directory.path().join("manifest.yaml"),
-        serde_yaml::to_string(&manifest).unwrap(),
-    )
-    .unwrap();
-    let source = directory.path().to_str().unwrap();
-    let (status, created, location) = request(
-        &store,
-        Method::POST,
-        "/api/v1/extensions",
-        Some(json!({"sourceType":"local","source":source})),
-    )
-    .await;
+    let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "test");
+    let source = "/path/that/does/not/exist";
+    let (status, created, location) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":source}))).await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    assert_eq!(location.as_deref(), Some("/api/v1/extensions/hello"));
-    assert_eq!(created["name"], "hello");
+    assert!(created["name"].as_str().unwrap().starts_with("extension-"));
+    assert_eq!(location, Some(format!("/api/v1/extensions/{}", created["name"].as_str().unwrap())));
     assert_eq!(created["source"], source);
     assert_eq!(created["sourceType"], "local");
-    assert_eq!(
-        created["adapter"],
-        json!({"inputType":"text","outputType":"text","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]})
-    );
-    expect(
-        &store,
-        Method::POST,
-        "/api/v1/extensions",
-        Some(json!({"sourceType":"local","source":directory.path().join("missing")})),
-        422,
-    )
-    .await;
-    expect(
-        &store,
-        Method::POST,
-        "/api/v1/extensions",
-        Some(json!({"sourceType":"zip","source":source})),
-        400,
-    )
-    .await;
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(created.get("adapter").is_none());
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":" "})), 422).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"zip","source":source})), 400).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"oci","source":"registry.invalid/binary:latest"})), 422).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"oci","source":"registry.invalid/binary:latest","manifest":" "})), 422).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"git","source":"https://example.invalid/repo","manifest":"displayName: Hello"})), 422).await;
+    let contents = "invalid: [yaml";
+    let (status, created, _) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"oci","source":"registry.invalid/binary:latest","manifest":contents}))).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["manifest"], contents);
+    assert!(created.get("adapter").is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    server.abort();
+}
+
+/// Removal MUST delegate to Kubernetes and expose termination until controller cleanup completes.
+#[actix_web::test]
+async fn extension_removal_is_accepted_and_termination_remains_visible() {
+    use std::sync::{Arc, Mutex};
+    use warp::Filter;
+    let resource: Value = serde_json::from_str(include_str!("../../mockserver/fixtures/kubernetes/extension.json")).unwrap();
+    let name = resource["metadata"]["name"].as_str().unwrap().to_owned();
+    let stored = Arc::new(Mutex::new(resource));
+    let state = stored.clone();
+    let (send, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let route = warp::method().and(warp::path::full()).map(move |method: warp::http::Method, path: warp::path::FullPath| {
+        send.send((method.clone(), path.as_str().to_owned())).unwrap();
+        let mut resource = state.lock().unwrap();
+        if method == warp::http::Method::DELETE {
+            resource["metadata"]["deletionTimestamp"] = json!("2026-11-08T10:00:00Z");
+            warp::reply::json(&json!({"apiVersion":"v1","kind":"Status","status":"Success"}))
+        } else {
+            warp::reply::json(&*resource)
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(warp::serve(route).incoming(listener).run());
+    let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "test");
+    let uri = format!("/api/v1/extensions/{name}");
+    let (status, body, _) = request(&store, Method::DELETE, &uri, None).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert!(body.is_null());
+    let (method, path) = received.recv().await.unwrap();
+    assert_eq!(method, warp::http::Method::DELETE);
+    assert!(path.ends_with(&format!("/suntitleextensions/{name}")));
+    assert!(received.try_recv().is_err(), "API MUST NOT perform controller-owned node cleanup");
+    let terminating = expect(&store, Method::GET, &uri, None, 200).await;
+    assert_eq!(terminating["deleting"], true);
+    assert_eq!(terminating["name"], name);
+    assert!(terminating.get("metadata").is_none());
     server.abort();
 }

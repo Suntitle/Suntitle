@@ -141,14 +141,11 @@ services:
         condition: service_completed_successfully
     command: [control_api, --kubeconfig, /etc/kubernetes/pki/suntitle-api.compose.kubeconfig, --namespace, suntitle]
     environment:
-      EXTENSION_REGISTRY_PLAIN_HTTP: "true"
       DATABASE_URL: postgres://${POSTGRES_USER:-suntitle}:${POSTGRES_PASSWORD:-suntitle-local}@postgres:5432/${POSTGRES_DB:-suntitle}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     volumes:
       - ./pki:/etc/kubernetes/pki:ro,z
-      - ${LOCAL_EXTENSIONS_DIR:-./extensions}:/opt/suntitle/extensions:ro,z
-      - ./ws-proxy/examples/custom_node_e2e/extensions:/opt/suntitle/example-extensions:ro,z
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=PathPrefix(`/api`)"

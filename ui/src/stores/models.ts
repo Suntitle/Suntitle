@@ -26,12 +26,14 @@ export interface ExtensionSpec {
   sourceType: ExtensionSourceType
   /** Worker-accessible source path or reference. */
   source: string
+  /** Separate YAML/JSON manifest contents for OCI artifacts. */
+  manifest?: string | null
   /** Maximum total publication attempts, including the initial attempt. */
   maxAttempts?: number
   /** Opaque preparation request token. */
   refreshToken?: string | null
-  /** Execution contract packaged with the extension. */
-  adapter: {
+  /** Execution contract; absent until manifest resolution succeeds. */
+  adapter?: {
     /** Omit when the extension declares no input. */
     inputType?: ExtensionDataType
     /** Omit when the extension declares no output. */
@@ -81,6 +83,8 @@ export interface ExtensionSpec {
 
 /** Registered extension with resource status passed through by the API. */
 export interface Extension extends ExtensionSpec {
+  /** Controller-owned removal is pending, possibly waiting for offline hosts. */
+  deleting?: boolean
   /** Stable identity used in API URLs and node extension references. */
   name: string
   /** Asynchronous publication result; never proves host installation. */
@@ -125,6 +129,8 @@ export interface ExtensionRegistration {
   sourceType: ExtensionSourceType
   /** Absolute server directory, repository URL, registry reference, or HTTP payload URL. */
   source: string
+  /** YAML/JSON contents required for OCI registration. */
+  manifest?: string
 }
 
 /** Registration request. The server generates a resource name when omitted. */

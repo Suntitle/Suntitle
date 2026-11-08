@@ -19,8 +19,8 @@ export const extensionTypeIcons: Record<ExtensionDataType, LucideIcon> = {
 }
 
 /** Prefer output, then input, then the generic extension icon when neither is declared. */
-export function extensionIcon(adapter: Pick<Extension["adapter"], "inputType" | "outputType">): LucideIcon {
-  const type = adapter.outputType ?? adapter.inputType
+export function extensionIcon(adapter: Pick<NonNullable<Extension["adapter"]>, "inputType" | "outputType"> | undefined): LucideIcon {
+  const type = adapter?.outputType ?? adapter?.inputType
   return type ? extensionTypeIcons[type] : Blocks
 }
 

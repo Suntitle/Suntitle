@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { nodeIcon } from "@/lib/node-icons"
 import { cn } from "@/lib/utils"
 import { extensionDefinition, extensionFormValues, extensionSettings } from "@/stores/extension-nodes"
+import { acceptsInput } from "@/stores/node-inputs"
 import { useStores } from "@/stores"
 import type {
   Extension,
@@ -102,7 +103,7 @@ export const NodeSettingsDialog = observer(function NodeSettingsDialog() {
 
   const allowedInputNodes = useMemo(() => {
     if (!node || !definition) return []
-    return nodesStore.items.filter((item) => item.id !== node.id && definition.inputTypes.includes(item.type))
+    return nodesStore.items.filter((item) => item.id !== node.id && acceptsInput(definition, item))
   }, [definition, node, nodesStore.items])
 
   const selectedInput = inputNodeId

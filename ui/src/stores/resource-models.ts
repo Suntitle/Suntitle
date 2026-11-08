@@ -28,8 +28,8 @@ export function mapNode(resource: NodeResource, hosts: HostResource[], extension
     spec,
     type,
     ...(type === "custom" ? {
-      inputType: extension?.adapter.inputType ?? status?.resolvedAdapter?.inputType,
-      outputType: extension?.adapter.outputType ?? status?.resolvedAdapter?.outputType,
+      inputType: extension?.adapter?.inputType ?? status?.resolvedAdapter?.inputType,
+      outputType: extension?.adapter?.outputType ?? status?.resolvedAdapter?.outputType,
     } : {}),
     settings: resource.settings.custom ?? resource.settings[type],
     inputNodeId: resource.inputRef?.name ?? null,

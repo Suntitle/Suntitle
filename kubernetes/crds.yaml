@@ -614,7 +614,8 @@ spec:
             description: Desired source, adapter, and publication attempt limit for an extension.
             properties:
               adapter:
-                description: Execution and binding contract packaged with the source.
+                description: Explicit execution contract. Omission delegates manifest resolution to the controller.
+                nullable: true
                 properties:
                   arguments:
                     description: Ordered mappings from typed sources to command arguments.
@@ -725,6 +726,12 @@ spec:
                 maxLength: 128
                 minLength: 1
                 type: string
+              manifest:
+                description: Separate YAML or JSON configuration for OCI binaries; parsed by the controller.
+                maxLength: 1048576
+                minLength: 1
+                nullable: true
+                type: string
               maxAttempts:
                 default: 3
                 description: Maximum total publication attempts, including the initial execution. Defaults to three.
@@ -750,7 +757,6 @@ spec:
                 - http
                 type: string
             required:
-            - adapter
             - displayName
             - source
             - sourceType
@@ -810,6 +816,158 @@ spec:
                 format: int64
                 nullable: true
                 type: integer
+              resolvedSpec:
+                description: Manifest configuration used by the successful publication of this generation.
+                nullable: true
+                properties:
+                  adapter:
+                    description: Explicit execution contract. Omission delegates manifest resolution to the controller.
+                    nullable: true
+                    properties:
+                      arguments:
+                        description: Ordered mappings from typed sources to command arguments.
+                        items:
+                          description: Ordered CLI binding reused before and after node setting resolution.
+                          oneOf:
+                          - required:
+                            - source
+                          - required:
+                            - url
+                          properties:
+                            flag:
+                              description: Omit the flag for a positional value.
+                              minLength: 1
+                              nullable: true
+                              type: string
+                            mode:
+                              default: value
+                              description: Convert to a scalar value or boolean flag. URLs MUST use value mode.
+                              enum:
+                              - value
+                              - flag
+                              type: string
+                            source:
+                              description: Read one runtime value or user setting without interpolation.
+                              pattern: ^(runtime\.websocketUrl|settings\..+)$
+                              type: string
+                            url:
+                              description: Compose a runtime-owned base URL and a setting-owned endpoint.
+                              properties:
+                                base:
+                                  description: Diamant's configured base URL. No user-defined origin is accepted.
+                                  enum:
+                                  - runtime.websocketUrl
+                                  type: string
+                                path:
+                                  description: Setting reference containing the endpoint path to append.
+                                  pattern: ^settings\..+$
+                                  type: string
+                              required:
+                              - base
+                              - path
+                              type: object
+                          type: object
+                          x-kubernetes-validations:
+                          - message: flag mode requires a flag
+                            rule: '!has(self.mode) || self.mode != ''flag'' || has(self.flag)'
+                          - message: url arguments require value mode
+                            rule: '!has(self.url) || !has(self.mode) || self.mode == ''value'''
+                        type: array
+                      execution:
+                        description: Typed execution contract, unchanged by plugin setting resolution.
+                        properties:
+                          command:
+                            description: One executable/script path or module name, interpreted by runtime.
+                            minLength: 1
+                            type: string
+                          runtime:
+                            default: executable
+                            description: Defaults once during deserialization and Kubernetes schema defaulting.
+                            enum:
+                            - executable
+                            - python
+                            - pythonModule
+                            type: string
+                          workingDirectory:
+                            description: Optional process directory, relative to the installed root or explicitly absolute.
+                            minLength: 1
+                            nullable: true
+                            type: string
+                        required:
+                        - command
+                        type: object
+                      inputType:
+                        description: Optional input media type. Omission means no declared input, without selecting runtime behavior.
+                        enum:
+                        - image
+                        - text
+                        - audio
+                        type: string
+                      outputType:
+                        description: Optional output media type. Omission means no declared output, without selecting runtime behavior.
+                        enum:
+                        - image
+                        - text
+                        - audio
+                        type: string
+                      settings:
+                        additionalProperties:
+                          description: One plugin setting declaration. Values may have any user-defined JSON shape.
+                          properties:
+                            default:
+                              description: Explicit null MUST remain distinct from an omitted default.
+                              nullable: true
+                              x-kubernetes-preserve-unknown-fields: true
+                            required:
+                              default: false
+                              description: Require an instance value when no default is declared.
+                              type: boolean
+                          type: object
+                        description: User-defined setting declarations or resolved instance values.
+                        type: object
+                    required:
+                    - execution
+                    type: object
+                  displayName:
+                    description: Display name of the extension.
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  manifest:
+                    description: Separate YAML or JSON configuration for OCI binaries; parsed by the controller.
+                    maxLength: 1048576
+                    minLength: 1
+                    nullable: true
+                    type: string
+                  maxAttempts:
+                    default: 3
+                    description: Maximum total publication attempts, including the initial execution. Defaults to three.
+                    format: uint32
+                    minimum: 1.0
+                    type: integer
+                  refreshToken:
+                    description: Opaque token whose change requests extension preparation.
+                    maxLength: 128
+                    minLength: 1
+                    nullable: true
+                    type: string
+                  source:
+                    description: Source path or URL interpreted according to source type.
+                    minLength: 1
+                    type: string
+                  sourceType:
+                    description: Kind of source prepared by the publication worker.
+                    enum:
+                    - local
+                    - git
+                    - oci
+                    - http
+                    type: string
+                required:
+                - displayName
+                - source
+                - sourceType
+                type: object
               taskId:
                 description: Stable Apalis task identifier for this desired revision.
                 nullable: true

@@ -130,6 +130,12 @@ impl ResourceStore {
             .await?)
     }
 
+    /// Request deletion without waiting for dependent-node finalizers or offline hosts.
+    pub async fn delete_extension(&self, name: &str) -> Result<(), ApiError> {
+        self.extensions.delete(name, &DeleteParams::default()).await?;
+        Ok(())
+    }
+
     pub async fn refresh_extension(&self, name: &str) -> Result<SuntitleExtension, ApiError> {
         let patch = json!({"spec": {"refreshToken": Uuid::new_v4().to_string()}});
         Ok(self

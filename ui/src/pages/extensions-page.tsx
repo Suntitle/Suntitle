@@ -21,6 +21,7 @@ const sourceTypeLabels: Record<ExtensionSourceType, string> = {
 
 /** Label resource publication conditions; registration never implies installation. */
 function publicationStatus(extension: Extension): string {
+  if (extension.deleting) return "Removing"
   const status = extension.status
   if (!status) return "Pending"
   const conditions = status.conditions ?? []
@@ -109,13 +110,13 @@ export const ExtensionsPage = observer(function ExtensionsPage() {
                             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-100 text-violet-700"><Icon className="size-4" aria-hidden="true" /></span>
                             <span className="min-w-0">
                               <span className="block font-medium">{extension.displayName}</span>
-                              <span className="block max-w-sm truncate text-xs text-muted-foreground">{[extension.adapter.inputType, extension.adapter.outputType].filter(Boolean).join(" → ")}</span>
+                              <span className="block max-w-sm truncate text-xs text-muted-foreground">{extension.adapter ? [extension.adapter.inputType, extension.adapter.outputType].filter(Boolean).join(" → ") : "Resolving manifest"}</span>
                             </span>
                           </span>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">{publicationStatus(extension)}</Badge>
-                          {extension.status?.conditions?.filter((condition) => condition.type === "Ready").map((condition) => <span key={condition.type} className="mt-1 block max-w-64 whitespace-normal text-xs text-muted-foreground">{condition.message || condition.reason}</span>)}
+                          {!extension.deleting && extension.status?.conditions?.filter((condition) => condition.type === "Ready").map((condition) => <span key={condition.type} className="mt-1 block max-w-64 whitespace-normal text-xs text-muted-foreground">{condition.message || condition.reason}</span>)}
                           {extension.status?.artifactReference && <span className="mt-1 block max-w-48 truncate font-mono text-xs text-muted-foreground" title={extension.status.artifactReference}>{publicationStatus(extension) === "Pending" ? "Previous artifact: " : ""}{extension.status.artifactReference}</span>}
                         </TableCell>
                         <TableCell><Badge variant="outline">{sourceTypeLabels[extension.sourceType]}</Badge></TableCell>

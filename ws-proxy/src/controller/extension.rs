@@ -70,9 +70,16 @@ fn resolve(node: &mut SuntitleNode, extension: Option<&SuntitleExtension>) {
                 "ExtensionUnavailable",
                 "Referenced extension is missing or being deleted.".to_string(),
             ))?;
+        let configuration = extension.status.as_ref()
+            .filter(|status| status.observed_generation == extension.metadata.generation)
+            .and_then(|status| status.resolved_spec.as_ref())
+            .unwrap_or(&extension.spec);
+        if configuration.adapter.is_none() {
+            return Err(("ExtensionNotReady", "Waiting for extension manifest resolution.".to_string()));
+        }
         let resolved = node
             .spec
-            .resolve_extension(&extension.spec)
+            .resolve_extension(configuration)
             .map_err(|error| ("InvalidExtensionSettings", error.to_string()))?;
         let published = extension
             .status
@@ -264,7 +271,7 @@ mod tests {
             super::super::plan::Plan::for_node(&node),
             Some(super::super::plan::Plan::CustomApply { .. })
         ));
-        extension.spec.adapter.execution =
+        extension.spec.adapter.as_mut().unwrap().execution =
             serde_json::from_value(json!({"command":"./other"})).unwrap();
         resolve(&mut node, Some(&extension));
         assert!(matches!(
@@ -310,4 +317,21 @@ mod tests {
         );
         assert!(node.status.as_ref().unwrap().dispatch.is_none());
     }
+    /// Only the current generation's resolved manifest may configure a custom node.
+    #[test]
+    fn source_only_nodes_wait_for_current_resolved_manifest() {
+        let mut node = node();
+        let mut extension = extension();
+        let configuration = extension.spec.clone();
+        extension.spec.adapter = None;
+        resolve(&mut node, Some(&extension));
+        assert!(node.status.as_ref().unwrap().resolved_adapter.is_none());
+        extension.status.as_mut().unwrap().resolved_spec = Some(configuration);
+        resolve(&mut node, Some(&extension));
+        assert!(node.status.as_ref().unwrap().resolved_adapter.is_some());
+        extension.metadata.generation = Some(99);
+        resolve(&mut node, Some(&extension));
+        assert!(node.status.as_ref().unwrap().conditions.iter().any(|condition| condition.reason == "ExtensionNotReady"));
+    }
+
 }

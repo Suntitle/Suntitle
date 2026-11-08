@@ -1,11 +1,16 @@
 //! Extensions progress from Preparing to ArtifactPublished or PreparationFailed.
+//! Source-only registrations resolve manifests inside retryable publication attempts.
+//! Only successful attempts expose resolved configuration alongside the verified artifact.
 //! Publication precedes node resolution, host download, installation, and execution.
+//! Concurrent resource updates defer status writes until reconciliation observes fresh state.
 //! Apalis retries failed tasks up to the specification limit; only terminal outcomes wake reconciliation.
 mod archive;
 mod executor;
 mod git;
 mod identity;
+mod manifest;
 mod sources;
+mod transport;
 pub(super) use executor::{PublishExtension, storage};
 pub(super) use sources::Sources;
 #[cfg(test)]
@@ -153,8 +158,7 @@ async fn reconcile(
     let id = identity::task_id(&extension, &ctx.config)?;
     submit(&extension, &ctx, id.clone()).await?;
     let state = ctx.storage.clone().check_status([id.clone()]).await?.pop();
-    write_status(&ctx.api, &extension, &id, &state).await?;
-    Ok(Action::await_change())
+    write_status(&ctx.api, &extension, &id, &state).await
 }
 
 /// Submit immutable source inputs without waiting for execution or capacity.
@@ -183,12 +187,13 @@ async fn submit(
 
 /// Derive publication status directly from SQLite's stored result.
 /// The patch MUST retain UID/resource-version preconditions to reject obsolete results.
+/// Conflicts MUST requeue through the watcher rather than retry the stale snapshot.
 async fn write_status(
     api: &Api<SuntitleExtension>,
     extension: &SuntitleExtension,
     task: &TaskId,
-    state: &Option<TaskResult<String>>,
-) -> Result<(), Error> {
+    state: &Option<TaskResult<executor::PublicationResult>>,
+) -> Result<Action, Error> {
     let (reference, ready, reason, message) = match state.as_ref().map(|task| &task.result) {
         None => (
             None,
@@ -198,7 +203,7 @@ async fn write_status(
                 .to_string(),
         ),
         Some(Ok(reference)) => (
-            Some(reference.clone()),
+            Some(reference.reference.clone()),
             true,
             "ArtifactPublished",
             "Prepared extension artifact is available in the registry.".to_string(),
@@ -214,6 +219,7 @@ async fn write_status(
         observed_generation: extension.metadata.generation,
         task_id: Some(task.to_string()),
         attempts: state.as_ref().map(|task| task.attempt),
+        resolved_spec: state.as_ref().and_then(|task| task.result.as_ref().ok()).map(|result| result.spec.clone()),
         artifact_reference: reference,
         conditions: vec![Condition {
             type_: "Ready".into(),
@@ -226,9 +232,15 @@ async fn write_status(
     };
     super::conditions::merge(previous, &mut status.conditions);
     if serde_json::to_value(&extension.status)? == serde_json::to_value(&status)? {
-        return Ok(());
+        return Ok(Action::await_change());
     }
 
-    api.patch_status(&extension.name_any(), &PatchParams::default(), &Patch::Merge(serde_json::json!({ "metadata": {"uid": extension.uid(), "resourceVersion": extension.resource_version()}, "status": {"observedGeneration": status.observed_generation, "taskId": status.task_id, "attempts": status.attempts, "artifactReference": status.artifact_reference, "conditions": status.conditions} }))).await?;
-    Ok(())
+    let result = api.patch_status(&extension.name_any(), &PatchParams::default(), &Patch::Merge(serde_json::json!({ "metadata": {"uid": extension.uid(), "resourceVersion": extension.resource_version()}, "status": {"observedGeneration": status.observed_generation, "taskId": status.task_id, "attempts": status.attempts, "artifactReference": status.artifact_reference, "resolvedSpec": status.resolved_spec, "conditions": status.conditions} }))).await;
+    match result {
+        Ok(_) => Ok(Action::await_change()),
+        Err(kube::Error::Api(response)) if response.code == 409 => {
+            Ok(Action::requeue(Duration::from_secs(1)))
+        }
+        Err(error) => Err(error.into()),
+    }
 }

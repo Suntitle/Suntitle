@@ -266,6 +266,7 @@ fn extension_schema_preserves_adapter_and_constrains_source_fields() {
         json!(["local", "git", "oci", "http"])
     );
     assert_eq!(spec["properties"]["source"]["minLength"], 1);
+    assert!(!spec["required"].as_array().unwrap().contains(&json!("adapter")));
     assert_eq!(spec["properties"]["adapter"]["type"], "object");
     let adapter_schema = &spec["properties"]["adapter"]["properties"];
     assert!(adapter_schema.get("type").is_none());

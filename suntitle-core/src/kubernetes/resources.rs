@@ -1,4 +1,7 @@
 //! Shared desired-state and runtime observation contracts.
+//! Source-only extensions defer manifest resolution to publication workers.
+//! A successful worker records resolved configuration and its artifact for one generation.
+//! Nodes MUST wait for that generation before installation or execution.
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -75,6 +78,10 @@ pub struct SuntitleExtensionSpec {
     /// Source path or URL interpreted according to source type.
     #[schemars(length(min = 1))]
     pub source: String,
+    /// Separate YAML or JSON configuration for OCI binaries; parsed by the controller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 1048576))]
+    pub manifest: Option<String>,
     /// Opaque token whose change requests extension preparation.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1, max = 128))]
@@ -83,8 +90,9 @@ pub struct SuntitleExtensionSpec {
     #[serde(default = "publication_attempts_default")]
     #[schemars(range(min = 1))]
     pub max_attempts: u32,
-    /// Execution and binding contract packaged with the source.
-    pub adapter: super::adapter::ExtensionAdapter,
+    /// Explicit execution contract. Omission delegates manifest resolution to the controller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<super::adapter::ExtensionAdapter>,
 }
 
 /// Default total attempt limit delegated to Apalis.
@@ -133,6 +141,9 @@ pub struct ExtensionStatus {
     /// Total attempts reported by Apalis once this publication completes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempts: Option<usize>,
+    /// Manifest configuration used by the successful publication of this generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_spec: Option<SuntitleExtensionSpec>,
     /// Verified digest reference available after successful publication.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_reference: Option<String>,
@@ -207,7 +218,7 @@ impl SuntitleNodeSpec {
     ) -> Result<Option<super::adapter::ResolvedAdapter>, super::adapter::MissingRequiredSettings>
     {
         match &self.settings {
-            NodeSettings::Custom(overrides) => extension.adapter.resolve(overrides).map(Some),
+            NodeSettings::Custom(overrides) => extension.adapter.as_ref().map(|adapter| adapter.resolve(overrides)).transpose(),
             _ => Ok(None),
         }
     }

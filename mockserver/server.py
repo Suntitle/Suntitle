@@ -32,6 +32,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self.respond()
 
+    def do_DELETE(self):
+        """Serve configured deletion response fixtures."""
+        self.respond()
+
     def do_PUT(self):
         self.respond()
 
