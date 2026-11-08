@@ -115,10 +115,10 @@ fn nodes_inherit_extension_defaults_and_mappings_without_changing_desired_state(
                 "language":language, "model":model, "threads":4,"useGpu":true,"extra":{"nested":[1,2]}
             })
         );
-        assert_eq!(resolved.execution, extension.adapter.execution);
-        assert_eq!(resolved.input_type, extension.adapter.input_type);
-        assert_eq!(resolved.output_type, extension.adapter.output_type);
-        assert_eq!(resolved.arguments, extension.adapter.arguments[..5]);
+        assert_eq!(resolved.execution, extension.adapter.as_ref().unwrap().execution);
+        assert_eq!(resolved.input_type, extension.adapter.as_ref().unwrap().input_type);
+        assert_eq!(resolved.output_type, extension.adapter.as_ref().unwrap().output_type);
+        assert_eq!(resolved.arguments, extension.adapter.as_ref().unwrap().arguments[..5]);
         assert_eq!(serde_json::to_value(node).unwrap(), overrides);
     }
     assert_eq!(serde_json::to_value(extension).unwrap(), before);

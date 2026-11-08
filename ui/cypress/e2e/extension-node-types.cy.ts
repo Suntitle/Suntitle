@@ -1,7 +1,7 @@
 import type { Extension, NodeResource } from "../../src/stores/models"
 
 /** Provide an extension whose display name differs from its resource identity. */
-function extension(settings: Extension["adapter"]["settings"] = {}, outputType: Extension["adapter"]["outputType"] = "text"): Extension {
+function extension(settings: NonNullable<Extension["adapter"]>["settings"] = {}, outputType: NonNullable<Extension["adapter"]>["outputType"] = "text"): Extension {
   return {
     name: "hello",
     displayName: "Hello every 10 seconds", sourceType: "local", source: "/opt/suntitle/extensions/hello",
@@ -38,10 +38,25 @@ function openHost(item: Extension) {
 }
 
 describe("Extension node types", () => {
+  it("keeps unresolved manifests out of the node type selector", () => {
+    const pending = { ...extension(), adapter: undefined }
+    cy.intercept("GET", "**/api/v1/auth/me", { fixture: "api/v1/auth/me.json" })
+    cy.intercept("GET", "**/api/v1/hosts", { fixture: "api/v1/hosts.json" }).as("hosts")
+    cy.intercept("GET", "**/api/v1/node-types", { fixture: "api/v1/node-types.json" })
+    cy.intercept("GET", "**/api/v1/extensions", { body: { items: [pending], resourceVersion: "1" } }).as("extensions")
+    cy.intercept("GET", "**/api/v1/nodes", { body: { items: [], resourceVersion: "1" } })
+    cy.visit("/hosts", { onBeforeLoad(window) { window.localStorage.setItem("suntitle.accessToken", "mock-token") } })
+    cy.wait("@hosts")
+    cy.contains("button", "studio-host").click()
+    cy.wait("@extensions")
+    cy.get('button[aria-label="Node type"]').click()
+    cy.get('[data-slot="select-content"]').filter(":visible").should("contain.text", "Transcriber").and("not.contain.text", "Hello every 10 seconds")
+  })
+
   it("installs and edits a source extension with no inputType", () => {
     const source = extension({ endpoint: { default: "transcribe" } })
-    source.adapter.arguments = [{ flag: "--server", url: { base: "runtime.websocketUrl", path: "settings.endpoint" } }]
-    delete source.adapter.inputType
+    source.adapter!.arguments = [{ flag: "--server", url: { base: "runtime.websocketUrl", path: "settings.endpoint" } }]
+    delete source.adapter!.inputType
     openHost(source)
     cy.get('button[aria-label="Node type"]').should("contain.text", "Hello every 10 seconds")
     cy.get("#node-name").should("have.value", "hello")
@@ -72,7 +87,7 @@ describe("Extension node types", () => {
   it("uses manifest defaults and preserves arbitrary JSON custom settings", () => {
     cy.viewport(1440, 1000)
     const item = extension({ message: { default: "Hello" }, enabled: { default: false }, nullable: { default: null }, nested: { default: { values: [1, true] } }, token: { required: true } })
-    item.adapter.arguments = [{ flag: "--enabled", source: "settings.enabled", mode: "flag" }]
+    item.adapter!.arguments = [{ flag: "--enabled", source: "settings.enabled", mode: "flag" }]
     openHost(item)
     cy.get("#node-setting-message").should("have.value", "Hello").clear().type("Hi")
     cy.get("#node-setting-nullable").should("have.value", "null")
@@ -94,8 +109,8 @@ describe("Extension node types", () => {
   ] as const) {
     it(`installs and edits an extension with input ${inputType} and output ${outputType}`, () => {
       const item = extension({}, outputType)
-      item.adapter.inputType = inputType
-      if (outputType === undefined) delete item.adapter.outputType
+      item.adapter!.inputType = inputType
+      if (outputType === undefined) delete item.adapter!.outputType
       openHost(item)
       cy.get('button[aria-label="Input"]').should("not.exist")
       cy.get("#node-setting-sourceLanguage, #node-setting-targetLanguage").should("not.exist")

@@ -30,7 +30,10 @@ impl From<SuntitleExtension> for Extension {
         use kube::ResourceExt;
         Self {
             name: resource.name_any(),
-            spec: resource.spec,
+            spec: resource.status.as_ref()
+                .filter(|status| status.observed_generation == resource.metadata.generation)
+                .and_then(|status| status.resolved_spec.clone())
+                .unwrap_or(resource.spec),
             status: resource.status,
         }
     }
@@ -40,7 +43,7 @@ impl From<SuntitleExtension> for Extension {
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum ExtensionCreateRequest {
-    /// Resolve configuration from the selected source before persistence.
+    /// Persist the source for asynchronous controller-owned manifest resolution.
     Source(ExtensionRegistration),
     /// Accept complete configuration directly as flat request fields.
     Specification(ExtensionCreate),
@@ -73,10 +76,10 @@ pub async fn get_extension(
     Ok(web::Json(store.extension(&name).await?.into()))
 }
 
-/// Persist resolved configuration and return its flat representation.
+/// Persist registration intent without fetching extension sources.
 #[utoipa::path(post, path = "/extensions", tag = "Extensions", operation_id = "createExtension",
     summary = "Register an extension",
-    description = "Register from a source manifest or an explicit specification. Source registration reads manifest.yaml, manifest.yml, or manifest.json and overrides manifest source fields with the selected source. Publication and host installation remain asynchronous.",
+    description = "Register from a source manifest or an explicit specification. OCI source registration requires separate manifest YAML/JSON contents. The backend controller reads or parses the manifest asynchronously and reports resolution or preparation failures in status. Publication and host installation remain asynchronous.",
     request_body = ExtensionCreateRequest,
     responses((status = 201, body = Extension, headers(("Location" = String, description = "Created extension URL"))),
         (status = 400, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
@@ -87,7 +90,7 @@ pub async fn create_extension(
     body: web::Json<ExtensionCreateRequest>,
 ) -> Result<HttpResponse, ApiError> {
     let request = match body.into_inner() {
-        ExtensionCreateRequest::Source(source) => source.resolve().await?,
+        ExtensionCreateRequest::Source(source) => source.into_create()?,
         ExtensionCreateRequest::Specification(specification) => specification,
     };
     let extension = store.create_extension(request).await?;

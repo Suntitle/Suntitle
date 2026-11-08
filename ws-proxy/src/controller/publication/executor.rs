@@ -28,6 +28,15 @@ pub(in crate::controller) struct PublishExtension {
     pub(super) destination: String,
 }
 
+/// Successful publication binds a digest to the configuration read by the worker.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(super) struct PublicationResult {
+    /// Verified digest produced from this attempt's payload.
+    pub reference: String,
+    /// Resolved manifest or explicit configuration used for packaging.
+    pub spec: SuntitleExtensionSpec,
+}
+
 /// Initialize an isolated in-memory database before starting controllers.
 pub(in crate::controller) async fn storage() -> Result<SqliteStorage<PublishExtension>, Error> {
     let pool = SqlitePoolOptions::new()
@@ -82,7 +91,7 @@ pub(super) fn start(
             let notify = observer_notify.clone();
             async move {
                 loop {
-                    let result: Result<Option<TaskResult<String>>, _> =
+                    let result: Result<Option<TaskResult<PublicationResult>>, _> =
                         storage.wait_for_single(id.clone()).try_next().await;
                     if let Ok(Some(_)) = result {
                         let _ = notify.send(key);

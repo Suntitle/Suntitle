@@ -31,6 +31,8 @@ fn execution_identity_tracks_desired_inputs_without_reading_source() {
     assert_eq!(original, identity::task_id(&resource, &options).unwrap());
     resource.spec.refresh_token = Some("refresh".into());
     assert_ne!(original, identity::task_id(&resource, &options).unwrap());
+    resource.spec.manifest = Some("displayName: Changed".into());
+    assert_ne!(original, identity::task_id(&resource, &options).unwrap());
     resource = extension();
     resource.metadata.uid = Some("uid-2".into());
     assert_ne!(original, identity::task_id(&resource, &options).unwrap());
@@ -72,14 +74,14 @@ async fn push(
 async fn result(
     storage: &SqliteStorage<PublishExtension>,
     id: &TaskId,
-) -> Option<Result<String, String>> {
+) -> Option<Result<executor::PublicationResult, String>> {
     storage
         .clone()
         .check_status([id.clone()])
         .await
         .unwrap()
         .pop()
-        .map(|task: TaskResult<String>| task.result)
+        .map(|task: TaskResult<executor::PublicationResult>| task.result)
 }
 
 /// SQLite deduplicates concurrent and completed submissions; notification follows terminal storage.
@@ -91,7 +93,8 @@ async fn duplicate_attempts_notify_after_failure_and_shutdown_cleanly() {
     let storage = storage().await.unwrap();
     let (notify, mut notifications) = mpsc::unbounded_channel();
     let worker = executor::start(storage.clone(), sources, 2, cancellation.clone(), notify);
-    let resource = extension();
+    let mut resource = extension();
+    resource.spec.adapter = None;
     let id = identity::task_id(&resource, &options).unwrap();
     tokio::join!(
         push(&storage, &resource, &options, &id),
@@ -103,9 +106,9 @@ async fn duplicate_attempts_notify_after_failure_and_shutdown_cleanly() {
         .unwrap();
     assert_eq!(key, ObjectRef::from_obj(&resource));
     let terminal = result(&storage, &id).await;
-    assert!(matches!(&terminal, Some(Err(_))));
+    assert!(matches!(&terminal, Some(Err(error)) if error.contains("absolute directory")));
     push(&storage, &resource, &options, &id).await;
-    assert_eq!(result(&storage, &id).await, terminal);
+    assert!(matches!(result(&storage, &id).await, Some(Err(_))));
     assert!(notifications.try_recv().is_err());
     let stored = storage.clone().fetch_by_id(&id).await.unwrap().unwrap();
     assert_eq!(stored.ctx().attempt(), 3);
@@ -147,7 +150,7 @@ async fn status_writes_include_uid_and_resource_version_and_preserve_other_condi
             task_id: identity::task_id(&resource, &config()).unwrap(),
             attempt: 1,
             status: Status::Done,
-            result: Ok("registry/extension@sha256:abc".into()),
+            result: Ok(executor::PublicationResult { reference: "registry/extension@sha256:abc".into(), spec: resource.spec.clone() }),
         }),
     )
     .await
@@ -157,6 +160,7 @@ async fn status_writes_include_uid_and_resource_version_and_preserve_other_condi
     assert_eq!(patch["metadata"]["resourceVersion"], "1");
     assert_eq!(patch["status"]["observedGeneration"], 1);
     assert_eq!(patch["status"]["attempts"], 1);
+    assert_eq!(patch["status"]["resolvedSpec"]["adapter"]["execution"]["command"], "./run");
     assert_eq!(patch["status"]["conditions"][0]["status"], "True");
     write_status(
         &api,
@@ -249,7 +253,7 @@ async fn slow_publication_keeps_the_command_api_responsive_and_bounds_concurrenc
     let terminal = result(&storage, &first).await;
     assert!(matches!(&terminal, Some(Err(_))));
     push(&storage, &first_resource, &options, &first).await;
-    assert_eq!(result(&storage, &first).await, terminal);
+    assert_eq!(serde_json::to_value(result(&storage, &first).await).unwrap(), serde_json::to_value(terminal).unwrap());
     tokio::time::timeout(Duration::from_secs(5), async {
         while started.load(Ordering::SeqCst) != 2 {
             tokio::task::yield_now().await;

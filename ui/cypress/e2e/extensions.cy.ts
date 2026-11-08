@@ -1,6 +1,7 @@
 import type { Extension, ExtensionSpec } from "../../src/stores/models"
 
 const accessToken = "mock-token"
+const ociManifest = "displayName: Hello\nadapter:\n  execution:\n    command: ./hello"
 
 /** Build a resource whose API identity differs from its display name. */
 function resource(spec?: Partial<ExtensionSpec>): Extension {
@@ -105,7 +106,7 @@ describe("Extensions page", () => {
   ] as const) {
     it(`registers a ${label} source from its path or URL without manual manifest fields`, () => {
       visitAuthenticatedExtensions()
-      stubRegistration(resource({ sourceType, source }))
+      stubRegistration(resource({ sourceType, source, adapter: undefined }))
       cy.contains("button", "Register extension").click()
       cy.get("#extension-name, #extension-command, #extension-bindings").should("not.exist")
       cy.get('input[type="file"]').should("not.exist")
@@ -114,26 +115,52 @@ describe("Extensions page", () => {
         cy.contains('[data-slot="select-item"]', label).click()
       }
       cy.get("#extension-source").type(source)
+      if (sourceType === "oci") {
+        cy.contains('label', "OCI URL").should("be.visible")
+        cy.contains('[data-slot="dialog-content"] button', "Register extension").should("be.disabled")
+        cy.get("#extension-manifest").type(ociManifest, { parseSpecialCharSequences: false })
+      } else cy.get("#extension-manifest").should("not.exist")
       cy.contains('[data-slot="dialog-content"] button', "Register extension").click()
       cy.wait("@registerExtension").then(({ request }) => {
         expect(request.headers.authorization).to.equal(`Bearer ${accessToken}`)
-        expect(request.body).to.deep.equal({ sourceType, source })
+        expect(request.body).to.deep.equal({ sourceType, source, ...(sourceType === "oci" ? { manifest: ociManifest } : {}) })
       })
       cy.get('[data-slot="dialog-content"]').should("not.exist")
-      cy.contains("tr", "Custom captioner").should("contain.text", "Pending")
+      cy.contains("tr", "Custom captioner").should("contain.text", "Pending").and("contain.text", "Resolving manifest")
       cy.contains("3 extensions").should("be.visible")
     })
   }
 
-  it("retains the source after manifest errors and clears it on cancel", () => {
-    cy.intercept("POST", "**/api/v1/extensions", { statusCode: 422, body: { error: { message: "No manifest.yaml found in the extension directory." } } }).as("registerExtension")
+  it("retains OCI manifest contents on errors and clears them when switching sources", () => {
+    cy.intercept("POST", "**/api/v1/extensions", { statusCode: 503, body: { error: { message: "Registration unavailable" } } }).as("registerOci")
+    visitAuthenticatedExtensions()
+    cy.contains("button", "Register extension").click()
+    cy.get('button[aria-label="Source type"]').click()
+    cy.contains('[data-slot="select-item"]', "OCI").click()
+    cy.get("#extension-source").type("registry.example.com/hello:latest")
+    cy.get("#extension-manifest").type('{"displayName":"Hello","adapter":{"execution":{"command":"./hello"}}}', { parseSpecialCharSequences: false })
+    cy.contains('[data-slot="dialog-content"] button', "Register extension").click()
+    cy.wait("@registerOci").its("request.body.manifest").should("be.a", "string")
+    cy.get("#extension-manifest").should("contain.value", "displayName")
+    cy.get('[role="alert"]').should("contain.text", "Registration unavailable")
+    cy.get('button[aria-label="Source type"]').click()
+    cy.contains('[data-slot="select-item"]', "Git").click()
+    cy.get("#extension-manifest").should("not.exist")
+    cy.get('button[aria-label="Source type"]').click()
+    cy.contains('[data-slot="select-item"]', "OCI").click()
+    cy.get("#extension-manifest").should("have.value", "")
+    cy.contains("button", "Cancel").click()
+  })
+
+  it("retains the source after registration errors and clears it on cancel", () => {
+    cy.intercept("POST", "**/api/v1/extensions", { statusCode: 422, body: { error: { message: "Extension registration was rejected." } } }).as("registerExtension")
     visitAuthenticatedExtensions()
     cy.contains("button", "Register extension").click()
     cy.contains('[data-slot="dialog-content"] button', "Register extension").should("be.disabled")
     cy.get("#extension-source").type("/opt/suntitle/extensions/hello")
     cy.contains('[data-slot="dialog-content"] button', "Register extension").click()
     cy.wait("@registerExtension")
-    cy.get('[role="alert"]').should("contain.text", "No manifest.yaml")
+    cy.get('[role="alert"]').should("contain.text", "Extension registration was rejected")
     cy.get("#extension-source").should("have.value", "/opt/suntitle/extensions/hello")
     cy.contains("button", "Cancel").click()
     cy.contains("button", "Register extension").click()
@@ -141,12 +168,11 @@ describe("Extensions page", () => {
     cy.get('[role="alert"]').should("not.exist")
   })
 
-  it("disables registration while the source manifest is being read", () => {
+  it("disables registration while the request is being persisted", () => {
     cy.intercept("POST", "**/api/v1/extensions", { statusCode: 201, body: resource(), delay: 1500 }).as("registerExtension")
     visitAuthenticatedExtensions()
     cy.contains("button", "Register extension").click()
     cy.get("#extension-source").type("/opt/suntitle/extensions/hello")
-    cy.screenshot("extension-registration-source")
     cy.contains('[data-slot="dialog-content"] button', "Register extension").click()
     cy.contains("button", "Registering…").should("be.disabled")
     cy.get("#extension-source").should("be.disabled")
@@ -158,12 +184,12 @@ describe("Extensions page", () => {
     cy.clock()
     visitAuthenticatedExtensions()
     cy.contains("2 extensions").should("be.visible")
-    const extension = resource()
-    extension.status = { observedGeneration: 1, conditions: [{ type: "Ready", status: "False", reason: "PreparationFailed", message: "Publication attempts exhausted", lastTransitionTime: "2026-11-06T12:00:00Z" }] }
+    const extension = resource({ adapter: undefined })
+    extension.status = { observedGeneration: 1, conditions: [{ type: "Ready", status: "False", reason: "PreparationFailed", message: "Manifest could not be read after three attempts", lastTransitionTime: "2026-11-06T12:00:00Z" }] }
     cy.intercept("GET", "**/api/v1/extensions", { body: { items: [extension], resourceVersion: "20" } }).as("reconcileExtensions")
     cy.tick(5000)
     cy.wait("@reconcileExtensions")
-    cy.contains("tr", "Custom captioner").should("contain.text", "Failed").and("contain.text", "Publication attempts exhausted")
+    cy.contains("tr", "Custom captioner").should("contain.text", "Failed").and("contain.text", "Manifest could not be read after three attempts")
     cy.get('button[aria-label="Actions for custom-captioner"]').should("be.visible")
   })
 })

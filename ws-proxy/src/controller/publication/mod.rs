@@ -1,11 +1,15 @@
 //! Extensions progress from Preparing to ArtifactPublished or PreparationFailed.
+//! Source-only registrations resolve manifests inside retryable publication attempts.
+//! Only successful attempts expose resolved configuration alongside the verified artifact.
 //! Publication precedes node resolution, host download, installation, and execution.
 //! Apalis retries failed tasks up to the specification limit; only terminal outcomes wake reconciliation.
 mod archive;
 mod executor;
 mod git;
 mod identity;
+mod manifest;
 mod sources;
+mod transport;
 pub(super) use executor::{PublishExtension, storage};
 pub(super) use sources::Sources;
 #[cfg(test)]
@@ -187,7 +191,7 @@ async fn write_status(
     api: &Api<SuntitleExtension>,
     extension: &SuntitleExtension,
     task: &TaskId,
-    state: &Option<TaskResult<String>>,
+    state: &Option<TaskResult<executor::PublicationResult>>,
 ) -> Result<(), Error> {
     let (reference, ready, reason, message) = match state.as_ref().map(|task| &task.result) {
         None => (
@@ -198,7 +202,7 @@ async fn write_status(
                 .to_string(),
         ),
         Some(Ok(reference)) => (
-            Some(reference.clone()),
+            Some(reference.reference.clone()),
             true,
             "ArtifactPublished",
             "Prepared extension artifact is available in the registry.".to_string(),
@@ -214,6 +218,7 @@ async fn write_status(
         observed_generation: extension.metadata.generation,
         task_id: Some(task.to_string()),
         attempts: state.as_ref().map(|task| task.attempt),
+        resolved_spec: state.as_ref().and_then(|task| task.result.as_ref().ok()).map(|result| result.spec.clone()),
         artifact_reference: reference,
         conditions: vec![Condition {
             type_: "Ready".into(),
@@ -229,6 +234,6 @@ async fn write_status(
         return Ok(());
     }
 
-    api.patch_status(&extension.name_any(), &PatchParams::default(), &Patch::Merge(serde_json::json!({ "metadata": {"uid": extension.uid(), "resourceVersion": extension.resource_version()}, "status": {"observedGeneration": status.observed_generation, "taskId": status.task_id, "attempts": status.attempts, "artifactReference": status.artifact_reference, "conditions": status.conditions} }))).await?;
+    api.patch_status(&extension.name_any(), &PatchParams::default(), &Patch::Merge(serde_json::json!({ "metadata": {"uid": extension.uid(), "resourceVersion": extension.resource_version()}, "status": {"observedGeneration": status.observed_generation, "taskId": status.task_id, "attempts": status.attempts, "artifactReference": status.artifact_reference, "resolvedSpec": status.resolved_spec, "conditions": status.conditions} }))).await?;
     Ok(())
 }

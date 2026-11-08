@@ -109,7 +109,7 @@ export const ExtensionsPage = observer(function ExtensionsPage() {
                             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-100 text-violet-700"><Icon className="size-4" aria-hidden="true" /></span>
                             <span className="min-w-0">
                               <span className="block font-medium">{extension.displayName}</span>
-                              <span className="block max-w-sm truncate text-xs text-muted-foreground">{[extension.adapter.inputType, extension.adapter.outputType].filter(Boolean).join(" → ")}</span>
+                              <span className="block max-w-sm truncate text-xs text-muted-foreground">{extension.adapter ? [extension.adapter.inputType, extension.adapter.outputType].filter(Boolean).join(" → ") : "Resolving manifest"}</span>
                             </span>
                           </span>
                         </TableCell>

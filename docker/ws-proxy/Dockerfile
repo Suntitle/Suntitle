@@ -25,7 +25,7 @@ COPY --from=release /build/target/release/control_api /
 COPY --from=release /build/target/release/ws-proxy /
 
 FROM alpine:3.23 AS runtime
-RUN apk add --no-cache ca-certificates curl bash git
+RUN apk add --no-cache ca-certificates curl bash
 
 FROM runtime AS control-api
 COPY --from=release /build/target/release/control_api /usr/local/bin/control_api

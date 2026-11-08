@@ -726,13 +726,10 @@ async fn readiness_requires_extension_crd_and_readable_collection() {
     }
 }
 
-/// Source registration MUST read manifest configuration and persist only the resolved resource.
+/// Registration MUST persist source intent without fetching or parsing manifest contents.
 #[actix_web::test]
-async fn source_registration_resolves_manifest_before_kubernetes_write() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
+async fn source_registration_persists_without_accessing_source() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
     use warp::Filter;
 
     let calls = Arc::new(AtomicUsize::new(0));
@@ -746,53 +743,25 @@ async fn source_registration_resolves_manifest_before_kubernetes_write() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
-    let store = ResourceStore::new(
-        Client::try_from(kube::Config::new(
-            format!("http://{address}").parse().unwrap(),
-        ))
-        .unwrap(),
-        "test",
-    );
-    let directory = tempfile::tempdir().unwrap();
-    let manifest = json!({"kind":"SuntitleExtension", "metadata":{"name":"hello"}, "spec":{"displayName":"Hello every 10 seconds", "source":"/old/path", "sourceType":"git", "adapter":{"inputType":"text","outputType":"text","execution":{"runtime":"python","command":"./hello.py"}, "arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]}}});
-    std::fs::write(
-        directory.path().join("manifest.yaml"),
-        serde_yaml::to_string(&manifest).unwrap(),
-    )
-    .unwrap();
-    let source = directory.path().to_str().unwrap();
-    let (status, created, location) = request(
-        &store,
-        Method::POST,
-        "/api/v1/extensions",
-        Some(json!({"sourceType":"local","source":source})),
-    )
-    .await;
+    let store = ResourceStore::new(Client::try_from(kube::Config::new(format!("http://{address}").parse().unwrap())).unwrap(), "test");
+    let source = "/path/that/does/not/exist";
+    let (status, created, location) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":source}))).await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    assert_eq!(location.as_deref(), Some("/api/v1/extensions/hello"));
-    assert_eq!(created["name"], "hello");
+    assert!(created["name"].as_str().unwrap().starts_with("extension-"));
+    assert_eq!(location, Some(format!("/api/v1/extensions/{}", created["name"].as_str().unwrap())));
     assert_eq!(created["source"], source);
     assert_eq!(created["sourceType"], "local");
-    assert_eq!(
-        created["adapter"],
-        json!({"inputType":"text","outputType":"text","execution":{"runtime":"python","command":"./hello.py"},"settings":{},"arguments":[{"flag":"--server","source":"runtime.websocketUrl"}]})
-    );
-    expect(
-        &store,
-        Method::POST,
-        "/api/v1/extensions",
-        Some(json!({"sourceType":"local","source":directory.path().join("missing")})),
-        422,
-    )
-    .await;
-    expect(
-        &store,
-        Method::POST,
-        "/api/v1/extensions",
-        Some(json!({"sourceType":"zip","source":source})),
-        400,
-    )
-    .await;
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(created.get("adapter").is_none());
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"local","source":" "})), 422).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"zip","source":source})), 400).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"oci","source":"registry.invalid/binary:latest"})), 422).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"oci","source":"registry.invalid/binary:latest","manifest":" "})), 422).await;
+    expect(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"git","source":"https://example.invalid/repo","manifest":"displayName: Hello"})), 422).await;
+    let contents = "invalid: [yaml";
+    let (status, created, _) = request(&store, Method::POST, "/api/v1/extensions", Some(json!({"sourceType":"oci","source":"registry.invalid/binary:latest","manifest":contents}))).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["manifest"], contents);
+    assert!(created.get("adapter").is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     server.abort();
 }

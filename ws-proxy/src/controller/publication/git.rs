@@ -26,22 +26,7 @@ impl Snapshot {
         authentication: Option<&RegistryAuth>,
         cancellation: &CancellationToken,
     ) -> Result<Self, suntitle_core::kubernetes::Error> {
-        let url = url::Url::parse(source).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Git sources require an HTTP(S) URL; SSH is not supported",
-            )
-        })?;
-        if !matches!(url.scheme(), "http" | "https")
-            || !url.username().is_empty()
-            || url.password().is_some()
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Git sources require HTTP(S) without embedded credentials; SSH is not supported",
-            )
-            .into());
-        }
+        let url = super::transport::http_url(source)?;
         let overrides = vec![
             "credential.helper=".to_string(),
             "gitoxide.credentials.terminalPrompt=false".into(),
@@ -110,6 +95,22 @@ impl Snapshot {
             return Err(io::Error::other("Git fetch cancelled").into());
         }
         Ok(snapshot)
+    }
+
+    /// Read one bounded root manifest from the pinned tree without a checkout.
+    pub fn read_manifest(&self, names: [&str; 3], limit: u64) -> Result<Vec<u8>, suntitle_core::kubernetes::Error> {
+        let repository = gix::open_opts(self.directory.path(), gix::open::Options::isolated())?;
+        let tree = repository.find_object(self.commit)?.try_into_commit()?.tree()?;
+        for name in names {
+            if let Some(entry) = tree.find_entry(name) {
+                let object = repository.find_object(entry.object_id())?;
+                if !matches!(entry.mode().value(), 0o100644 | 0o100755) || !object.kind.is_blob() || object.data.len() as u64 > limit {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "Git manifest MUST be a regular file within 1 MiB.").into());
+                }
+                return Ok(object.data.clone());
+            }
+        }
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "No root extension manifest found in Git source.").into())
     }
 
     /// Append the pinned tree directly from objects, preserving executable and link modes.
@@ -203,13 +204,13 @@ fn append_tree<W: Write>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::process::{Command, Stdio};
     use warp::Filter;
 
     /// Run the Git reference implementation only to prepare test inputs.
-    fn git(directory: &Path, arguments: &[&str]) -> String {
+    pub(in crate::controller::publication) fn git(directory: &Path, arguments: &[&str]) -> String {
         let output = Command::new("git")
             .current_dir(directory)
             .env("GIT_AUTHOR_NAME", "Test")
@@ -228,7 +229,7 @@ mod tests {
     }
 
     /// Serve Git's smart HTTP backend; no registry emulator or external service is needed.
-    async fn serve(root: &Path) -> (String, tokio::task::JoinHandle<()>) {
+    pub(in crate::controller::publication) async fn serve(root: &Path) -> (String, tokio::task::JoinHandle<()>) {
         let root = root.to_owned();
         let route = warp::method()
             .and(warp::path::full())

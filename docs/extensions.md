@@ -7,25 +7,30 @@ See [contracts](contracts.md) for the resource and adapter definitions, and
 
 For your own local extensions, put each payload in `extensions/<name>/` and register
 it with `sourceType: local` and `source: /opt/suntitle/extensions/<name>`.
-The registration dialog asks only for source type and path or URL. Suntitle reads
-`manifest.yaml`, `manifest.yml`, or `manifest.json` from that source. The manifest
-contains `displayName`, `adapter` (execution, arguments, and settings),
-and optionally `maxAttempts`; a standalone spec, `{name, spec}` request, or full
-`SuntitleExtension` resource is accepted. Its source fields are replaced by the
-location entered in the dialog. Manifest runtime and command fields MUST match
-the extension payload. Local and Git sources use a root manifest, OCI sources use
-the restored artifact root, and HTTP payload URLs use a sibling manifest beside
-the payload file. Git requires an accessible HTTP(S) repository. OCI discovery is
-anonymous and uses `EXTENSION_REGISTRY_PLAIN_HTTP=true` for local HTTP
-registries; HTTPS remains the default outside Compose.
+The registration dialog asks for source type and path or URL. Registration persists
+that intent without fetching it. The backend controller reads `manifest.yaml`,
+`manifest.yml`, or `manifest.json` asynchronously and reports preparation failures
+through extension status. The manifest contains `displayName` and `adapter`
+(input/output media types, execution, arguments, and settings); a standalone spec,
+`{name, spec}` request, or full `SuntitleExtension` resource is accepted. The selected
+source overrides its source fields. Retry limits and refresh tokens belong to the
+registered resource. Local and Git sources use a root manifest; HTTP payload URLs
+use a sibling manifest. Git requires an accessible HTTP(S) repository.
+
+OCI registration supplies the binary artifact reference in `source` and YAML/JSON
+contents in a separate `manifest` attribute. The controller parses those contents
+without searching the artifact. Transfers use the controller's credentials and
+`EXTENSION_REGISTRY_PLAIN_HTTP=true` for local HTTP registries; HTTPS remains the
+default outside Compose.
 
 For a local payload in `extensions/hello/`, select **Local** and enter
 `/opt/suntitle/extensions/hello`. Supply a manifest alongside the payload;
-registration reads it automatically. Publication and installation are asynchronous.
+the controller reads it asynchronously. Unresolved manifests are not offered as node
+types. Publication and installation are asynchronous.
 Registered extensions appear alongside built-in choices in the host dialog’s
 **Node type** selector. Their settings and defaults come from the manifest.
 
-Compose mounts that directory read-only into the API and proxy/controller (HUB). Set `LOCAL_EXTENSIONS_DIR` in
+Compose mounts that directory read-only into the proxy/controller (HUB). Set `LOCAL_EXTENSIONS_DIR` in
 `.env.local` to use another host directory. Its contents are ignored by Git.
 The bundled E2E fixtures are available separately at
 `/opt/suntitle/example-extensions/{native,python-script,python-module}`.

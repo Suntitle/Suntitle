@@ -109,7 +109,7 @@ paths:
       tags:
       - Extensions
       summary: Register an extension
-      description: Register from a source manifest or an explicit specification. Source registration reads manifest.yaml, manifest.yml, or manifest.json and overrides manifest source fields with the selected source. Publication and host installation remain asynchronous.
+      description: Register from a source manifest or an explicit specification. OCI source registration requires separate manifest YAML/JSON contents. The backend controller reads or parses the manifest asynchronously and reports resolution or preparation failures in status. Publication and host installation remain asynchronous.
       operationId: createExtension
       requestBody:
         content:
@@ -723,7 +723,7 @@ components:
     ExtensionCreateRequest:
       oneOf:
       - $ref: '#/components/schemas/ExtensionRegistration'
-        description: Resolve configuration from the selected source before persistence.
+        description: Persist the source for asynchronous controller-owned manifest resolution.
       - $ref: '#/components/schemas/ExtensionCreate'
         description: Accept complete configuration directly as flat request fields.
       description: Registration accepts a source manifest or an explicit extension specification.
@@ -734,9 +734,16 @@ components:
       - sourceType
       - source
       properties:
+        manifest:
+          type:
+          - string
+          - 'null'
+          description: YAML or JSON manifest contents. Required for source-only OCI registration.
+          maxLength: 1048576
+          minLength: 1
         source:
           type: string
-          description: Absolute server directory, HTTP(S) Git URL, OCI reference, or HTTP payload URL.
+          description: Absolute controller directory, HTTP(S) Git URL, OCI reference, or HTTP payload URL.
           minLength: 1
         sourceType:
           $ref: '#/components/schemas/ExtensionSourceType'
@@ -809,6 +816,168 @@ components:
           - 'null'
           format: int64
           description: Resource generation whose publication state is reported.
+        resolvedSpec:
+          type:
+          - object
+          - 'null'
+          description: Manifest configuration used by the successful publication of this generation.
+          required:
+          - displayName
+          - sourceType
+          - source
+          properties:
+            adapter:
+              type:
+              - object
+              - 'null'
+              description: Explicit execution contract. Omission delegates manifest resolution to the controller.
+              required:
+              - execution
+              properties:
+                arguments:
+                  type: array
+                  items:
+                    type: object
+                    description: Ordered CLI binding reused before and after node setting resolution.
+                    properties:
+                      flag:
+                        type:
+                        - string
+                        - 'null'
+                        description: Omit the flag for a positional value.
+                        minLength: 1
+                      mode:
+                        oneOf:
+                        - type: string
+                          description: Emit a scalar value with an optional flag.
+                          enum:
+                          - value
+                        - type: string
+                          description: Emit only the flag when its boolean source is true.
+                          enum:
+                          - flag
+                        description: Convert to a scalar value or boolean flag. URLs MUST use value mode.
+                        default: value
+                    x-kubernetes-validations:
+                    - message: flag mode requires a flag
+                      rule: '!has(self.mode) || self.mode != ''flag'' || has(self.flag)'
+                    - message: url arguments require value mode
+                      rule: '!has(self.url) || !has(self.mode) || self.mode == ''value'''
+                  description: Ordered mappings from typed sources to command arguments.
+                execution:
+                  type: object
+                  description: Typed execution contract, unchanged by plugin setting resolution.
+                  required:
+                  - command
+                  properties:
+                    command:
+                      type: string
+                      description: One executable/script path or module name, interpreted by runtime.
+                      minLength: 1
+                    runtime:
+                      type: string
+                      description: Defaults once during deserialization and Kubernetes schema defaulting.
+                      default: executable
+                      enum:
+                      - executable
+                      - python
+                      - pythonModule
+                    workingDirectory:
+                      type:
+                      - string
+                      - 'null'
+                      description: Optional process directory, relative to the installed root or explicitly absolute.
+                      minLength: 1
+                  additionalProperties: false
+                inputType:
+                  oneOf:
+                  - type: string
+                    description: Image content.
+                    enum:
+                    - image
+                  - type: string
+                    description: Text content.
+                    enum:
+                    - text
+                  - type: string
+                    description: Audio content.
+                    enum:
+                    - audio
+                  description: Optional input media type. Omission means no declared input, without selecting runtime behavior.
+                outputType:
+                  oneOf:
+                  - type: string
+                    description: Image content.
+                    enum:
+                    - image
+                  - type: string
+                    description: Text content.
+                    enum:
+                    - text
+                  - type: string
+                    description: Audio content.
+                    enum:
+                    - audio
+                  description: Optional output media type. Omission means no declared output, without selecting runtime behavior.
+                settings:
+                  type: object
+                  description: User-defined setting declarations or resolved instance values.
+                  additionalProperties:
+                    type: object
+                    description: One plugin setting declaration. Values may have any user-defined JSON shape.
+                    properties:
+                      default:
+                        type:
+                        - 'null'
+                        - boolean
+                        - object
+                        - array
+                        - number
+                        - string
+                        description: Explicit null MUST remain distinct from an omitted default.
+                      required:
+                        type: boolean
+                        description: Require an instance value when no default is declared.
+                        default: false
+                    additionalProperties: false
+              additionalProperties: false
+            displayName:
+              type: string
+              description: Display name of the extension.
+              maxLength: 128
+              minLength: 1
+            manifest:
+              type:
+              - string
+              - 'null'
+              description: Separate YAML or JSON configuration for OCI binaries; parsed by the controller.
+              maxLength: 1048576
+              minLength: 1
+            maxAttempts:
+              type: integer
+              format: uint32
+              description: Maximum total publication attempts, including the initial execution. Defaults to three.
+              default: 3
+              minimum: 1
+            refreshToken:
+              type:
+              - string
+              - 'null'
+              description: Opaque token whose change requests extension preparation.
+              maxLength: 128
+              minLength: 1
+            source:
+              type: string
+              description: Source path or URL interpreted according to source type.
+              minLength: 1
+            sourceType:
+              type: string
+              description: Kind of source prepared by the publication worker.
+              enum:
+              - local
+              - git
+              - oci
+              - http
         taskId:
           type:
           - string
@@ -873,9 +1042,9 @@ components:
                 type: string
                 description: type of condition in CamelCase or in foo.example.com/CamelCase.
           description: Host health observations keyed by condition type.
+          x-kubernetes-list-type: map
           x-kubernetes-list-map-keys:
           - type
-          x-kubernetes-list-type: map
         ip:
           type:
           - string
@@ -1377,11 +1546,12 @@ components:
       - displayName
       - sourceType
       - source
-      - adapter
       properties:
         adapter:
-          type: object
-          description: Execution and binding contract packaged with the source.
+          type:
+          - object
+          - 'null'
+          description: Explicit execution contract. Omission delegates manifest resolution to the controller.
           required:
           - execution
           properties:
@@ -1496,6 +1666,13 @@ components:
           type: string
           description: Display name of the extension.
           maxLength: 128
+          minLength: 1
+        manifest:
+          type:
+          - string
+          - 'null'
+          description: Separate YAML or JSON configuration for OCI binaries; parsed by the controller.
+          maxLength: 1048576
           minLength: 1
         maxAttempts:
           type: integer

@@ -87,7 +87,9 @@ for bootstrap commands and connectivity.
 
 ## Extension adapters
 
-Registration accepts a source type and location and discovers its manifest.
+Registration persists a source type and location. The backend controller discovers
+and parses its manifest asynchronously. OCI registration provides the binary
+reference and manifest YAML/JSON contents as separate attributes.
 The adapter declares execution, settings, and ordered argument bindings. Runtime
 values are `executable` (the default), `python`, and `pythonModule`; `command`
 means an executable path, script path, or importable module respectively.

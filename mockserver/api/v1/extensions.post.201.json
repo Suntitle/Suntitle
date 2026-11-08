@@ -1,15 +1,8 @@
 {
-  "source": "https://github.com/suntitle/extensions/obs-captions.git",
-  "sourceType": "git",
-  "adapter": {
-    "execution": {
-      "command": "./bin/extension",
-      "runtime": "executable"
-    },
-    "inputType": "text",
-    "outputType": "text"
-  },
-  "status": null,
-  "displayName": "Custom captioner",
-  "name": "custom-captioner"
+  "name": "oci-hello",
+  "displayName": "registry.example.com/hello:latest",
+  "sourceType": "oci",
+  "source": "registry.example.com/hello:latest",
+  "manifest": "displayName: Hello\nadapter:\n  execution:\n    command: ./hello",
+  "status": null
 }
